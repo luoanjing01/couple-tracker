@@ -341,24 +341,58 @@ class LoginActivity : ComponentActivity() {
             val verifyEx = verifyResp.exceptionOrNull()
 
             // 步骤 3：verifyLogin 成功 → 用返回的 user_id + profile 设置本地用户
-            if (verifyOk?.isSuccessful == true && verifyBody?.user_id != null) {
-                val userId = verifyBody.user_id!!
-                val profile = verifyBody.profile
+            // ✅ 兼容两种格式：
+            //    cache 旧函数（schema cache 未刷新）→ f1~f8 命名字段 + 顶层 user_id=null
+            //    新函数（若将来刷新 cache）→ 命名字段 + 顶层 user_id 正确
+            if (verifyOk?.isSuccessful == true && verifyBody != null) {
+                val rawProfile = verifyBody.profile
+                val userId = verifyBody.user_id
+                    ?: rawProfile?.get("f1")?.asString   // 旧格式：f1 = id
+                    ?: rawProfile?.get("id")?.asString    // 新格式：id
 
-                // 存一个 placeholder token（后续 REST API 用 anon key 就能读写，RLS 全放开）
+                if (userId.isNullOrBlank()) {
+                    withContext(Dispatchers.Main) {
+                        userMsg = "登录返回数据异常，请联系开发者"
+                        loading = false
+                    }
+                    return@launch
+                }
+
+                // 手动取 profile 字段：优先命名字段 → 找不到 fallback 到 f1~f8
+                fun str(key: String, fKey: String): String {
+                    val v1 = runCatching { rawProfile?.get(key)?.asString }.getOrNull()
+                    if (!v1.isNullOrBlank() && v1 != "null") return v1
+                    val v2 = runCatching { rawProfile?.get(fKey)?.asString }.getOrNull()
+                    return if (!v2.isNullOrBlank() && v2 != "null") v2 else ""
+                }
+                fun strN(key: String, fKey: String): String? {
+                    val v1 = runCatching { rawProfile?.get(key)?.asString }.getOrNull()
+                    if (!v1.isNullOrBlank() && v1 != "null") return v1
+                    val v2 = runCatching { rawProfile?.get(fKey)?.asString }.getOrNull()
+                    return if (!v2.isNullOrBlank() && v2 != "null") v2 else null
+                }
+
+                val pUsername   = str("username", "f2")
+                val pNickname   = str("nickname", "f3")
+                val pAvatar     = str("avatar", "f4")
+                val pGender     = str("gender", "f5")
+                val pCoupleCode = str("couple_code", "f6")
+                val pCoupleId   = strN("couple_id", "f7")
+
+                // 存 placeholder token（后续 REST API 用 anon key 就能读写，RLS 全放开）
                 UserRepository.get().setToken("rpc_auth_${userId.take(16)}")
 
-                val finalGender = profile?.gender ?: gender
-                val finalAvatar = if (profile?.avatar.isNullOrBlank()) avatar else profile!!.avatar!!
-                val finalNickname = profile?.nickname?.takeIf { it.isNotBlank() }
+                val finalGender = pGender.takeIf { it.isNotBlank() } ?: gender
+                val finalAvatar = pAvatar.takeIf { it.isNotBlank() } ?: avatar
+                val finalNickname = pNickname.takeIf { it.isNotBlank() }
                     ?: cleanName.ifBlank { cleanUser }
-                val finalCoupleCode = profile?.couple_code.orEmpty()
+                val finalCoupleCode = pCoupleCode
 
                 pairCode = finalCoupleCode
                 UserRepository.get().setUser(
                     UserInfo(
                         id = userId,
-                        username = profile?.username ?: cleanUser,
+                        username = pUsername.takeIf { it.isNotBlank() } ?: cleanUser,
                         nickname = finalNickname,
                         gender = finalGender,
                         avatar = finalAvatar,

@@ -1,6 +1,7 @@
 package com.coupletracker.android.data
 
 import com.google.gson.annotations.SerializedName
+import com.google.gson.JsonObject
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -55,14 +56,16 @@ data class SupabaseUser(
 interface RpcService {
 
     /** @see public.register_user(p_username, p_password, p_nickname, p_gender) returns jsonb
-     *  SECURITY DEFINER，直接 INSERT auth.users，**永不触发邮件发送**，无 429 限流 */
+     *  Schema cache 已确认参数签名就是「带 p_ 前缀」，正好匹配 @SerializedName("p_xxx")
+     *  SECURITY DEFINER，直接 INSERT public.profiles + bcrypt 密码哈希，**永不触发邮件** */
     @POST("register_user")
     suspend fun registerUser(
         @Body body: RegisterUserReq
     ): Response<RegisterUserResp>
 
     /** @see public.verify_login(p_username, p_password) returns jsonb
-     *  用 crypt() 手动验证密码，返回 user_id + profile，**完全绕过 GoTrue signIn** */
+     *  Schema cache 已确认参数签名就是「带 p_ 前缀」，正好匹配 @SerializedName("p_xxx")
+     *  用 crypt() 手动验证密码，返回 user_id + profile，**完全绕过 GoTrue** */
     @POST("verify_login")
     suspend fun verifyLogin(
         @Body body: VerifyLoginReq
@@ -94,7 +97,8 @@ data class VerifyLoginReq(
 
 data class VerifyLoginResp(
     val user_id: String? = null,
-    val profile: Profile? = null
+    /** 原始 profile JSON — cache 里旧函数返回 f1~f8 格式，新函数返回命名字段，LoginActivity 内手动兼容 */
+    val profile: JsonObject? = null
 )
 
 /** PostgREST RPC 错误格式（HTTP 4xx / 5xx） */
