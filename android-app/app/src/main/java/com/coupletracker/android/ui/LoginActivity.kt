@@ -34,6 +34,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.coupletracker.android.appmonitor.AppUsageMonitor
 import com.coupletracker.android.data.NetworkModule
+import com.coupletracker.android.data.SignInBody
 import com.coupletracker.android.data.SignUpBody
 import com.coupletracker.android.data.SignUpMetadata
 import com.coupletracker.android.data.UserRepository
@@ -205,6 +206,34 @@ class LoginActivity : ComponentActivity() {
                 }
 
                 Spacer(Modifier.height(26.dp))
+                // 注册模式：显示账号密码设置要求
+                if (mode == "register") {
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color.White.copy(alpha = 0.12f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            Text(
+                                "📌 账号密码要求",
+                                color = Color.White, fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(Modifier.height(5.dp))
+                            Text(
+                                "• 用户名 ≥ 3 位（字母/数字，推荐 6 位以上）\n" +
+                                "• 密码 ≥ 8 位，建议同时包含字母和数字\n" +
+                                "• 昵称将显示在地图上，给对方看的",
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 11.sp,
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
                 Button(
                     onClick = {
                         doAuth(mode, username, password, displayName, genderIdx, onLoginOk)
@@ -237,25 +266,44 @@ class LoginActivity : ComponentActivity() {
         mode: String, username: String, password: String, displayName: String,
         genderIdx: Int, onOk: () -> Unit
     ) {
+        // ===== 客户端先做格式校验，减少无效请求 / 429 限流 =====
+        val cleanUser = username.trim()
+        val cleanPass = password.trim()
+        val cleanName = displayName.trim()
+
+        when {
+            cleanUser.length < 3 -> {
+                userMsg = "❌ 用户名至少 3 位（字母/数字，推荐 6 位以上）"; loading = false; return
+            }
+            cleanPass.length < 8 -> {
+                userMsg = "❌ 密码至少 8 位，建议同时包含字母和数字"; loading = false; return
+            }
+            mode == "register" && cleanName.isEmpty() -> {
+                userMsg = "❌ 请填写昵称（会在地图上显示给TA）"; loading = false; return
+            }
+        }
+
         userMsg = ""; loading = true
         lifecycleScope.launch(Dispatchers.IO) {
-            // 用 username 当 email（Supabase 要求 email 格式）
-            val email = if (username.contains("@")) username else "$username@coupletracker.local"
+            // 用 username 当 email（Supabase 要求 email 格式，内部加后缀不影响使用）
+            val email = if (cleanUser.contains("@")) cleanUser else "$cleanUser@coupletracker.local"
             val gender = if (genderIdx == 0) "female" else "male"
             val avatar = if (genderIdx == 0) "💗" else "💙"
 
             // 1. 调 Supabase Auth
             val authResult = runCatching {
                 if (mode == "login") {
-                    NetworkModule.authService.signIn(email, password)
+                    NetworkModule.authService.signIn(
+                        SignInBody(email = email, password = cleanPass)
+                    )
                 } else {
                     NetworkModule.authService.signUp(
                         SignUpBody(
                             email = email,
-                            password = password,
+                            password = cleanPass,
                             data = SignUpMetadata(
-                                username = username,
-                                nickname = displayName
+                                username = cleanUser,
+                                nickname = cleanName
                             )
                         )
                     )
@@ -273,8 +321,8 @@ class LoginActivity : ComponentActivity() {
                 UserRepository.get().setUser(
                     com.coupletracker.android.data.model.UserInfo(
                         id = authUserId,
-                        username = username,
-                        nickname = displayName,
+                        username = cleanUser,
+                        nickname = cleanName.ifBlank { cleanUser },
                         gender = gender,
                         avatar = avatar,
                         coupleCode = ""
@@ -292,7 +340,7 @@ class LoginActivity : ComponentActivity() {
                         com.coupletracker.android.data.model.UserInfo(
                             id = profile.id,
                             username = profile.username,
-                            nickname = profile.nickname.ifBlank { displayName },
+                            nickname = profile.nickname.ifBlank { cleanName.ifBlank { cleanUser } },
                             gender = gender,
                             avatar = avatar,
                             coupleCode = profile.couple_code
@@ -300,22 +348,58 @@ class LoginActivity : ComponentActivity() {
                     )
                 }
                 withContext(Dispatchers.Main) {
-                    userMsg = if (mode == "login") "欢迎回来，$displayName 💕"
-                             else "注册成功！$displayName 💕"
+                    userMsg = if (mode == "login") "欢迎回来，$cleanName 💕"
+                             else "注册成功！$cleanName 💕"
                     loading = false
                     onOk()
                 }
             } else {
-                // Supabase 错误信息
-                val errBody = authResult.getOrNull()?.errorBody()?.string()
+                // Supabase 错误信息 → 翻译成用户能懂的中文
+                val errBodyRaw = runCatching { ok?.errorBody()?.string() }.getOrNull().orEmpty()
                 val netErr = authResult.exceptionOrNull()
+                val errCode = ok?.code() ?: 0
+
                 val err = when {
-                    errBody?.contains("already") == true -> "账号已存在，请直接登录"
-                    errBody?.contains("Invalid") == true -> "账号或密码错误"
-                    errBody?.contains("User not found") == true -> "账号不存在，请先注册"
-                    ok != null -> "请求失败 (${ok.code()})"
-                    netErr != null -> "网络异常：${netErr.message}\n请检查手机网络连接"
-                    else -> "未知错误"
+                    // === 429 限流（本地反复重试时会触发） ===
+                    errCode == 429 || errBodyRaw.contains("email rate limit") ||
+                        errBodyRaw.contains("over_email_send_rate_limit") -> {
+                        if (mode == "register") {
+                            "注册请求过多，请稍等 1 分钟后再试；\n也可以换个用户名试试"
+                        } else {
+                            "登录请求太多啦，稍等 1 分钟再试"
+                        }
+                    }
+                    // === 400：密码强度 / JSON 解析 / 账号被禁用等 ===
+                    errCode == 400 -> when {
+                        errBodyRaw.contains("password") && errBodyRaw.contains("length") ->
+                            "密码至少 8 位，请修改后重试"
+                        errBodyRaw.contains("bad_json") ->
+                            "请求格式错误，请更新到最新版 APP"
+                        errBodyRaw.contains("Email not confirmed") ->
+                            "请先检查邮箱确认邮件；或改用用户名 8 位以上"
+                        errBodyRaw.contains("Invalid login") ||
+                            errBodyRaw.contains("Invalid") ->
+                            "用户名或密码不对，请重新输入"
+                        else -> "请求失败，请检查：\n• 密码至少 8 位\n• 用户名 3 位以上"
+                    }
+                    // === 401 / 422：账号密码错误 / 账号已存在 ===
+                    errCode in 401..499 -> when {
+                        errBodyRaw.contains("already") || errBodyRaw.contains("already_registered") ->
+                            "账号已存在，请直接登录"
+                        errBodyRaw.contains("User not found") || errBodyRaw.contains("not_found") ->
+                            "账号不存在，请先注册"
+                        errBodyRaw.contains("Invalid") || errBodyRaw.contains("invalid") ->
+                            "用户名或密码不对"
+                        errBodyRaw.contains("password") ->
+                            "密码不对，再想想？"
+                        else -> "请求失败 ($errCode)\n密码至少 8 位 / 用户名 3 位"
+                    }
+                    // === 纯网络问题 ===
+                    netErr != null -> {
+                        val m = netErr.message?.take(50).orEmpty()
+                        "网络异常：$m\n请检查手机网络（4G/WiFi）"
+                    }
+                    else -> "请求失败，请稍后再试"
                 }
                 withContext(Dispatchers.Main) {
                     userMsg = err; loading = false

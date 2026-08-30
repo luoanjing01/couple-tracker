@@ -2,8 +2,6 @@ package com.coupletracker.android.data
 
 import retrofit2.Response
 import retrofit2.http.Body
-import retrofit2.http.Field
-import retrofit2.http.FormUrlEncoded
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.PATCH
@@ -23,12 +21,10 @@ interface AuthService {
         @Header("Authorization") apikey: String = ""  // signup 不需要 auth header
     ): Response<SupabaseAuthResp>
 
-    /** 邮箱密码登录 */
-    @FormUrlEncoded
+    /** 邮箱密码登录（Supabase GoTrue /token 要求 JSON body，grant_type 放 query） */
     @POST("token?grant_type=password")
     suspend fun signIn(
-        @Field("email") email: String,
-        @Field("password") password: String
+        @Body body: SignInBody
     ): Response<SupabaseAuthResp>
 
     /** 登出 */
@@ -46,6 +42,12 @@ data class SignUpBody(
 data class SignUpMetadata(
     val username: String? = null,
     val nickname: String? = null
+)
+
+/** Supabase /token?grant_type=password 登录请求体（JSON 格式，旧版 FormUrlEncoded 已被 GoTrue 弃用） */
+data class SignInBody(
+    val email: String,
+    val password: String
 )
 
 /** Supabase Auth 返回的会话 */
