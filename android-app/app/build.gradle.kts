@@ -14,18 +14,18 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
-        // ====== 服务器地址配置 ======
-        // 真机默认：开发电脑的局域网 IP（手机和电脑需在同一 Wi-Fi）
-        // 模拟器覆盖：在 gradle.properties 里设 CUSTOM_API_BASE=http://10.0.2.2:3001
-        val apiBase = project.properties["CUSTOM_API_BASE"] as? String
-            ?: "http://192.168.101.7:3001"
-        val webBase = project.properties["CUSTOM_WEB_BASE"] as? String
-            ?: "http://192.168.101.7:5173"
-        buildConfigField("String", "API_BASE", "\"$apiBase\"")
-        buildConfigField("String", "WEB_BASE", "\"$webBase\"")
-        // APP 内置的默认服务器地址，用户可在设置页修改（存 DataStore）
-        buildConfigField("String", "DEFAULT_API_BASE", "\"$apiBase\"")
-        buildConfigField("String", "DEFAULT_WEB_BASE", "\"$webBase\"")
+        // ====== Supabase 云端配置 ======
+        val supabaseUrl = project.properties["SUPABASE_URL"] as? String
+            ?: "https://gvytqbgangyjjurekyid.supabase.co"
+        val supabaseAnonKey = project.properties["SUPABASE_ANON_KEY"] as? String
+            ?: "sb_publishable_TmlnyTou7Z7JGt3vNP3TTw_3-KkCiCM"
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
+        // 旧地址保留（兼容用户设置页的地址输入）
+        buildConfigField("String", "API_BASE", "\"$supabaseUrl/rest/v1\"")
+        buildConfigField("String", "WEB_BASE", "\"$supabaseUrl\"")
+        buildConfigField("String", "DEFAULT_API_BASE", "\"$supabaseUrl/rest/v1\"")
+        buildConfigField("String", "DEFAULT_WEB_BASE", "\"$supabaseUrl\"")
 
         vectorDrawables { useSupportLibrary = true }
     }

@@ -43,9 +43,8 @@ class TrackerService : Service() {
         serviceScope.launch {
             UserRepository.get().userFlow.collect { user ->
                 if (user != null) {
-                    updateNotification("💕 已登录 · ${user.displayName}")
-                    // 建立Socket.IO长连接
-                    runCatching { NetworkModule.getSocket().connect() }
+                    updateNotification("💕 已登录 · ${user.nickname.ifBlank { user.username }}")
+                    // ⚡ 位置和APP使用数据会通过 Supabase REST API 自动上报
                     // 启动定位（5秒一次）
                     if (locationTracker.hasPermission()) {
                         locationTracker.start(5000L)
@@ -75,7 +74,6 @@ class TrackerService : Service() {
         serviceScope.cancel()
         runCatching { locationTracker.stop() }
         runCatching { appMonitor.stop() }
-        runCatching { NetworkModule.disconnectSocket() }
         batteryJob?.cancel()
         super.onDestroy()
     }

@@ -237,55 +237,84 @@ class LoginActivity : ComponentActivity() {
     ) {
         userMsg = ""; loading = true
         lifecycleScope.launch(Dispatchers.IO) {
-            val resp = runCatching {
+            // 用 username 当 email（Supabase 要求 email 格式）
+            val email = if (username.contains("@")) username else "$username@coupletracker.local"
+            val gender = if (genderIdx == 0) "female" else "male"
+            val avatar = if (genderIdx == 0) "💗" else "💙"
+
+            // 1. 调 Supabase Auth
+            val authResult = runCatching {
                 if (mode == "login") {
-                    NetworkModule.api.login(LoginRequest(username, password))
+                    NetworkModule.authService.signIn(email, password)
                 } else {
-                    val gender = if (genderIdx == 0) "female" else "male"
-                    // 简单的 emoji 头像：女粉爱心/男蓝太阳
-                    val avatar = if (genderIdx == 0) "💗" else "💙"
-                    NetworkModule.api.register(
-                        RegisterRequest(
-                            username = username,
+                    NetworkModule.authService.signUp(
+                        SignUpBody(
+                            email = email,
                             password = password,
-                            nickname = displayName,
-                            gender = gender,
-                            avatar = avatar
+                            data = SignUpMetadata(
+                                username = username,
+                                nickname = displayName
+                            )
                         )
                     )
                 }
             }
-            // 网络层异常（连不上服务器 / 超时 / DNS 失败）→ resp.isFailure
-            val netErr = resp.exceptionOrNull()
-            val ok = resp.getOrNull()
-            val body = ok?.body()
-            val success = ok?.isSuccessful == true
-                    && body?.token != null
-                    && body.user != null
-                    && body.error == null
-            if (success && body != null) {
-                UserRepository.get().setToken(body.token!!)
-                UserRepository.get().setUser(body.user!!)
-                // 拉一次 /api/user/me ，补全 partner / coupleCode
-                runCatching {
-                    val me = NetworkModule.api.me().body()
-                    me?.user?.let { UserRepository.get().setUser(it) }
+
+            val ok = authResult.getOrNull()
+            val authBody = ok?.body()
+            val authToken = authBody?.access_token
+            val authUserId = authBody?.user?.id
+
+            // 2. 登录/注册成功 → 存 token + 从 REST API 拉 profile
+            if (ok?.isSuccessful == true && authToken != null && authUserId != null) {
+                UserRepository.get().setToken(authToken)
+                UserRepository.get().setUser(
+                    com.coupletracker.android.data.model.UserInfo(
+                        id = authUserId,
+                        username = username,
+                        nickname = displayName,
+                        gender = gender,
+                        avatar = avatar,
+                        coupleCode = ""
+                    )
+                )
+                // 3. 查 profile，拿 couple_code
+                val profileResp = runCatching {
+                    NetworkModule.restService.getProfile(id = authUserId)
                 }
-                pairCode = body.user!!.coupleCode.orEmpty()
+                val profile = profileResp.getOrNull()?.body()?.firstOrNull()
+                if (profile != null) {
+                    pairCode = profile.couple_code
+                    // 更新本地 user 信息（带 couple_code）
+                    UserRepository.get().setUser(
+                        com.coupletracker.android.data.model.UserInfo(
+                            id = profile.id,
+                            username = profile.username,
+                            nickname = profile.nickname.ifBlank { displayName },
+                            gender = gender,
+                            avatar = avatar,
+                            coupleCode = profile.couple_code
+                        )
+                    )
+                }
                 withContext(Dispatchers.Main) {
-                    userMsg = "欢迎你，${body.user!!.nickname} 💕"
+                    userMsg = if (mode == "login") "欢迎回来，$displayName 💕"
+                             else "注册成功！$displayName 💕"
                     loading = false
                     onOk()
                 }
             } else {
-                // 把真实原因暴露给用户，便于排查（连不上/超时/域名错/4xx）
-                val err = body?.error ?: body?.message
-                    ?: if (ok != null) "请求失败：${ok.code()}" else {
-                        // 网络异常时附上当前 API 地址，方便判断是不是 10.0.2.2 没改
-                        val base = NetworkModule.getApiBase()
-                        val cause = netErr?.message ?: "未知"
-                        "网络异常：无法连接服务器\n地址：$base\n原因：$cause\n\n请到「我的 → 服务器地址」改成电脑的局域网 IP（如 192.168.x.x:3001），并确认手机和电脑在同一 Wi-Fi。"
-                    }
+                // Supabase 错误信息
+                val errBody = authResult.getOrNull()?.errorBody()?.string()
+                val netErr = authResult.exceptionOrNull()
+                val err = when {
+                    errBody?.contains("already") == true -> "账号已存在，请直接登录"
+                    errBody?.contains("Invalid") == true -> "账号或密码错误"
+                    errBody?.contains("User not found") == true -> "账号不存在，请先注册"
+                    ok != null -> "请求失败 (${ok.code()})"
+                    netErr != null -> "网络异常：${netErr.message}\n请检查手机网络连接"
+                    else -> "未知错误"
+                }
                 withContext(Dispatchers.Main) {
                     userMsg = err; loading = false
                 }
@@ -356,28 +385,108 @@ class LoginActivity : ComponentActivity() {
                     onClick = {
                         loading = true; msg = ""
                         lifecycleScope.launch(Dispatchers.IO) {
-                            val resp = runCatching {
-                                NetworkModule.api.pairByCode(
-                                    com.coupletracker.android.data.model.PairRequest(
-                                        inputCode.trim()
-                                    )
-                                )
-                            }.getOrNull()
-                            val body = resp?.body()
-                            val ok = resp?.isSuccessful == true
-                                    && body != null
-                                    && (body["success"] == true
-                                    || body["status"] == "accepted")
-                            withContext(Dispatchers.Main) {
-                                loading = false
-                                msg = if (ok) body?.get("message").toString()
-                                    ?: "配对成功 💕"
-                                else {
-                                    (body?.get("error") as? String)
-                                        ?: body?.get("message") as? String
-                                        ?: "配对失败 (${resp?.code() ?: "net"})"
+                            val user = UserRepository.get().getUser()
+                            val myId = user?.id ?: ""
+                            val theirCode = inputCode.trim().uppercase()
+
+                            // 1. 查 TA 的 profile（按 couple_code）
+                            val theirProfileResp = runCatching {
+                                NetworkModule.restService.getProfile(coupleCode = theirCode)
+                            }
+                            val theirProfile = theirProfileResp.getOrNull()?.body()?.firstOrNull()
+
+                            if (theirProfile == null) {
+                                withContext(Dispatchers.Main) {
+                                    loading = false
+                                    msg = "配对码不存在，请检查是否输错 💕"
                                 }
-                                if (ok) onPairOkOrSkip()
+                                return@launch
+                            }
+                            if (theirProfile.id == myId) {
+                                withContext(Dispatchers.Main) {
+                                    loading = false
+                                    msg = "不能和自己配对哦 😅"
+                                }
+                                return@launch
+                            }
+
+                            // 2. TA 如果已有 couple → 直接用那个
+                            val coupleId: String = if (!theirProfile.couple_id.isNullOrBlank()) {
+                                theirProfile.couple_id
+                            } else {
+                                // TA 还没建 couple → 创建
+                                val createResp = runCatching {
+                                    NetworkModule.restService.createCouple(
+                                        mapOf(
+                                            "code" to theirCode,
+                                            "user_a" to theirProfile.id
+                                        )
+                                    )
+                                }
+                                createResp.getOrNull()?.body()?.id ?: ""
+                            }
+
+                            if (coupleId.isBlank()) {
+                                withContext(Dispatchers.Main) {
+                                    loading = false
+                                    msg = "配对失败：无法创建情侣关系"
+                                }
+                                return@launch
+                            }
+
+                            // 3. 把自己加入 couple（如果 TA 是 user_a 则我是 user_b；反之亦然）
+                            val coupleResp = runCatching {
+                                NetworkModule.restService.getCouple(code = theirCode)
+                            }
+                            val couple = coupleResp.getOrNull()?.body()?.firstOrNull()
+
+                            if (couple != null) {
+                                // 更新 couple，把自己加进去
+                                if (couple.user_a == myId) {
+                                    // 我是 user_a，TA 是 user_b（反过来也行，看谁先创建的）
+                                    val update = runCatching {
+                                        NetworkModule.restService.updateCouple(
+                                            id = couple.id,
+                                            body = mapOf("user_b" to theirProfile.id)
+                                        )
+                                    }
+                                    val update2 = runCatching {
+                                        NetworkModule.restService.updateCouple(
+                                            id = couple.id,
+                                            body = mapOf("user_b" to myId)
+                                        )
+                                    }
+                                } else {
+                                    runCatching {
+                                        NetworkModule.restService.updateCouple(
+                                            id = couple.id,
+                                            body = mapOf("user_b" to myId)
+                                        )
+                                    }
+                                }
+                                // 更新自己的 profile.couple_id
+                                runCatching {
+                                    NetworkModule.restService.updateProfile(
+                                        id = myId,
+                                        body = mapOf("couple_id" to couple.id)
+                                    )
+                                }
+                                // 刷新本地用户信息
+                                UserRepository.get().setUser(
+                                    user!!.copy(coupleCode = theirCode)
+                                )
+                                pairCode = theirCode
+
+                                withContext(Dispatchers.Main) {
+                                    loading = false
+                                    msg = "配对成功！💕 你们现在是一对啦"
+                                    onPairOkOrSkip()
+                                }
+                            } else {
+                                withContext(Dispatchers.Main) {
+                                    loading = false
+                                    msg = "配对失败：情侣关系未找到"
+                                }
                             }
                         }
                     },

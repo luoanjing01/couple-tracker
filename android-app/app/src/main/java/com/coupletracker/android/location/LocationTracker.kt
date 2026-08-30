@@ -10,7 +10,7 @@ import android.os.Looper
 import androidx.core.app.ActivityCompat
 import com.google.android.gms.location.*
 import com.coupletracker.android.data.NetworkModule
-import com.coupletracker.android.data.model.LocationRequest as ApiLocationRequest
+import com.coupletracker.android.data.UserRepository
 import kotlinx.coroutines.*
 import kotlinx.coroutines.tasks.await
 
@@ -74,16 +74,24 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         val isMoving = (loc.hasSpeed() && loc.speed > 0.5f)
 
         scope.launch(Dispatchers.IO) {
+            val user = UserRepository.get().getUser()
+            val userId = user?.id ?: return@launch
+            val coupleId = user?.coupleCode?.let { _ ->
+                // 简化：用 userId 当 couple_id 占位
+                userId
+            } ?: userId
+
             runCatching {
-                NetworkModule.api.reportLocation(
-                    ApiLocationRequest(
+                NetworkModule.restService.reportLocation(
+                    com.coupletracker.android.data.LocationRow(
+                        user_id = userId,
+                        couple_id = coupleId,
                         latitude = loc.latitude,
                         longitude = loc.longitude,
-                        accuracy = if (loc.hasAccuracy()) loc.accuracy else null,
-                        speed = if (loc.hasSpeed()) loc.speed else null,
-                        isMoving = isMoving,
-                        address = null,
-                        batteryLevel = batteryPct
+                        accuracy = if (loc.hasAccuracy()) loc.accuracy.toDouble() else null,
+                        speed = if (loc.hasSpeed()) loc.speed.toDouble() else null,
+                        battery_level = batteryPct,
+                        is_moving = isMoving
                     )
                 )
             }

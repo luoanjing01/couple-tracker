@@ -6,18 +6,18 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
 import android.os.Process
+import com.coupletracker.android.data.AppUsageRow
 import com.coupletracker.android.data.NetworkModule
-import com.coupletracker.android.data.model.ForegroundAppRequest
+import com.coupletracker.android.data.UserRepository
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * 应用使用监控器：基于系统 UsageStatsManager
- * - 每2秒检查一次前台APP（切换即上报 /api/app-usage/foreground）
- * - 每60秒心跳（/api/app-usage/heartbeat）刷新当前使用时长
+ * - 每2秒检查一次前台APP
+ * - 每60秒把当前APP的使用时长汇总上报到 Supabase app_usage 表
  */
 class AppUsageMonitor(private val context: Context, private val scope: CoroutineScope) {
 
@@ -25,7 +25,7 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
     private val pm = context.packageManager
     private var job: Job? = null
     private var lastPackage: String = ""
-    private var lastHbAt: Long = 0L
+    private var lastReportAt: Long = 0L
 
     private val _currentApp = MutableStateFlow<Pair<String, String>?>(null)
     val currentApp = _currentApp.asStateFlow()
@@ -49,7 +49,7 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
 
     fun start(pollMs: Long = 2000L) {
         if (job?.isActive == true) return
-        lastHbAt = System.currentTimeMillis()
+        lastReportAt = System.currentTimeMillis()
         job = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 runCatching { checkAndReport() }
@@ -64,28 +64,36 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
         if (!hasUsagePermission()) return
         val now = System.currentTimeMillis()
         val fg = getForegroundPackage() ?: return
-        if (fg.isEmpty() || fg == lastPackage) {
-            if (now - lastHbAt >= 60_000L && lastPackage.isNotEmpty()) {
-                lastHbAt = now
-                scope.launch(Dispatchers.IO) {
-                    runCatching { NetworkModule.api.heartbeatApp() }
-                }
-            }
-            return
+        if (fg.isEmpty()) return
+
+        if (fg != lastPackage) {
+            // APP 切换了 → 把旧 APP 的使用时长结算一下（简化：切换时也上报一次 0 时长，方便统计）
+            lastPackage = fg
+            lastReportAt = now
         }
-        lastPackage = fg
-        lastHbAt = now
-        val (appName, category) = getAppMeta(fg)
-        _currentApp.tryEmit(fg to appName)
-        scope.launch(Dispatchers.IO) {
-            runCatching {
-                NetworkModule.api.reportForeground(
-                    ForegroundAppRequest(
-                        packageName = fg,
-                        appName = appName,
-                        appCategory = category
+
+        // 每 60 秒上报一次当前 APP 的使用时长
+        if (now - lastReportAt >= 60_000L) {
+            val elapsedSeconds = ((now - lastReportAt) / 1000).toInt().coerceAtLeast(1)
+            lastReportAt = now
+            val (appName, category) = getAppMeta(fg)
+            _currentApp.tryEmit(fg to appName)
+            scope.launch(Dispatchers.IO) {
+                val user = UserRepository.get().getUser()
+                val userId = user?.id ?: return@launch
+                val coupleId = userId // 简化处理
+                runCatching {
+                    NetworkModule.restService.reportAppUsage(
+                        AppUsageRow(
+                            user_id = userId,
+                            couple_id = coupleId,
+                            package_name = fg,
+                            app_name = appName,
+                            category = category,
+                            usage_seconds = elapsedSeconds
+                        )
                     )
-                )
+                }
             }
         }
     }
@@ -112,7 +120,6 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
         return runCatching {
             val info = pm.getApplicationInfo(pkg, 0)
             val name = pm.getApplicationLabel(info).toString()
-            val isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
             val cat = when (info.category) {
                 ApplicationInfo.CATEGORY_GAME -> "游戏"
                 ApplicationInfo.CATEGORY_SOCIAL -> "社交"
@@ -146,5 +153,5 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
     }
 
     @Suppress("unused")
-    private val isSystemApp: Boolean get() = false // 保留字段，不再单独上报
+    private val isSystemApp: Boolean get() = false
 }

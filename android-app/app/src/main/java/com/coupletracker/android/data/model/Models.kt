@@ -17,21 +17,20 @@ data class RegisterRequest(
 )
 
 data class UserInfo(
-    val id: Int,
-    val username: String,
-    val nickname: String,              // 对应后端 nickname
-    val avatar: String,                // 头像
-    val gender: String,
-    @SerializedName("coupleCode")      // 后端直接返回 coupleCode（驼峰）
-    val coupleCode: String?,
+    val id: String = "",          // Supabase UUID (String)
+    val username: String = "",
+    val nickname: String = "",
+    val avatar: String = "",
+    val gender: String = "unknown",
+    @SerializedName("coupleCode")
+    val coupleCode: String? = null,
     @SerializedName("createdAt")
     val createdAt: String? = null
 ) {
-    // 方便旧代码读取
-    val displayName: String get() = nickname
+    val displayName: String get() = nickname.ifBlank { username }
     val color: String get() = if (gender == "female") "#FF6B9D" else "#4C9AFF"
     @SerializedName("partner_id")
-    val partnerId: Int? = null
+    val partnerId: String? = null
 }
 
 data class CoupleInfo(
