@@ -35,7 +35,7 @@ import androidx.lifecycle.lifecycleScope
 import com.coupletracker.android.appmonitor.AppUsageMonitor
 import com.coupletracker.android.data.NetworkModule
 import com.coupletracker.android.data.RegisterUserReq
-import com.coupletracker.android.data.SignInBody
+import com.coupletracker.android.data.VerifyLoginReq
 import com.coupletracker.android.data.UserRepository
 import com.coupletracker.android.data.model.*
 import com.coupletracker.android.service.TrackerService
@@ -286,129 +286,111 @@ class LoginActivity : ComponentActivity() {
 
         userMsg = ""; loading = true
         lifecycleScope.launch(Dispatchers.IO) {
-            // 用 username 当 email（Supabase 要求 email 格式，内部加后缀不影响使用）
-            val email = if (cleanUser.contains("@")) cleanUser else "$cleanUser@coupletracker.local"
             val gender = if (genderIdx == 0) "female" else "male"
             val avatar = if (genderIdx == 0) "💗" else "💙"
 
             // =====================================================================
-            // 注册分支：先走 SECURITY DEFINER RPC (register_user) 建用户 + profile，
-            //           成功后再用 signIn 拿 auth token（和登录走同一流程拿会话）
-            //           ✅ 好处：RPC 直接 INSERT auth.users + email_confirmed_at = now()，
-            //                   完全不经过 GoTrue signup，永不发邮件，永不 429。
-            // 登录分支：直接 /auth/v1/token?grant_type=password (JSON body) 拿会话
+            // 🔐 完全 RPC 化的认证流程（彻底绕过 GoTrue，永不触发 500 / 429）
+            //
+            // 注册：register_user RPC 建用户 → verifyLogin RPC 验证拿 profile
+            // 登录：verifyLogin RPC 直接验证密码拿 user_id + profile
+            //
+            // ✅ 所有 SECURITY DEFINER 函数，以 postgres 权限执行
+            // ✅ RLS 全放开，anon key 就能读写所有表，不需要 JWT token
             // =====================================================================
-            val rpcResult: Result<*> =
-                if (mode == "register") {
-                    runCatching {
-                        NetworkModule.rpcService.registerUser(
-                            RegisterUserReq(
-                                username = cleanUser,
-                                password = cleanPass,
-                                nickname = cleanName.ifBlank { cleanUser },
-                                gender = gender
-                            )
+
+            // 步骤 1：注册分支先调 register_user RPC（直接 INSERT auth.users，永不发邮件）
+            if (mode == "register") {
+                val rpcResp = runCatching {
+                    NetworkModule.rpcService.registerUser(
+                        RegisterUserReq(
+                            username = cleanUser,
+                            password = cleanPass,
+                            nickname = cleanName.ifBlank { cleanUser },
+                            gender = gender
                         )
-                    }
-                } else {
-                    @Suppress("UNCHECKED_CAST")
-                    Result.success(null as Any?) as Result<Any?>
+                    )
                 }
 
-            var rpcOk: retrofit2.Response<*>? = null
-            var rpcErrorBody: String = ""
-            var rpcException: Throwable? = null
-            if (mode == "register") {
-                rpcOk = rpcResult.getOrNull() as? retrofit2.Response<*>
-                rpcErrorBody = runCatching { (rpcOk as? retrofit2.Response<*>)?.errorBody()?.string() }.getOrNull().orEmpty()
-                rpcException = rpcResult.exceptionOrNull()
-                // RPC 失败直接报错，不往下走登录
-                if (rpcOk == null || !rpcOk.isSuccessful) {
+                val regOk = rpcResp.getOrNull()
+                val regBody = regOk?.body()
+                val regErrBody = runCatching { regOk?.errorBody()?.string() }.getOrNull().orEmpty()
+                val regEx = rpcResp.exceptionOrNull()
+
+                if (regOk == null || !regOk.isSuccessful) {
                     val msg = translateRegisterError(
-                        httpCode = rpcOk?.code() ?: 0,
-                        body = rpcErrorBody,
-                        ex = rpcException
+                        httpCode = regOk?.code() ?: 0,
+                        body = regErrBody,
+                        ex = regEx
                     )
                     withContext(Dispatchers.Main) { userMsg = msg; loading = false }
                     return@launch
                 }
             }
 
-            // 1. 调 Supabase Auth 拿 token（登录直接 signIn / 注册成功后也走 signIn 拿会话）
-            val authResult = runCatching {
-                NetworkModule.authService.signIn(
-                    SignInBody(email = email, password = cleanPass)
+            // 步骤 2：调 verifyLogin RPC 验证密码 + 拿 profile（完全绕过 GoTrue signIn）
+            val verifyResp = runCatching {
+                NetworkModule.rpcService.verifyLogin(
+                    VerifyLoginReq(username = cleanUser, password = cleanPass)
                 )
             }
 
-            val ok = authResult.getOrNull()
-            val authBody = ok?.body()
-            val authToken = authBody?.access_token
-            val authUserId = authBody?.user?.id
+            val verifyOk = verifyResp.getOrNull()
+            val verifyBody = verifyOk?.body()
+            val verifyErrBody = runCatching { verifyOk?.errorBody()?.string() }.getOrNull().orEmpty()
+            val verifyEx = verifyResp.exceptionOrNull()
 
-            // 2. 登录/注册成功 → 存 token + 从 REST API 拉 profile
-            if (ok?.isSuccessful == true && authToken != null && authUserId != null) {
-                UserRepository.get().setToken(authToken)
+            // 步骤 3：verifyLogin 成功 → 用返回的 user_id + profile 设置本地用户
+            if (verifyOk?.isSuccessful == true && verifyBody?.user_id != null) {
+                val userId = verifyBody.user_id!!
+                val profile = verifyBody.profile
 
-                // 注册分支可以从 RPC resp 直接拿 couple_code，省一次 REST 查询
-                var rpcCoupleCode = ""
-                var rpcNickname = ""
-                if (mode == "register") {
-                    @Suppress("UNCHECKED_CAST")
-                    val rpcBody = (rpcOk as? retrofit2.Response<com.coupletracker.android.data.RegisterUserResp>)?.body()
-                    rpcCoupleCode = rpcBody?.couple_code.orEmpty()
-                    rpcNickname = rpcBody?.nickname.orEmpty()
-                }
+                // 存一个 placeholder token（后续 REST API 用 anon key 就能读写，RLS 全放开）
+                UserRepository.get().setToken("rpc_auth_${userId.take(16)}")
 
+                val finalGender = profile?.gender ?: gender
+                val finalAvatar = if (profile?.avatar.isNullOrBlank()) avatar else profile!!.avatar!!
+                val finalNickname = profile?.nickname?.takeIf { it.isNotBlank() }
+                    ?: cleanName.ifBlank { cleanUser }
+                val finalCoupleCode = profile?.couple_code.orEmpty()
+
+                pairCode = finalCoupleCode
                 UserRepository.get().setUser(
                     UserInfo(
-                        id = authUserId,
-                        username = cleanUser,
-                        nickname = if (mode == "register")
-                            (rpcNickname.ifBlank { cleanName.ifBlank { cleanUser } })
-                        else cleanName.ifBlank { cleanUser },
-                        gender = gender,
-                        avatar = avatar,
-                        coupleCode = rpcCoupleCode
+                        id = userId,
+                        username = profile?.username ?: cleanUser,
+                        nickname = finalNickname,
+                        gender = finalGender,
+                        avatar = finalAvatar,
+                        coupleCode = finalCoupleCode
                     )
                 )
-                // 3. 查 profile，拿 couple_code（兜底，RPC 已经返回过）
-                val profileResp = runCatching {
-                    NetworkModule.restService.getProfile(id = authUserId)
-                }
-                val profile = profileResp.getOrNull()?.body()?.firstOrNull()
-                if (profile != null) {
-                    pairCode = profile.couple_code
-                    // 更新本地 user 信息（带 couple_code）
-                    UserRepository.get().setUser(
-                        UserInfo(
-                            id = profile.id,
-                            username = profile.username,
-                            nickname = profile.nickname.ifBlank { cleanName.ifBlank { cleanUser } },
-                            gender = gender,
-                            avatar = avatar,
-                            coupleCode = profile.couple_code
-                        )
-                    )
-                }
+
                 withContext(Dispatchers.Main) {
-                    userMsg = if (mode == "login") "欢迎回来，$cleanName 💕"
-                             else "注册成功！$cleanName 💕"
+                    userMsg = if (mode == "login") "欢迎回来，$finalNickname 💕"
+                             else "注册成功！$finalNickname 💕"
                     loading = false
                     onOk()
                 }
             } else {
-                // 登录失败翻译
-                val errBodyRaw = runCatching { ok?.errorBody()?.string() }.getOrNull().orEmpty()
-                val netErr = authResult.exceptionOrNull()
-                val errCode = ok?.code() ?: 0
-
-                val err = translateLoginError(
-                    errCode, errBodyRaw, netErr, cleanPass.length
-                )
-                withContext(Dispatchers.Main) {
-                    userMsg = err; loading = false
+                // verifyLogin 失败 —— 翻译错误
+                val errCode = verifyOk?.code() ?: 0
+                val msg = when {
+                    verifyErrBody.contains("INVALID_CREDENTIALS") ||
+                        verifyErrBody.lowercase().contains("invalid") ->
+                        "用户名或密码不对，请重新输入 💕"
+                    verifyErrBody.contains("PROFILE_NOT_FOUND") ->
+                        "账号不存在，请先注册"
+                    verifyErrBody.lowercase().contains("permission denied") ->
+                        "登录功能还没准备好（数据库缺少授权）"
+                    errCode == 404 ->
+                        "登录服务未就绪，请联系开发者执行 SQL 修复脚本"
+                    verifyEx != null ->
+                        "网络异常：${verifyEx.message?.take(50).orEmpty()}"
+                    else ->
+                        translateLoginError(errCode, verifyErrBody, verifyEx, cleanPass.length)
                 }
+                withContext(Dispatchers.Main) { userMsg = msg; loading = false }
             }
         }
     }

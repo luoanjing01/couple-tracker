@@ -54,11 +54,19 @@ data class SupabaseUser(
 // ============================================================
 interface RpcService {
 
-    /** @see public.register_user(username, password, nickname, gender) returns jsonb */
+    /** @see public.register_user(p_username, p_password, p_nickname, p_gender) returns jsonb
+     *  SECURITY DEFINER，直接 INSERT auth.users，**永不触发邮件发送**，无 429 限流 */
     @POST("register_user")
     suspend fun registerUser(
         @Body body: RegisterUserReq
     ): Response<RegisterUserResp>
+
+    /** @see public.verify_login(p_username, p_password) returns jsonb
+     *  用 crypt() 手动验证密码，返回 user_id + profile，**完全绕过 GoTrue signIn** */
+    @POST("verify_login")
+    suspend fun verifyLogin(
+        @Body body: VerifyLoginReq
+    ): Response<VerifyLoginResp>
 }
 
 data class RegisterUserReq(
@@ -77,6 +85,16 @@ data class RegisterUserResp(
     val nickname: String? = null,
     val gender: String? = null,
     val avatar: String? = null
+)
+
+data class VerifyLoginReq(
+    @SerializedName("p_username") val username: String,
+    @SerializedName("p_password") val password: String
+)
+
+data class VerifyLoginResp(
+    val user_id: String? = null,
+    val profile: Profile? = null
 )
 
 /** PostgREST RPC 错误格式（HTTP 4xx / 5xx） */
