@@ -1,0 +1,16 @@
+{
+  "name": "couple-tracker",
+  "version": "1.0.0",
+  "description": "情侣自动报备软件 - 位置、应用使用、轨迹统计",
+  "private": true,
+  "scripts": {
+    "install:all": "cd backend && npm install && cd ../frontend && npm install && cd ../mobile-simulator && npm install",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "simulate": "cd mobile-simulator && npm start",
+    "start": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

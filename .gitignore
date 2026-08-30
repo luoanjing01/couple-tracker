@@ -1,0 +1,53 @@
+# ===============================
+# CoupleTracker Git Ignore
+# ===============================
+
+# 依赖
+node_modules/
+**/node_modules/
+
+# 构建产物
+dist/
+**/dist/
+build/
+**/build/
+*.apk
+*.aab
+
+# 数据库（本地开发的 JSON DB 不要入库）
+backend/couple_tracker.json
+backend/*.json.bak
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# Android
+**/android-app/.gradle/
+**/android-app/local.properties
+**/android-app/app/build/
+**/android-app/build/
+**/android-app/.cxx/
+**/android-app/.externalNativeBuild/
+
+# 构建工具（本地下载的 JDK/Gradle 不要入库）
+_build_tools/
+
+# CircleCI / 临时脚本
+_tmp_*.ps1
+_tmp_*.js
+_run_ps.js
+
+# 移动端模拟器日志
+mobile-simulator/*.log

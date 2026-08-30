@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">💕 情侣空间</string>
+
+    <!-- 前台服务通知 -->
+    <string name="tracker_channel_id">couple_tracker_service</string>
+    <string name="tracker_channel_name">💕 实时报备服务</string>
+    <string name="tracker_channel_desc">持续上报位置和应用使用情况给情侣</string>
+    <string name="tracker_notif_title">💕 正在实时报备给TA</string>
+    <string name="tracker_notif_text">位置 · 应用使用 · 移动轨迹 全部实时同步</string>
+
+    <!-- 权限说明 -->
+    <string name="perm_location_title">📍 始终允许定位</string>
+    <string name="perm_location_desc">为了让你的伴侣随时能看到你在哪里，需要始终允许定位权限（含后台）</string>
+    <string name="perm_usage_title">📱 查看使用情况</string>
+    <string name="perm_usage_desc">跳转到系统设置，请找到本APP并开启「使用情况访问」权限</string>
+    <string name="perm_notification_title">🔔 开启通知</string>
+    <string name="perm_notification_desc">前台服务通知用于保持稳定运行，同时接收TA的切换提醒</string>
+
+    <!-- 页面标签 -->
+    <string name="tab_map">🗺️ 地图</string>
+    <string name="tab_apps">📱 应用</string>
+    <string name="tab_stats">📊 统计</string>
+</resources>

@@ -1,0 +1,27 @@
+# ============================================================
+# Render 部署配置 —— 情侣报备 后端 API
+# 免费版 Node.js Web Service，自动从 GitHub 部署
+# https://render.com/docs/deploy-node-express-apps
+# ============================================================
+
+services:
+  - name: couple-tracker-api
+    type: web
+    env: node
+    # 指向 monorepo 里的 backend 目录
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free
+    # Render 自动注入 PORT 环境变量，server.js 已经支持
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: RENDER
+        value: "true"
+      # 等前端部署到 Vercel 后，把下面改成你的 Vercel 域名
+      - key: CORS_ORIGINS
+        value: "*"

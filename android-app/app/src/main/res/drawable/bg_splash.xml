@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 启动屏背景（粉紫渐变+爱心） -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="135"
+                android:startColor="#FF6B9D"
+                android:centerColor="#D53F8C"
+                android:endColor="#667EEA" />
+        </shape>
+    </item>
+</layer-list>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 情侣主题配色（与Web端一致：粉色+紫色） -->
+    <color name="primary">#FF6B9D</color>
+    <color name="primary_dark">#E75480</color>
+    <color name="secondary">#667EEA</color>
+    <color name="bg">#FDF2F8</color>
+    <color name="text">#2D3748</color>
+    <color name="text_light">#718096</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>

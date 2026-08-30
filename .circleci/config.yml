@@ -1,0 +1,110 @@
+# ============== 情侣自动报备 CoupleTracker Android APP 构建流水线 ==============
+# Trigger: Push to any branch / Pull request / Git tag v*
+# Outputs:
+#   - CoupleTracker-debug.apk    (可直接安装)
+#   - CoupleTracker-release-unsigned.apk
+#   - Build logs + dependency metadata
+version: 2.1
+
+orbs:
+  android: circleci/android@2.5.0
+
+executors:
+  android-executor:
+    docker:
+      # Preinstalled: JDK 21 (temurin), Android SDK 34, build-tools 34.0.0, platform-tools
+      - image: cimg/android:2024.08.2
+    resource_class: xlarge
+    working_directory: ~/repo
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx5g -XX:+UseG1GC"
+      GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8 -Dkotlin.compiler.execution.strategy=in-process"
+      ANDROID_HOME: "/opt/android/sdk"
+      ANDROID_SDK_ROOT: "/opt/android/sdk"
+
+commands:
+  gradle_bootstrap:
+    description: "Ensure gradle 8.5 is available and generate wrapper if needed"
+    steps:
+      - run:
+          name: "Bootstrap Gradle 8.5"
+          working_directory: ~/repo/android-app
+          command: |
+            set -euo pipefail
+            if [ -x ./gradlew ]; then
+              echo "[OK] gradlew wrapper already present"
+              ./gradlew --version
+              exit 0
+            fi
+            echo "[INSTALL] system gradle 8.5 then generate wrapper"
+            curl -sSL https://services.gradle.org/distributions/gradle-8.5-bin.zip -o /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d ~/.gradle-tools
+            export PATH=~/.gradle-tools/gradle-8.5/bin:$PATH
+            gradle --version
+            gradle wrapper --gradle-version 8.5 --distribution-type bin
+            chmod +x ./gradlew
+
+jobs:
+  build_apk:
+    executor: android-executor
+    steps:
+      - checkout
+
+      - android/restore-gradle-cache
+
+      - gradle_bootstrap
+
+      - run:
+          name: "Ensure Android SDK 34 & Licenses"
+          working_directory: ~/repo/android-app
+          command: |
+            set -euo pipefail
+            yes | sdkmanager --licenses >/dev/null 2>&1 || true
+            sdkmanager --install "platforms;android-34" "build-tools;34.0.0" >/dev/null
+            sdkmanager --list_installed 2>/dev/null | grep -E "(platforms;android-34|build-tools;34)"
+
+      - run:
+          name: "Build APK (Debug + Release)"
+          working_directory: ~/repo/android-app
+          command: |
+            set -euo pipefail
+            ./gradlew :app:assembleDebug :app:assembleRelease --stacktrace --console=plain --no-build-cache
+
+      - android/save-gradle-cache
+
+      # ========= Artifacts =========
+      - store_artifacts:
+          path: ~/repo/android-app/app/build/outputs/apk/debug/app-debug.apk
+          destination: CoupleTracker-debug.apk
+      - store_artifacts:
+          path: ~/repo/android-app/app/build/outputs/apk/release/app-release-unsigned.apk
+          destination: CoupleTracker-release-unsigned.apk
+      - store_artifacts:
+          path: ~/repo/android-app/app/build/outputs/mapping
+          destination: mapping
+      - store_artifacts:
+          path: ~/repo/android-app/app/build/reports
+          destination: build-reports
+
+      - run:
+          name: "Collect build logs & outputs summary"
+          when: always
+          command: |
+            mkdir -p /tmp/build-out
+            ls -lah ~/repo/android-app/app/build/outputs/apk/debug/ 2>/dev/null  | tee /tmp/build-out/apk-size.txt || true
+            find ~/repo/android-app/app/build -name "*.log" -exec cp {} /tmp/build-out/ \; 2>/dev/null || true
+      - store_artifacts:
+          path: /tmp/build-out
+          destination: build-summary
+
+workflows:
+  version: 2
+  build_and_release:
+    jobs:
+      - build_apk:
+          filters:
+            # Build every push, every PR, and every v* tag.
+            branches:
+              only: /.*/
+            tags:
+              only: /^v.*/

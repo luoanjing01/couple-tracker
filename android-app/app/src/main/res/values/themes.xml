@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!--
+        使用 DeviceDefault Light NoActionBar 主题，兼容：
+        - 普通 Activity（Splash）
+        - ComponentActivity（Compose）
+        Material3 的动态颜色完全在 Compose runtime 内生效，不依赖 Activity 主题。
+    -->
+    <style name="Theme.CoupleTracker" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/primary</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+        <item name="android:navigationBarColor">@color/white</item>
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
+
+    <style name="Theme.CoupleTracker.Splash" parent="Theme.CoupleTracker">
+        <item name="android:windowBackground">@drawable/bg_splash</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+    </style>
+</resources>
