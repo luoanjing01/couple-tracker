@@ -195,9 +195,10 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
+                            val webViewRef = this
                             CookieManager.getInstance().apply {
                                 setAcceptCookie(true)
-                                setAcceptThirdPartyCookies(this@apply, true)
+                                setAcceptThirdPartyCookies(webViewRef, true)
                             }
                             webChromeClient = object : WebChromeClient() {}
                             // 优先加载本地离线地图（assets/www/index.html）
