@@ -69,25 +69,25 @@ jobs:
           echo "[INFO] Mapping/reports:"
           ls app/build/reports/ 2>/dev/null || echo "(no reports)"
 
-      - name: Collect build outputs
+      - name: List all APK outputs (debug)
         if: always()
-        id: outputs
         run: |
-          DEBUG_APK="android-app/app/build/outputs/apk/debug/app-debug.apk"
-          if [ -f "$DEBUG_APK" ]; then
-            SIZE=$(du -h "$DEBUG_APK" | cut -f1)
-            echo "debug_apk_exists=true" >> $GITHUB_OUTPUT
-            echo "debug_apk_size=$SIZE" >> $GITHUB_OUTPUT
-          else
-            echo "debug_apk_exists=false" >> $GITHUB_OUTPUT
-          fi
+          echo "=== Searching for APKs ==="
+          find android-app -name "*.apk" -type f -printf "FOUND: %p (%s bytes)\n" 2>/dev/null || true
+          echo "=== Listing debug/ dir ==="
+          ls -lR android-app/app/build/outputs/apk/ 2>/dev/null || echo "(apk output dir missing or empty)"
+          echo "=== workspace dir ==="
+          ls -la "$GITHUB_WORKSPACE" | head -20
 
       - name: Upload Debug APK artifact
-        if: steps.outputs.outputs.debug_apk_exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: CoupleTracker-debug-apk
-          path: android-app/app/build/outputs/apk/debug/app-debug.apk
+          # glob 匹配：主路径 + 回退路径，找不到就明确 error
+          path: |
+            android-app/app/build/outputs/apk/debug/app-debug.apk
+            android-app/**/app-debug.apk
+            android-app/**/*.apk
           if-no-files-found: error
           compression-level: 6
           retention-days: 30
