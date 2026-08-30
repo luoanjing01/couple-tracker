@@ -51,3 +51,10 @@ _run_ps.js
 
 # 移动端模拟器日志
 mobile-simulator/*.log
+
+.gradle-user/
+*.apk
+sql_step1_grants.sql
+supabase_schema_rpc_only.sql
+supabase-edge-function-register-user.js
+

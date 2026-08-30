@@ -23,13 +23,18 @@ object NetworkModule {
 
     private lateinit var authRetrofit: Retrofit
     private lateinit var restRetrofit: Retrofit
+    private lateinit var rpcRetrofit: Retrofit
 
     /** Auth API（/auth/v1）*/
     lateinit var authService: AuthService
         private set
 
-    /** REST API（/rest/v1）*/
+    /** REST API（/rest/v1） - 数据 CRUD（PostgREST table）*/
     lateinit var restService: RestService
+        private set
+
+    /** RPC API（/rest/v1/rpc/） - 调用 SECURITY DEFINER 函数（如 register_user）*/
+    lateinit var rpcService: RpcService
         private set
 
     private const val SUPABASE_URL = BuildConfig.SUPABASE_URL
@@ -42,14 +47,25 @@ object NetworkModule {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .addInterceptor(logging)
-            .addInterceptor(supabaseHeaderInterceptor(isAuth = true))
+            .addInterceptor(supabaseHeaderInterceptor(addAuthHeader = false))
             .build()
 
         val restClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .addInterceptor(logging)
-            .addInterceptor(supabaseHeaderInterceptor(isAuth = false))
+            .addInterceptor(supabaseHeaderInterceptor(addAuthHeader = true))
+            .build()
+
+        // RPC 也走 /rest/v1/rpc/，但和 REST 共用 base 可以，只是 path 加 "rpc/" 前缀
+        // 为了清晰独立一个 Retrofit（注册时还没 token，用的是 anon key）
+        val rpcClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .addInterceptor(logging)
+            // RPC 调用：注册前没有 token（register_user 给 anon 调用），
+            // 其他 RPC 之后可能需要 token，这里默认和 REST 一样优先带 token。
+            .addInterceptor(supabaseHeaderInterceptor(addAuthHeader = true))
             .build()
 
         authRetrofit = Retrofit.Builder()
@@ -64,25 +80,30 @@ object NetworkModule {
             .addConverterFactory(GsonConverterFactory.create())
             .build()
 
+        rpcRetrofit = Retrofit.Builder()
+            .baseUrl("$SUPABASE_URL/rest/v1/rpc/")
+            .client(rpcClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+
         authService = authRetrofit.create(AuthService::class.java)
         restService = restRetrofit.create(RestService::class.java)
+        rpcService  = rpcRetrofit.create(RpcService::class.java)
     }
 
     /**
      * 给每个请求加 Supabase 必须的 header：
      *   apikey: <anon_key>
-     *   Authorization: Bearer <jwt>  (已登录时)
+     *   Authorization: Bearer <jwt>  (addAuthHeader=true 且已登录时)
      */
-    private fun supabaseHeaderInterceptor(isAuth: Boolean) = Interceptor { chain ->
+    private fun supabaseHeaderInterceptor(addAuthHeader: Boolean) = Interceptor { chain ->
         val original: Request = chain.request()
         val builder = original.newBuilder()
             .header("apikey", SUPABASE_ANON_KEY)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
 
-        // Auth API 本身不带 Authorization（登录前没 token）
-        // REST API 必须带
-        if (!isAuth) {
+        if (addAuthHeader) {
             val token = runCatching {
                 runBlocking { UserRepository.get().getToken() }
             }.getOrNull()

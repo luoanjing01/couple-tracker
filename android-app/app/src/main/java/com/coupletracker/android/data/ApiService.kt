@@ -13,14 +13,6 @@ import retrofit2.http.Query
 // ============================================================
 interface AuthService {
 
-    /** 注册：Supabase 自动生成 email + password 用户，
-     *   并通过 handle_new_user() trigger 创建 profiles 记录 */
-    @POST("signup")
-    suspend fun signUp(
-        @Body body: SignUpBody,
-        @Header("Authorization") apikey: String = ""  // signup 不需要 auth header
-    ): Response<SupabaseAuthResp>
-
     /** 邮箱密码登录（Supabase GoTrue /token 要求 JSON body，grant_type 放 query） */
     @POST("token?grant_type=password")
     suspend fun signIn(
@@ -31,18 +23,6 @@ interface AuthService {
     @POST("logout")
     suspend fun logout(): Response<Unit>
 }
-
-/** Supabase 注册请求体（email 当用户名用，真实用户名放 data）*/
-data class SignUpBody(
-    val email: String,
-    val password: String,
-    val data: SignUpMetadata? = null
-)
-
-data class SignUpMetadata(
-    val username: String? = null,
-    val nickname: String? = null
-)
 
 /** Supabase /token?grant_type=password 登录请求体（JSON 格式，旧版 FormUrlEncoded 已被 GoTrue 弃用） */
 data class SignInBody(
@@ -63,6 +43,47 @@ data class SupabaseUser(
     val id: String? = null,
     val email: String? = null,
     val user_metadata: Map<String, Any>? = null
+)
+
+// ============================================================
+// 🎯 Supabase RPC Service  →  /rest/v1/rpc/*  (PostgREST function calls)
+//   register_user RPC 是一个 SECURITY DEFINER 的 SQL 函数，
+//   直接 INSERT auth.users + email_confirmed_at = now()，**永不发邮件**，
+//   因此永远不会触发 429 over_email_send_rate_limit。
+// ============================================================
+interface RpcService {
+
+    /** @see public.register_user(username, password, nickname, gender) returns jsonb */
+    @POST("register_user")
+    suspend fun registerUser(
+        @Body body: RegisterUserReq
+    ): Response<RegisterUserResp>
+}
+
+data class RegisterUserReq(
+    val username: String,
+    val password: String,
+    val nickname: String,
+    val gender: String
+)
+
+/** RPC 返回结构，对应 register_user() 返回的 jsonb */
+data class RegisterUserResp(
+    val user_id: String? = null,
+    val couple_code: String? = null,
+    val email: String? = null,
+    val username: String? = null,
+    val nickname: String? = null,
+    val gender: String? = null,
+    val avatar: String? = null
+)
+
+/** PostgREST RPC 错误格式（HTTP 4xx / 5xx） */
+data class RpcErrorResp(
+    val code: String? = null,
+    val message: String? = null,
+    val hint: String? = null,
+    val details: String? = null
 )
 
 // ============================================================

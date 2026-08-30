@@ -34,15 +34,16 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.coupletracker.android.appmonitor.AppUsageMonitor
 import com.coupletracker.android.data.NetworkModule
+import com.coupletracker.android.data.RegisterUserReq
 import com.coupletracker.android.data.SignInBody
-import com.coupletracker.android.data.SignUpBody
-import com.coupletracker.android.data.SignUpMetadata
 import com.coupletracker.android.data.UserRepository
 import com.coupletracker.android.data.model.*
 import com.coupletracker.android.service.TrackerService
+import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import retrofit2.HttpException
 
 /**
  * 登录/注册/配对/权限引导 Activity（单页多步骤Compose）
@@ -290,24 +291,54 @@ class LoginActivity : ComponentActivity() {
             val gender = if (genderIdx == 0) "female" else "male"
             val avatar = if (genderIdx == 0) "💗" else "💙"
 
-            // 1. 调 Supabase Auth
-            val authResult = runCatching {
-                if (mode == "login") {
-                    NetworkModule.authService.signIn(
-                        SignInBody(email = email, password = cleanPass)
-                    )
-                } else {
-                    NetworkModule.authService.signUp(
-                        SignUpBody(
-                            email = email,
-                            password = cleanPass,
-                            data = SignUpMetadata(
+            // =====================================================================
+            // 注册分支：先走 SECURITY DEFINER RPC (register_user) 建用户 + profile，
+            //           成功后再用 signIn 拿 auth token（和登录走同一流程拿会话）
+            //           ✅ 好处：RPC 直接 INSERT auth.users + email_confirmed_at = now()，
+            //                   完全不经过 GoTrue signup，永不发邮件，永不 429。
+            // 登录分支：直接 /auth/v1/token?grant_type=password (JSON body) 拿会话
+            // =====================================================================
+            val rpcResult: Result<*> =
+                if (mode == "register") {
+                    runCatching {
+                        NetworkModule.rpcService.registerUser(
+                            RegisterUserReq(
                                 username = cleanUser,
-                                nickname = cleanName
+                                password = cleanPass,
+                                nickname = cleanName.ifBlank { cleanUser },
+                                gender = gender
                             )
                         )
-                    )
+                    }
+                } else {
+                    @Suppress("UNCHECKED_CAST")
+                    Result.success(null as Any?) as Result<Any?>
                 }
+
+            var rpcOk: retrofit2.Response<*>? = null
+            var rpcErrorBody: String = ""
+            var rpcException: Throwable? = null
+            if (mode == "register") {
+                rpcOk = rpcResult.getOrNull() as? retrofit2.Response<*>
+                rpcErrorBody = runCatching { (rpcOk as? retrofit2.Response<*>)?.errorBody()?.string() }.getOrNull().orEmpty()
+                rpcException = rpcResult.exceptionOrNull()
+                // RPC 失败直接报错，不往下走登录
+                if (rpcOk == null || !rpcOk.isSuccessful) {
+                    val msg = translateRegisterError(
+                        httpCode = rpcOk?.code() ?: 0,
+                        body = rpcErrorBody,
+                        ex = rpcException
+                    )
+                    withContext(Dispatchers.Main) { userMsg = msg; loading = false }
+                    return@launch
+                }
+            }
+
+            // 1. 调 Supabase Auth 拿 token（登录直接 signIn / 注册成功后也走 signIn 拿会话）
+            val authResult = runCatching {
+                NetworkModule.authService.signIn(
+                    SignInBody(email = email, password = cleanPass)
+                )
             }
 
             val ok = authResult.getOrNull()
@@ -318,17 +349,30 @@ class LoginActivity : ComponentActivity() {
             // 2. 登录/注册成功 → 存 token + 从 REST API 拉 profile
             if (ok?.isSuccessful == true && authToken != null && authUserId != null) {
                 UserRepository.get().setToken(authToken)
+
+                // 注册分支可以从 RPC resp 直接拿 couple_code，省一次 REST 查询
+                var rpcCoupleCode = ""
+                var rpcNickname = ""
+                if (mode == "register") {
+                    @Suppress("UNCHECKED_CAST")
+                    val rpcBody = (rpcOk as? retrofit2.Response<com.coupletracker.android.data.RegisterUserResp>)?.body()
+                    rpcCoupleCode = rpcBody?.couple_code.orEmpty()
+                    rpcNickname = rpcBody?.nickname.orEmpty()
+                }
+
                 UserRepository.get().setUser(
-                    com.coupletracker.android.data.model.UserInfo(
+                    UserInfo(
                         id = authUserId,
                         username = cleanUser,
-                        nickname = cleanName.ifBlank { cleanUser },
+                        nickname = if (mode == "register")
+                            (rpcNickname.ifBlank { cleanName.ifBlank { cleanUser } })
+                        else cleanName.ifBlank { cleanUser },
                         gender = gender,
                         avatar = avatar,
-                        coupleCode = ""
+                        coupleCode = rpcCoupleCode
                     )
                 )
-                // 3. 查 profile，拿 couple_code
+                // 3. 查 profile，拿 couple_code（兜底，RPC 已经返回过）
                 val profileResp = runCatching {
                     NetworkModule.restService.getProfile(id = authUserId)
                 }
@@ -337,7 +381,7 @@ class LoginActivity : ComponentActivity() {
                     pairCode = profile.couple_code
                     // 更新本地 user 信息（带 couple_code）
                     UserRepository.get().setUser(
-                        com.coupletracker.android.data.model.UserInfo(
+                        UserInfo(
                             id = profile.id,
                             username = profile.username,
                             nickname = profile.nickname.ifBlank { cleanName.ifBlank { cleanUser } },
@@ -354,57 +398,103 @@ class LoginActivity : ComponentActivity() {
                     onOk()
                 }
             } else {
-                // Supabase 错误信息 → 翻译成用户能懂的中文
+                // 登录失败翻译
                 val errBodyRaw = runCatching { ok?.errorBody()?.string() }.getOrNull().orEmpty()
                 val netErr = authResult.exceptionOrNull()
                 val errCode = ok?.code() ?: 0
 
-                val err = when {
-                    // === 429 限流（本地反复重试时会触发） ===
-                    errCode == 429 || errBodyRaw.contains("email rate limit") ||
-                        errBodyRaw.contains("over_email_send_rate_limit") -> {
-                        if (mode == "register") {
-                            "注册请求过多，请稍等 1 分钟后再试；\n也可以换个用户名试试"
-                        } else {
-                            "登录请求太多啦，稍等 1 分钟再试"
-                        }
-                    }
-                    // === 400：密码强度 / JSON 解析 / 账号被禁用等 ===
-                    errCode == 400 -> when {
-                        errBodyRaw.contains("password") && errBodyRaw.contains("length") ->
-                            "密码至少 8 位，请修改后重试"
-                        errBodyRaw.contains("bad_json") ->
-                            "请求格式错误，请更新到最新版 APP"
-                        errBodyRaw.contains("Email not confirmed") ->
-                            "请先检查邮箱确认邮件；或改用用户名 8 位以上"
-                        errBodyRaw.contains("Invalid login") ||
-                            errBodyRaw.contains("Invalid") ->
-                            "用户名或密码不对，请重新输入"
-                        else -> "请求失败，请检查：\n• 密码至少 8 位\n• 用户名 3 位以上"
-                    }
-                    // === 401 / 422：账号密码错误 / 账号已存在 ===
-                    errCode in 401..499 -> when {
-                        errBodyRaw.contains("already") || errBodyRaw.contains("already_registered") ->
-                            "账号已存在，请直接登录"
-                        errBodyRaw.contains("User not found") || errBodyRaw.contains("not_found") ->
-                            "账号不存在，请先注册"
-                        errBodyRaw.contains("Invalid") || errBodyRaw.contains("invalid") ->
-                            "用户名或密码不对"
-                        errBodyRaw.contains("password") ->
-                            "密码不对，再想想？"
-                        else -> "请求失败 ($errCode)\n密码至少 8 位 / 用户名 3 位"
-                    }
-                    // === 纯网络问题 ===
-                    netErr != null -> {
-                        val m = netErr.message?.take(50).orEmpty()
-                        "网络异常：$m\n请检查手机网络（4G/WiFi）"
-                    }
-                    else -> "请求失败，请稍后再试"
-                }
+                val err = translateLoginError(
+                    errCode, errBodyRaw, netErr, cleanPass.length
+                )
                 withContext(Dispatchers.Main) {
                     userMsg = err; loading = false
                 }
             }
+        }
+    }
+
+    // ========================================================================
+    // 注册 RPC 错误 → 友好中文
+    // ========================================================================
+    private fun translateRegisterError(httpCode: Int, body: String, ex: Throwable?): String {
+        val lowBody = body.lowercase()
+        val b = if (body.isBlank()) "" else body
+        return when {
+            // 常见 RPC 409 用户自定义异常：USERNAME_EXISTS
+            b.contains("USERNAME_EXISTS") || b.contains("username_exists") ||
+                b.contains("already exists") || lowBody.contains("duplicate") ||
+                lowBody.contains("unique") ->
+                "这个用户名已经注册啦，直接用它「登录」就行 💕\n如果忘记密码，换一个用户名重新注册也可以"
+
+            // PostgREST / pgcrypto 权限问题（数据库层授权漏了）
+            lowBody.contains("permission denied") || lowBody.contains("execute") ->
+                "注册功能还没准备好（数据库缺少授权），请联系开发者检查 SQL"
+
+            // pgcrypto 参数错误（密码太短？一般不会到这里，客户端已经校验）
+            lowBody.contains("password") && lowBody.contains("length") ->
+                "密码至少 8 位，请修改后重试"
+
+            // 其他 4xx
+            httpCode in 400..499 -> {
+                val msg = runCatching {
+                    Gson().fromJson(body, com.coupletracker.android.data.RpcErrorResp::class.java)?.message
+                }.getOrNull().orEmpty()
+                if (msg.isNotBlank()) "注册失败：$msg"
+                else "注册失败 (HTTP $httpCode)\n密码至少 8 位 / 用户名 3 位"
+            }
+
+            // 5xx
+            httpCode in 500..599 ->
+                "服务器开小差啦（HTTP $httpCode），稍等 10 秒再点一下试试"
+
+            // 网络异常
+            ex != null ->
+                "网络异常：${ex.message?.take(50).orEmpty()}\n请检查手机网络（4G/WiFi）"
+
+            else -> "注册失败，请稍后再试"
+        }
+    }
+
+    // ========================================================================
+    // 登录错误 → 友好中文（和之前类似，但去掉重复的"429 注册分支"）
+    // ========================================================================
+    private fun translateLoginError(
+        errCode: Int, errBodyRaw: String, netErr: Throwable?, passwordLen: Int
+    ): String {
+        val body = errBodyRaw
+        return when {
+            errCode == 429 || body.contains("email rate limit") ||
+                body.contains("over_email_send_rate_limit") -> {
+                "登录请求太多啦，稍等 1 分钟再试"
+            }
+            errCode == 400 -> when {
+                body.contains("password") && body.contains("length") ->
+                    "密码至少 8 位，请修改后重试"
+                body.contains("bad_json") ->
+                    "请求格式错误，请更新到最新版 APP"
+                body.contains("Email not confirmed") ->
+                    "账号未激活（罕见），请用同一个用户名重新注册一次"
+                body.contains("Invalid login") || body.contains("Invalid credentials") ||
+                    body.contains("invalid_grant") ->
+                    "用户名或密码不对，请重新输入"
+                else -> "请求失败 ($errCode)：请检查密码至少 8 位"
+            }
+            errCode in 401..499 -> when {
+                body.contains("already") || body.contains("already_registered") ->
+                    "账号已存在，请直接登录"
+                body.contains("User not found") || body.contains("not_found") ->
+                    "账号不存在，请先注册"
+                body.contains("Invalid") || body.contains("invalid") ||
+                    body.contains("Invalid login") ->
+                    "用户名或密码不对"
+                body.contains("password") ->
+                    "密码不对，再想想？"
+                else -> "请求失败 ($errCode)"
+            }
+            netErr != null -> {
+                "网络异常：${netErr.message?.take(50).orEmpty()}\n请检查手机网络（4G/WiFi）"
+            }
+            else -> "请求失败，请稍后再试"
         }
     }
 
