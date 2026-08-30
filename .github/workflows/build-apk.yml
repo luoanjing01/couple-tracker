@@ -33,19 +33,11 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
-      - name: Setup Gradle 8.5 + Wrapper
+      - name: Setup Gradle Wrapper
         working-directory: android-app
         run: |
           set -e
-          if [ ! -x ./gradlew ]; then
-            echo "[INFO] No gradlew — downloading Gradle 8.5 to generate wrapper"
-            curl -sSL https://services.gradle.org/distributions/gradle-8.5-bin.zip -o /tmp/gradle.zip
-            mkdir -p ~/.gradle-tools
-            unzip -q /tmp/gradle.zip -d ~/.gradle-tools
-            export PATH=~/.gradle-tools/gradle-8.5/bin:$PATH
-            gradle wrapper --gradle-version 8.5 --distribution-type bin
-            chmod +x ./gradlew
-          fi
+          chmod +x ./gradlew
           echo "[INFO] gradlew version:"
           ./gradlew --version 2>&1 | head -15
 
@@ -64,21 +56,20 @@ jobs:
         run: |
           set -euo pipefail
           LOG=/tmp/build.log
-          rm -f "$LOG"
+          cp /dev/null "$LOG"
           if ! ./gradlew :app:assembleDebug --stacktrace --console=plain --no-build-cache >"$LOG" 2>&1; then
-            echo "[ERROR] gradlew assembleDebug FAILED — dumping last 200 lines:" >&2
-            tail -200 "$LOG" >&2
-            echo "--- END FAIL LOG ---" >&2
+            echo "[ERROR] gradlew assembleDebug FAILED" >&2
+            echo "--- FULL BUILD LOG BEGIN ---" >&2
+            cat "$LOG" >&2
+            echo "--- FULL BUILD LOG END ---" >&2
+            # Preserve log for artifact
+            cp "$LOG" build.log
             exit 1
           fi
           echo "[SUCCESS] assembleDebug completed."
-          echo "[INFO] === last 30 lines of build log ==="
-          tail -30 "$LOG" || true
-          echo "[INFO] === APK output dir ==="
-          find app/build -name "*.apk" -type f -printf "  APK: %p (%s bytes)\n" 2>/dev/null
-          ls -lah app/build/outputs/apk/ 2>/dev/null || echo "(no apk output dir)"
-          echo "[INFO] === app/build outputs tree (last 30) ==="
-          find app/build -maxdepth 5 -type d 2>/dev/null | head -40
+          cp "$LOG" build.log
+          echo "[INFO] === APK output ==="
+          find app/build -name "*.apk" -type f -printf "  APK: %p (%s bytes)\n" 2>/dev/null || true
 
       - name: List all APK outputs (debug)
         if: always()
@@ -112,5 +103,14 @@ jobs:
             android-app/app/build/reports/**/*.html
             android-app/app/build/reports/**/*.xml
             android-app/app/build/reports/**/*.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Build Log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: android-app/build.log
           if-no-files-found: ignore
           retention-days: 7
