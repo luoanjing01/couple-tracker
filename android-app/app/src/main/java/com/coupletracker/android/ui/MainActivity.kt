@@ -341,7 +341,7 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
             Text(
-                "后端 ${NetworkModule.getApiBase()}\n前端 $webBase",
+                "后端 ${NetworkModule.getApiBase()}\n前端 ${BuildConfig.DEFAULT_WEB_BASE}",
                 color = Color(0xFF718096), fontSize = 10.sp,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
