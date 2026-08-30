@@ -1,5 +1,6 @@
 package com.coupletracker.android.data
 
+import com.google.gson.annotations.SerializedName
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -61,10 +62,10 @@ interface RpcService {
 }
 
 data class RegisterUserReq(
-    val username: String,
-    val password: String,
-    val nickname: String,
-    val gender: String
+    @SerializedName("p_username") val username: String,
+    @SerializedName("p_password") val password: String,
+    @SerializedName("p_nickname") val nickname: String,
+    @SerializedName("p_gender") val gender: String
 )
 
 /** RPC 返回结构，对应 register_user() 返回的 jsonb */
