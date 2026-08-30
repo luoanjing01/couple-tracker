@@ -62,12 +62,23 @@ jobs:
       - name: Build Debug APK
         working-directory: android-app
         run: |
-          set -e
-          ./gradlew :app:assembleDebug --stacktrace --console=plain --no-build-cache 2>&1 | tail -80
-          echo "[INFO] APK output:"
-          ls -lah app/build/outputs/apk/debug/ 2>/dev/null || true
-          echo "[INFO] Mapping/reports:"
-          ls app/build/reports/ 2>/dev/null || echo "(no reports)"
+          set -euo pipefail
+          LOG=/tmp/build.log
+          rm -f "$LOG"
+          if ! ./gradlew :app:assembleDebug --stacktrace --console=plain --no-build-cache >"$LOG" 2>&1; then
+            echo "[ERROR] gradlew assembleDebug FAILED — dumping last 200 lines:" >&2
+            tail -200 "$LOG" >&2
+            echo "--- END FAIL LOG ---" >&2
+            exit 1
+          fi
+          echo "[SUCCESS] assembleDebug completed."
+          echo "[INFO] === last 30 lines of build log ==="
+          tail -30 "$LOG" || true
+          echo "[INFO] === APK output dir ==="
+          find app/build -name "*.apk" -type f -printf "  APK: %p (%s bytes)\n" 2>/dev/null
+          ls -lah app/build/outputs/apk/ 2>/dev/null || echo "(no apk output dir)"
+          echo "[INFO] === app/build outputs tree (last 30) ==="
+          find app/build -maxdepth 5 -type d 2>/dev/null | head -40
 
       - name: List all APK outputs (debug)
         if: always()
