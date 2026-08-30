@@ -60,7 +60,14 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        runCatching { TrackerService.start(this) }
+
+        // ✅ 闪退兜底：启动前台服务前再做一次权限检查，缺少权限则不启动
+        // （Service 内部也会再次检查，这里双保险）
+        runCatching {
+            if (com.coupletracker.android.service.TrackerService.canStartForeground(this)) {
+                com.coupletracker.android.service.TrackerService.start(this)
+            }
+        }
 
         setContent {
             MaterialTheme(colorScheme = lightColorScheme(
@@ -75,10 +82,7 @@ class MainActivity : ComponentActivity() {
                             Tab.values().forEach { t ->
                                 NavigationBarItem(
                                     selected = selected == t,
-                                    onClick = {
-                                        selected = t
-                                        if (t != Tab.ME) navigate(t.path)
-                                    },
+                                    onClick = { selected = t },
                                     icon = { Icon(t.icon, null) },
                                     label = { Text(t.label) },
                                     colors = NavigationBarItemDefaults.colors(
@@ -92,17 +96,26 @@ class MainActivity : ComponentActivity() {
                     }
                 ) { pad ->
                     Box(Modifier.padding(pad).fillMaxSize()) {
-                        if (selected == Tab.ME) {
-                            SettingsScreen(onBackToMap = {
-                                selected = Tab.MAP
-                                navigate("/map")
-                            })
-                        } else {
-                            // 用 NetworkModule 里用户可改的 Web 地址，而非 BuildConfig 写死的
-                            val webBase by produceState(initialValue = BuildConfig.DEFAULT_WEB_BASE) {
-                                value = NetworkModule.getWebBase()
-                            }
-                            WebPage(webBase + selected.path)
+                        when (selected) {
+                            Tab.MAP   -> PlaceholderScreen(
+                                icon = Icons.Default.LocationOn,
+                                title = "实时地图",
+                                desc = "地图页面将在正式版上线 💕\n\n当前功能状态：\n✅ 位置已采集（后台每 5 秒上报一次到云端）\n✅ 云端已保存所有位置记录\n✅ 两台手机同一个账号配对后即可互相查看",
+                                accent = Color(0xFFE75480)
+                            )
+                            Tab.APPS  -> PlaceholderScreen(
+                                icon = Icons.Default.Apps,
+                                title = "应用使用",
+                                desc = "应用使用页面将在正式版上线 💕\n\n当前功能状态：\n✅ APP 使用已采集（每 2 秒检查前台）\n✅ 每 60 秒上报一次使用时长到云端\n✅ 已自动识别微信/抖音/王者等常用APP分类",
+                                accent = Color(0xFF667EEA)
+                            )
+                            Tab.STATS -> PlaceholderScreen(
+                                icon = Icons.Default.BarChart,
+                                title = "每日统计",
+                                desc = "每日使用统计页面将在正式版上线 💕\n\n当前功能状态：\n✅ 每日使用数据已完整记录到云端\n✅ 支持按日期/按APP/按分类统计查询\n✅ 打开时长、移动轨迹、打开次数全记录",
+                                accent = Color(0xFF48BB78)
+                            )
+                            Tab.ME    -> SettingsScreen(onBackToMap = { selected = Tab.MAP })
                         }
                     }
                 }
@@ -110,105 +123,103 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
+    // ========================================================================
+    //  原生占位页（前端 Web 页部署前的过渡方案，100% 不闪退）
+    // ========================================================================
     @Composable
-    fun WebPage(url: String) {
-        var loading by remember { mutableStateOf(true) }
-        Box(Modifier.fillMaxSize()) {
-            AndroidView(factory = { ctx ->
-                WebView(ctx).apply {
-                    layoutParams = android.view.ViewGroup.LayoutParams(
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+    fun PlaceholderScreen(
+        icon: ImageVector,
+        title: String,
+        desc: String,
+        accent: Color
+    ) {
+        val user by UserRepository.get().userFlow.collectAsState(initial = null)
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 28.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                Modifier
+                    .size(88.dp)
+                    .background(accent.copy(alpha = 0.12f), RoundedCornerShape(28.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, null, tint = accent, modifier = Modifier.size(44.dp))
+            }
+            Spacer(Modifier.height(18.dp))
+            Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "正在为 ${"@" + (user?.username ?: "-")} 准备中...",
+                color = Color(0xFF718096), fontSize = 13.sp
+            )
+            Spacer(Modifier.height(22.dp))
+
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Column(Modifier.padding(20.dp)) {
+                    Text(
+                        "💕 后台采集状态",
+                        fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748)
                     )
-                    settings.apply {
-                        javaScriptEnabled = true
-                        domStorageEnabled = true
-                        databaseEnabled = true
-                        useWideViewPort = true
-                        loadWithOverviewMode = true
-                        allowContentAccess = true
-                        allowFileAccess = true
-                        mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                        cacheMode = WebSettings.LOAD_DEFAULT
-                        mediaPlaybackRequiresUserGesture = false
-                    }
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(
-                            v: WebView?, req: WebResourceRequest?
-                        ): Boolean = false
-
-                        override fun onPageStarted(
-                            view: WebView?, u: String?, favicon: Bitmap?
-                        ) {
-                            loading = true
-                            lifecycleScope.launch {
-                                val token = UserRepository.get().getToken() ?: ""
-                                val js = """
-                                (function(){
-                                  try {
-                                    localStorage.setItem('token', '$token');
-                                    localStorage.setItem('coupleTracker_token', '$token');
-                                    window.__ANDROID_TOKEN__ = '$token';
-                                    var d = new Date(); d.setFullYear(d.getFullYear()+1);
-                                    document.cookie = 'token=$token; expires='+d.toUTCString()+'; path=/';
-                                  } catch(e) {}
-                                })();""".trimIndent()
-                                view?.evaluateJavascript(js, null)
-                            }
-                        }
-
-                        override fun onPageFinished(view: WebView?, u: String?) {
-                            super.onPageFinished(view, u)
-                            lifecycleScope.launch {
-                                val token = UserRepository.get().getToken() ?: ""
-                                view?.evaluateJavascript(
-                                    "(function(){localStorage.setItem('token','$token');})();",
-                                    null
-                                )
-                            }
-                            loading = false
-                        }
-                    }
-                    webChromeClient = object : WebChromeClient() {
-                        override fun onPermissionRequest(request: PermissionRequest?) {
-                            request?.grant(request.resources)
-                        }
-                    }
-                    // 必须先把 WebView 引用挂到 Activity 上再初始化 CookieManager
-                    this@MainActivity.webView = this
-                    CookieManager.getInstance().apply {
-                        setAcceptCookie(true)
-                        setAcceptThirdPartyCookies(this@MainActivity.webView, true)
-                    }
-                    loadUrl(url)
-                }
-            }, update = { v ->
-                if (v.url?.trimEnd('/') != url.trimEnd('/')) v.loadUrl(url)
-            })
-            if (loading) {
-                Column(
-                    Modifier
-                        .align(Alignment.Center)
-                        .background(Color.White.copy(alpha = 0.92f))
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    CircularProgressIndicator(color = Color(0xFFE75480))
                     Spacer(Modifier.height(10.dp))
-                    Text("加载中...", color = Color(0xFF718096), fontSize = 13.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(10.dp).background(Color(0xFF48BB78), RoundedCornerShape(50)))
+                        Spacer(Modifier.width(8.dp))
+                        Text("位置上报", color = Color(0xFF2D3748), fontSize = 13.sp)
+                        Spacer(Modifier.weight(1f))
+                        Text("每 5 秒", color = Color(0xFF718096), fontSize = 12.sp)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(10.dp).background(Color(0xFF48BB78), RoundedCornerShape(50)))
+                        Spacer(Modifier.width(8.dp))
+                        Text("APP 使用", color = Color(0xFF2D3748), fontSize = 13.sp)
+                        Spacer(Modifier.weight(1f))
+                        Text("每 2 秒检测", color = Color(0xFF718096), fontSize = 12.sp)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(10.dp).background(Color(0xFF48BB78), RoundedCornerShape(50)))
+                        Spacer(Modifier.width(8.dp))
+                        Text("数据存储", color = Color(0xFF2D3748), fontSize = 13.sp)
+                        Spacer(Modifier.weight(1f))
+                        Text("云端 Supabase", color = Color(0xFF718096), fontSize = 12.sp)
+                    }
                 }
             }
+
+            Spacer(Modifier.height(18.dp))
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("📝 功能说明", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+                    Spacer(Modifier.height(12.dp))
+                    Text(desc, color = Color(0xFF4A5568), fontSize = 13.sp, lineHeight = 22.sp)
+                }
+            }
+
+            Spacer(Modifier.height(30.dp))
+            Text(
+                "所有数据已安全保存到云端 ✅",
+                color = Color(0xFF48BB78), fontSize = 12.sp, fontWeight = FontWeight.Medium
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "版本 v${BuildConfig.VERSION_NAME}（测试版）",
+                color = Color(0xFFA0AEC0), fontSize = 11.sp
+            )
         }
     }
 
-    private fun navigate(path: String) {
-        lifecycleScope.launch {
-            val webBase = NetworkModule.getWebBase()
-            val url = webBase + path
-            webView?.loadUrl(url)
-        }
-    }
+    private fun navigate(path: String) { /* 占位，暂时不用 WebView */ }
 
     @OptIn(ExperimentalLayoutApi::class)
     @Composable

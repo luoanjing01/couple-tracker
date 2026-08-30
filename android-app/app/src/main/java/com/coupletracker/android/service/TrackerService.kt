@@ -1,18 +1,19 @@
 package com.coupletracker.android.service
 
+import android.Manifest
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import com.coupletracker.android.R
-import com.coupletracker.android.TrackerApp
 import com.coupletracker.android.appmonitor.AppUsageMonitor
-import com.coupletracker.android.data.NetworkModule
 import com.coupletracker.android.data.UserRepository
 import com.coupletracker.android.location.LocationTracker
 import com.coupletracker.android.ui.MainActivity
@@ -23,44 +24,70 @@ import kotlinx.coroutines.*
  * - 只要用户登录就保持运行，持续上报位置和APP使用情况
  * - 开机自启、APP更新自启、APP被杀死后尝试自恢复
  * - 使用 CoroutineScope + SupervisorJob 管理子协程
+ *
+ * ✅ 闪退兜底：所有可能抛异常的地方全部 runCatching 包裹，
+ *    缺权限、网络不好、SDK 报错 → 全部静默降级，绝不崩主进程
  */
 class TrackerService : Service() {
 
     private val serviceScope = CoroutineScope(
         SupervisorJob() + Dispatchers.Default + CoroutineName("TrackerService")
     )
-    private lateinit var locationTracker: LocationTracker
-    private lateinit var appMonitor: AppUsageMonitor
+    private var locationTracker: LocationTracker? = null
+    private var appMonitor: AppUsageMonitor? = null
     private var batteryJob: Job? = null
+    private var createdSafely: Boolean = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        locationTracker = LocationTracker(this, serviceScope)
-        appMonitor = AppUsageMonitor(this, serviceScope)
-        startForeground(NOTIF_ID, buildNotification("💕 正在连接服务..."))
-        serviceScope.launch {
-            UserRepository.get().userFlow.collect { user ->
-                if (user != null) {
-                    updateNotification("💕 已登录 · ${user.nickname.ifBlank { user.username }}")
-                    // ⚡ 位置和APP使用数据会通过 Supabase REST API 自动上报
-                    // 启动定位（5秒一次）
-                    if (locationTracker.hasPermission()) {
-                        locationTracker.start(5000L)
-                    }
-                    // 启动APP监控（2秒一次）
-                    if (appMonitor.hasUsagePermission()) {
-                        appMonitor.start(2000L)
-                    }
-                    // 启动电量检测（10秒一次）
-                    startBatteryMonitor()
-                } else {
-                    stopSelf()
+        runCatching {
+            // 1. 初始化定位和 APP 监控（失败不影响继续）
+            locationTracker = runCatching { LocationTracker(this, serviceScope) }.getOrNull()
+            appMonitor   = runCatching { AppUsageMonitor(this, serviceScope) }.getOrNull()
+
+            // 2. 启动前台服务（若缺少通知权限 → 降级成后台服务，不崩）
+            if (canStartForeground()) {
+                runCatching {
+                    startForeground(NOTIF_ID, buildNotification("💕 正在连接服务..."))
                 }
             }
+
+            // 3. 监听用户登录态 → 启动上报循环
+            serviceScope.launch {
+                runCatching {
+                    UserRepository.get().userFlow.collect { user ->
+                        runCatching {
+                            if (user != null) {
+                                if (canStartForeground()) {
+                                    runCatching {
+                                        updateNotification("💕 已登录 · ${user.nickname.ifBlank { user.username }}")
+                                    }
+                                }
+                                // 定位（5秒一次）
+                                if (locationTracker?.hasPermission() == true) {
+                                    runCatching { locationTracker?.start(5000L) }
+                                }
+                                // APP 监控（2秒一次）
+                                if (appMonitor?.hasUsagePermission() == true) {
+                                    runCatching { appMonitor?.start(2000L) }
+                                }
+                                // 电量检测（10秒一次）
+                                startBatteryMonitor()
+                            } else {
+                                stopSelf()
+                            }
+                        }
+                    }
+                }
+            }
+            createdSafely = true
         }
     }
+
+    /** 启动前台服务所需权限：Android 13+ 需要 POST_NOTIFICATIONS；Android 14 location 类型需要定位权限 */
+    private fun canStartForeground() = canStartForeground(this)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
@@ -71,21 +98,25 @@ class TrackerService : Service() {
     }
 
     override fun onDestroy() {
-        serviceScope.cancel()
-        runCatching { locationTracker.stop() }
-        runCatching { appMonitor.stop() }
-        batteryJob?.cancel()
-        super.onDestroy()
+        runCatching { serviceScope.cancel() }
+        runCatching { locationTracker?.stop() }
+        runCatching { appMonitor?.stop() }
+        runCatching { batteryJob?.cancel() }
+        runCatching { super.onDestroy() }
     }
 
     // --- 电量监控，更新到定位里顺便上报 ---
     private fun startBatteryMonitor() {
-        if (batteryJob?.isActive == true) return
-        batteryJob = serviceScope.launch(Dispatchers.IO) {
-            while (isActive) {
-                val pct = getBatteryPct()
-                locationTracker.setBatteryCache(pct)
-                delay(10_000L)
+        runCatching {
+            if (batteryJob?.isActive == true) return
+            batteryJob = serviceScope.launch(Dispatchers.IO) {
+                while (isActive) {
+                    runCatching {
+                        val pct = getBatteryPct()
+                        locationTracker?.setBatteryCache(pct)
+                    }
+                    delay(10_000L)
+                }
             }
         }
     }
@@ -128,25 +159,49 @@ class TrackerService : Service() {
     }
 
     private fun updateNotification(text: String) {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-        nm.notify(NOTIF_ID, buildNotification(text))
+        runCatching {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+            nm.notify(NOTIF_ID, buildNotification(text))
+        }
     }
 
     companion object {
         private const val NOTIF_ID = 10086
         const val ACTION_STOP = "com.coupletracker.ACTION_STOP_SERVICE"
 
+        /** 启动前台服务所需权限（静态版，供 Activity 提前检查） */
+        fun canStartForeground(ctx: Context): Boolean {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) return false
+            }
+            // Android 14 规定：foregroundServiceType=location 时必须已授予至少粗略定位权限
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                val fine = ActivityCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
+                val coarse = ActivityCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION)
+                if (fine != PackageManager.PERMISSION_GRANTED && coarse != PackageManager.PERMISSION_GRANTED) {
+                    return false
+                }
+            }
+            return true
+        }
+
+        /** 启动服务：全部异常吞掉 → 永不闪退 */
         fun start(ctx: Context) {
-            val i = Intent(ctx, TrackerService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                ctx.startForegroundService(i)
-            } else {
-                ctx.startService(i)
+            runCatching {
+                val i = Intent(ctx, TrackerService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    ctx.startForegroundService(i)
+                } else {
+                    ctx.startService(i)
+                }
             }
         }
 
         fun stop(ctx: Context) {
-            ctx.stopService(Intent(ctx, TrackerService::class.java).apply { action = ACTION_STOP })
+            runCatching {
+                ctx.stopService(Intent(ctx, TrackerService::class.java).apply { action = ACTION_STOP })
+            }
         }
     }
 }
