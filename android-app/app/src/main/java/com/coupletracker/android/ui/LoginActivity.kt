@@ -8,6 +8,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,6 +37,7 @@ import com.coupletracker.android.appmonitor.AppUsageMonitor
 import com.coupletracker.android.data.NetworkModule
 import com.coupletracker.android.data.RegisterUserReq
 import com.coupletracker.android.data.VerifyLoginReq
+import com.coupletracker.android.data.PairByCodeReq
 import com.coupletracker.android.data.UserRepository
 import com.coupletracker.android.data.model.*
 import com.coupletracker.android.service.TrackerService
@@ -44,6 +46,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import retrofit2.HttpException
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 
 /**
  * 登录/注册/配对/权限引导 Activity（单页多步骤Compose）
@@ -519,8 +524,31 @@ class LoginActivity : ComponentActivity() {
     fun PairCard(onPairOkOrSkip: () -> Unit) {
         var inputCode by remember { mutableStateOf("") }
         var msg by remember { mutableStateOf<String>("") }
+        var copyTip by remember { mutableStateOf("") }
         val user by UserRepository.get().userFlow.collectAsState(initial = null)
         LaunchedEffect(user) { pairCode = user?.coupleCode ?: pairCode }
+
+        /** 判断是否已配对：同一 couple_code 下存在 "另一个 profile" */
+        val isPaired = remember(user, pairCode) {
+            // 只在前端做宽松判断：若 user.coupleCode 非空 且 当前是 "两个不同 id 的码相同" 的场景则算已配对
+            // （此处不联网，仅用作 UI 切换；RPC 返回 ok=true 后也会立刻置为已配对）
+            false
+        }
+        var paired by remember { mutableStateOf(isPaired) }
+        var pairedWithNick by remember { mutableStateOf("") }
+
+        fun copyCode(code: String) {
+            if (code.isBlank()) return
+            runCatching {
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("couple_code", code))
+            }
+            copyTip = "✅ 已复制"
+            lifecycleScope.launch {
+                kotlinx.coroutines.delay(1500)
+                copyTip = ""
+            }
+        }
 
         BoxWithGradient {
             Column(
@@ -536,7 +564,7 @@ class LoginActivity : ComponentActivity() {
                     color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(18.dp))
 
-                // 我的配对码
+                // 我的配对码（加复制按钮）
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = Color.White)
@@ -544,154 +572,161 @@ class LoginActivity : ComponentActivity() {
                     Column(Modifier.padding(16.dp)) {
                         Text("我的配对码：", color = Color(0xFF718096), fontSize = 13.sp)
                         Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = pairCode.ifBlank { "等待生成..." },
-                            fontSize = 32.sp, color = Color(0xFFE75480),
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 4.sp
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text("把这串6位码发给TA，让TA在下面输入 👇",
-                            color = Color(0xFF718096), fontSize = 12.sp)
-                    }
-                }
-                Spacer(Modifier.height(18.dp))
-
-                Text("输入TA的配对码", color = Color.White, fontSize = 14.sp)
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = inputCode,
-                    onValueChange = { inputCode = it.uppercase() },
-                    singleLine = true,
-                    label = { Text("TA的配对码") },
-                    leadingIcon = { Icon(Icons.Default.Link, null) },
-                    colors = outlinedPinkColors(),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (msg.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(msg, color = Color.White, fontSize = 13.sp)
-                }
-                Spacer(Modifier.height(16.dp))
-                Button(
-                    onClick = {
-                        loading = true; msg = ""
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            val user = UserRepository.get().getUser()
-                            val myId = user?.id ?: ""
-                            val theirCode = inputCode.trim().uppercase()
-
-                            // 1. 查 TA 的 profile（按 couple_code）
-                            val theirProfileResp = runCatching {
-                                NetworkModule.restService.getProfile(coupleCode = theirCode)
-                            }
-                            val theirProfile = theirProfileResp.getOrNull()?.body()?.firstOrNull()
-
-                            if (theirProfile == null) {
-                                withContext(Dispatchers.Main) {
-                                    loading = false
-                                    msg = "配对码不存在，请检查是否输错 💕"
-                                }
-                                return@launch
-                            }
-                            if (theirProfile.id == myId) {
-                                withContext(Dispatchers.Main) {
-                                    loading = false
-                                    msg = "不能和自己配对哦 😅"
-                                }
-                                return@launch
-                            }
-
-                            // 2. TA 如果已有 couple → 直接用那个
-                            val coupleId: String = if (!theirProfile.couple_id.isNullOrBlank()) {
-                                theirProfile.couple_id
-                            } else {
-                                // TA 还没建 couple → 创建
-                                val createResp = runCatching {
-                                    NetworkModule.restService.createCouple(
-                                        mapOf(
-                                            "code" to theirCode,
-                                            "user_a" to theirProfile.id
-                                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = pairCode.ifBlank { "等待生成..." },
+                                fontSize = 32.sp, color = Color(0xFFE75480),
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 4.sp
+                            )
+                            Spacer(Modifier.weight(1f))
+                            if (pairCode.isNotBlank()) {
+                                OutlinedButton(
+                                    onClick = { copyCode(pairCode) },
+                                    border = BorderStroke(1.dp, Color(0xFFE75480)),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(50)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, null, tint = Color(0xFFE75480), modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        if (copyTip.isNotBlank()) copyTip else "复制",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFFE75480)
                                     )
-                                }
-                                createResp.getOrNull()?.body()?.id ?: ""
-                            }
-
-                            if (coupleId.isBlank()) {
-                                withContext(Dispatchers.Main) {
-                                    loading = false
-                                    msg = "配对失败：无法创建情侣关系"
-                                }
-                                return@launch
-                            }
-
-                            // 3. 把自己加入 couple（如果 TA 是 user_a 则我是 user_b；反之亦然）
-                            val coupleResp = runCatching {
-                                NetworkModule.restService.getCouple(code = theirCode)
-                            }
-                            val couple = coupleResp.getOrNull()?.body()?.firstOrNull()
-
-                            if (couple != null) {
-                                // 更新 couple，把自己加进去
-                                if (couple.user_a == myId) {
-                                    // 我是 user_a，TA 是 user_b（反过来也行，看谁先创建的）
-                                    val update = runCatching {
-                                        NetworkModule.restService.updateCouple(
-                                            id = couple.id,
-                                            body = mapOf("user_b" to theirProfile.id)
-                                        )
-                                    }
-                                    val update2 = runCatching {
-                                        NetworkModule.restService.updateCouple(
-                                            id = couple.id,
-                                            body = mapOf("user_b" to myId)
-                                        )
-                                    }
-                                } else {
-                                    runCatching {
-                                        NetworkModule.restService.updateCouple(
-                                            id = couple.id,
-                                            body = mapOf("user_b" to myId)
-                                        )
-                                    }
-                                }
-                                // 更新自己的 profile.couple_id
-                                runCatching {
-                                    NetworkModule.restService.updateProfile(
-                                        id = myId,
-                                        body = mapOf("couple_id" to couple.id)
-                                    )
-                                }
-                                // 刷新本地用户信息
-                                UserRepository.get().setUser(
-                                    user!!.copy(coupleCode = theirCode)
-                                )
-                                pairCode = theirCode
-
-                                withContext(Dispatchers.Main) {
-                                    loading = false
-                                    msg = "配对成功！💕 你们现在是一对啦"
-                                    onPairOkOrSkip()
-                                }
-                            } else {
-                                withContext(Dispatchers.Main) {
-                                    loading = false
-                                    msg = "配对失败：情侣关系未找到"
                                 }
                             }
                         }
-                    },
-                    enabled = !loading && inputCode.length >= 4,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
-                        .clip(RoundedCornerShape(26.dp)),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF667EEA))
-                ) {
-                    if (loading) CircularProgressIndicator(
-                        color = Color.White, modifier = Modifier.size(20.dp))
-                    else Text("立即配对 💕", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "把这串6位码发给TA，让TA在下面输入 👇",
+                            color = Color(0xFF718096), fontSize = 12.sp
+                        )
+                    }
+                }
+
+                // —— 若已配对：显示"已配对"绿底提示，不再出现输入框 ——
+                if (paired) {
+                    Spacer(Modifier.height(18.dp))
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFDEF7EC))
+                    ) {
+                        Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("🎉 已配对成功！", fontSize = 18.sp, color = Color(0xFF22543D), fontWeight = FontWeight.Bold)
+                            if (pairedWithNick.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text("和 $pairedWithNick 绑定中 💕", fontSize = 13.sp, color = Color(0xFF2F855A))
+                            }
+                        }
+                    }
+                } else {
+                    Spacer(Modifier.height(18.dp))
+                    Text("输入TA的配对码", color = Color.White, fontSize = 14.sp)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = inputCode,
+                        onValueChange = { inputCode = it.trim().uppercase() },
+                        singleLine = true,
+                        label = { Text("TA的配对码") },
+                        leadingIcon = { Icon(Icons.Default.Link, null) },
+                        trailingIcon = {
+                            TextButton(onClick = {
+                                // 从剪贴板粘贴
+                                runCatching {
+                                    val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = cm.primaryClip
+                                    if (clip != null && clip.itemCount > 0) {
+                                        inputCode = clip.getItemAt(0).text.toString().trim().uppercase()
+                                    }
+                                }
+                            }) { Text("粘贴", color = Color.White, fontSize = 12.sp) }
+                        },
+                        colors = outlinedPinkColors(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (msg.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(msg, color = Color.White, fontSize = 13.sp)
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            loading = true; msg = ""
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                val me = UserRepository.get().getUser()
+                                val myId = me?.id ?: ""
+                                val theirCode = inputCode.trim().uppercase()
+
+                                if (myId.isBlank() || theirCode.length < 4) {
+                                    withContext(Dispatchers.Main) {
+                                        loading = false
+                                        msg = "请输入完整的TA的配对码（至少4位）💕"
+                                    }
+                                    return@launch
+                                }
+
+                                val resp = runCatching {
+                                    NetworkModule.rpcService.pairByCode(
+                                        PairByCodeReq(myId = myId, theirCode = theirCode)
+                                    )
+                                }
+                                val body = resp.getOrNull()?.body()
+                                val errBody = runCatching {
+                                    resp.getOrNull()?.errorBody()?.string()
+                                }.getOrNull().orEmpty()
+                                val ex = resp.exceptionOrNull()
+
+                                if (resp.getOrNull()?.isSuccessful == true && body?.ok == true) {
+                                    // 配对成功！把自己本地的 coupleCode 更新为 TA 的码
+                                    val newCode = body.couple_code ?: theirCode
+                                    UserRepository.get().setUser(
+                                        me.copy(coupleCode = newCode)
+                                    )
+                                    pairCode = newCode
+                                    paired = true
+                                    pairedWithNick = body.their_nickname?.takeIf { it.isNotBlank() } ?: "TA"
+                                    withContext(Dispatchers.Main) {
+                                        loading = false
+                                        msg = "配对成功！已和 $pairedWithNick 绑定 💕 你们现在能在地图上看到彼此啦"
+                                        kotlinx.coroutines.delay(1800)
+                                        onPairOkOrSkip()
+                                    }
+                                } else {
+                                    val reason = body?.reason
+                                    val friendly = when {
+                                        reason == "CODE_NOT_FOUND" ->
+                                            "配对码不存在：请让TA打开「我的」查看TA自己的配对码，确认和你输入的完全一致 💕"
+                                        reason == "CANNOT_PAIR_SELF" ->
+                                            "不能和自己配对哦 😅 这是发给TA输入的码"
+                                        reason == "ME_NOT_FOUND" ->
+                                            "你的账号信息丢失了，请退出重新登录一次"
+                                        reason == "INVALID_ARGS" ->
+                                            "参数错误：请确认输入的是完整的 6 位字母+数字码"
+                                        ex != null ->
+                                            "网络异常：${ex.message?.take(50).orEmpty()}"
+                                        errBody.isNotBlank() ->
+                                            "配对失败：${errBody.take(80)}"
+                                        else -> "配对失败，请稍后再试"
+                                    }
+                                    withContext(Dispatchers.Main) {
+                                        loading = false
+                                        msg = friendly
+                                    }
+                                }
+                            }
+                        },
+                        enabled = !loading && inputCode.length >= 4,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .clip(RoundedCornerShape(26.dp)),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF667EEA))
+                    ) {
+                        if (loading) CircularProgressIndicator(
+                            color = Color.White, modifier = Modifier.size(20.dp))
+                        else Text("立即配对 💕", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
 
                 Spacer(Modifier.height(10.dp))

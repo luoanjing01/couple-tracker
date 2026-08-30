@@ -70,6 +70,14 @@ interface RpcService {
     suspend fun verifyLogin(
         @Body body: VerifyLoginReq
     ): Response<VerifyLoginResp>
+
+    /** @see public.pair_by_code(p_my_id uuid, p_their_code text) returns jsonb
+     *  把两个人的 profile.couple_code 改成同一个值，极简配对，无需操作 couples 表
+     *  返回：{ok: bool, reason?, couple_code?, their_id?, their_nickname?} */
+    @POST("pair_by_code")
+    suspend fun pairByCode(
+        @Body body: PairByCodeReq
+    ): Response<PairByCodeResp>
 }
 
 data class RegisterUserReq(
@@ -99,6 +107,21 @@ data class VerifyLoginResp(
     val user_id: String? = null,
     /** 原始 profile JSON — cache 里旧函数返回 f1~f8 格式，新函数返回命名字段，LoginActivity 内手动兼容 */
     val profile: JsonObject? = null
+)
+
+/** @see public.pair_by_code(p_my_id, p_their_code) 请求体 —— 注意函数参数名必须带 p_ 前缀 */
+data class PairByCodeReq(
+    @SerializedName("p_my_id") val myId: String,
+    @SerializedName("p_their_code") val theirCode: String
+)
+
+/** pair_by_code RPC 返回体 */
+data class PairByCodeResp(
+    val ok: Boolean = false,
+    val reason: String? = null,
+    val couple_code: String? = null,
+    val their_id: String? = null,
+    val their_nickname: String? = null
 )
 
 /** PostgREST RPC 错误格式（HTTP 4xx / 5xx） */
@@ -214,7 +237,9 @@ data class Couple(
 data class LocationRow(
     val id: String? = null,
     val user_id: String = "",
-    val couple_id: String = "",
+    /** ⚠️ 必须可空：未配对用户传 null 才能避免 couples 外键约束（FK）被拒绝（409）
+     *  旧代码 couple_id: String = "" 是非空类型，传 null 直接编译失败 */
+    val couple_id: String? = null,
     val latitude: Double = 0.0,
     val longitude: Double = 0.0,
     val accuracy: Double? = null,
@@ -227,7 +252,8 @@ data class LocationRow(
 data class AppUsageRow(
     val id: String? = null,
     val user_id: String = "",
-    val couple_id: String = "",
+    /** ⚠️ 必须可空（同上），未配对用户也能正常上报 */
+    val couple_id: String? = null,
     val package_name: String = "",
     val app_name: String? = null,
     val category: String? = null,

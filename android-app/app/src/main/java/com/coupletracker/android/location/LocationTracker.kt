@@ -76,16 +76,14 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         scope.launch(Dispatchers.IO) {
             val user = UserRepository.get().getUser()
             val userId = user?.id ?: return@launch
-            val coupleId = user?.coupleCode?.let { _ ->
-                // 简化：用 userId 当 couple_id 占位
-                userId
-            } ?: userId
-
-            runCatching {
+            // 🚨 之前 bug：couple_id 填 userId 会被 FK couples 拒绝（409）
+            // ✅ 修复：couple_id 传 null，让未配对用户也能写库；
+            //         JS 端通过 profile.couple_code 找彼此 partner，不依赖 couple_id 外键
+            val resp = runCatching {
                 NetworkModule.restService.reportLocation(
                     com.coupletracker.android.data.LocationRow(
                         user_id = userId,
-                        couple_id = coupleId,
+                        couple_id = null,
                         latitude = loc.latitude,
                         longitude = loc.longitude,
                         accuracy = if (loc.hasAccuracy()) loc.accuracy.toDouble() else null,
@@ -95,6 +93,13 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
                     )
                 )
             }
+            val http = resp.getOrNull()
+            NetworkModule.lastLocationReportStatus.value =
+                when {
+                    http == null -> "位置上报异常：${resp.exceptionOrNull()?.message?.take(40).orEmpty()}"
+                    !http.isSuccessful -> "位置上报失败 HTTP ${http.code()}：${http.errorBody()?.let { runCatching { it.string().take(60) }.getOrNull().orEmpty() }}"
+                    else -> "位置上报成功 · ${String.format("%.4f",loc.latitude)},${String.format("%.4f",loc.longitude)}"
+                }
         }
     }
 

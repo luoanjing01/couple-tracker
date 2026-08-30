@@ -81,12 +81,12 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
             scope.launch(Dispatchers.IO) {
                 val user = UserRepository.get().getUser()
                 val userId = user?.id ?: return@launch
-                val coupleId = userId // 简化处理
-                runCatching {
+                // ✅ couple_id 传 null（之前填 userId 会被 FK couples 拒绝）
+                val resp = runCatching {
                     NetworkModule.restService.reportAppUsage(
                         AppUsageRow(
                             user_id = userId,
-                            couple_id = coupleId,
+                            couple_id = null,
                             package_name = fg,
                             app_name = appName,
                             category = category,
@@ -94,6 +94,13 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
                         )
                     )
                 }
+                val http = resp.getOrNull()
+                NetworkModule.lastAppReportStatus.value =
+                    when {
+                        http == null -> "APP上报异常：${resp.exceptionOrNull()?.message?.take(40).orEmpty()}"
+                        !http.isSuccessful -> "APP上报失败 HTTP ${http.code()}：${http.errorBody()?.let { runCatching { it.string().take(60) }.getOrNull().orEmpty() }}"
+                        else -> "APP上报成功 · $appName ${elapsedSeconds}s"
+                    }
             }
         }
     }

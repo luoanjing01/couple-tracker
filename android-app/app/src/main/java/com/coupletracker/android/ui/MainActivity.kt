@@ -1,11 +1,15 @@
 package com.coupletracker.android.ui
 
 import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.webkit.*
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -28,9 +32,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
 import com.coupletracker.android.BuildConfig
 import com.coupletracker.android.data.NetworkModule
+import com.coupletracker.android.data.PairByCodeReq
 import com.coupletracker.android.data.UserRepository
 import com.coupletracker.android.service.TrackerService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -332,258 +338,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** 本地 assets 没有 dist 时的兜底离线地图 HTML，直接用 Leaflet CDN + Supabase REST 拉位置 */
+    /** assets/www 读不到时的最小兜底页：带样式提示 + 1s 后自动重试跳 assets */
     private fun buildFallbackMapHtml(): String = """
-        <!doctype html>
-        <html>
-        <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-        <title>情侣地图</title>
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-        <style>
-          html,body{margin:0;padding:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:#fdf2f8;}
-          #map{width:100%;height:100%;}
-          .topbar{position:absolute;top:10px;left:10px;right:10px;z-index:500;background:rgba(255,255,255,0.95);border-radius:14px;padding:10px 14px;box-shadow:0 4px 18px rgba(0,0,0,0.08);}
-          .topbar .row{display:flex;justify-content:space-between;align-items:center;gap:10px;}
-          .nick{font-weight:700;color:#2d3748;font-size:14px;}
-          .meta{font-size:11px;color:#718096;margin-top:2px;}
-          .status{font-size:12px;}
-          .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#48bb78;margin-right:4px;vertical-align:middle;}
-          .distance{font-size:13px;color:#e75480;font-weight:700;}
-          .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:999;background:rgba(253,242,248,0.8);color:#e75480;font-weight:700;}
-          .popup{text-align:center;}
-          .popup .avatar{font-size:26px;}
-          .popup .name{font-weight:700;font-size:14px;margin:2px 0;}
-          .popup .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;margin-top:4px;}
-          .badge-move{background:#fff4db;color:#b7791f;}
-          .badge-stop{background:#def7ec;color:#22543d;}
-          .popup .sub{font-size:11px;color:#718096;margin-top:4px;}
-        </style>
-        </head>
-        <body>
-        <div id="map"></div>
-        <div class="topbar">
-          <div class="row">
-            <div>
-              <div class="nick" id="nickRow">💕 情侣地图</div>
-              <div class="meta" id="metaRow">加载位置中...</div>
-            </div>
-            <div>
-              <div class="status"><span class="dot"></span><span id="statusText">已连接</span></div>
-              <div class="distance" id="distRow">—</div>
-            </div>
-          </div>
+        <!doctype html><html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>情侣地图 💕</title>
+        <style>html,body{margin:0;padding:0;height:100%;background:#fdf2f8;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}
+        .c{display:flex;align-items:center;justify-content:center;height:100%;padding:24px;text-align:center;flex-direction:column;}
+        h1{color:#e75480;font-size:22px;margin:0 0 10px;}p{color:#718096;font-size:13px;line-height:1.8;}
+        .e{color:#e53e3e;}</style></head><body>
+        <div class="c">
+          <div style="font-size:56px;">🗺️</div>
+          <h1>正在加载情侣地图</h1>
+          <p>如果长时间停留在此页，请退出 APP 后重新打开一次。<br>
+          或切换到「我的」检查「上报状态」是否有定位权限失败提示。</p>
+          <p class="e">如果报错：请确认已授予「定位」「通知」「使用情况访问」三项权限</p>
         </div>
-        <div class="loading" id="loading">正在初始化地图 🗺️...</div>
-        <script>
-          var me = null, partner = null;
-          try {
-            if (window.__CURRENT_USER__) me = window.__CURRENT_USER__;
-            else {
-              var u = localStorage.getItem('user');
-              if (u) me = JSON.parse(u);
-            }
-          } catch(e) {}
-          var SUPABASE_URL = window.__SUPABASE_URL__ || (location.origin);
-          var ANON_KEY = window.__SUPABASE_ANON_KEY__ || '';
-          var TOKEN = window.__AUTH_TOKEN__ || localStorage.getItem('token') || ANON_KEY;
-          var meMarker = null, partnerMarker = null, meAcc = null, partnerAcc = null, fitDone = false;
-          var lastMeAt = 0, lastPartnerAt = 0;
-          var map;
-
-          function initMap() {
-            map = L.map('map', { zoomControl: true }).setView([39.9042, 116.4074], 11);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-              maxZoom: 19,
-              attribution: '&copy; OpenStreetMap'
-            }).addTo(map);
-            setTimeout(function(){ document.getElementById('loading').style.display='none'; }, 400);
-            poll();
-            setInterval(poll, 5000);
-          }
-
-          function createIcon(emoji, color, pulse) {
-            return L.divIcon({
-              className: 'custom-marker',
-              html: (pulse ?
-                '<div style="position:absolute;width:48px;height:48px;border-radius:50%;background:'+color+';opacity:.3;top:-6px;left:-6px;animation:pulse 1.5s ease-out infinite;"></div>' : '') +
-                '<div style="position:relative;width:36px;height:36px;border-radius:50%;background:'+color+';border:3px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;font-size:18px;z-index:2;">' + (emoji || '👤') + '</div>' +
-                '<div style="position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #fff;"></div>' +
-                '<style>@keyframes pulse{0%{transform:scale(1);opacity:.4}100%{transform:scale(2);opacity:0}}</style>',
-              iconSize: [36,36], iconAnchor: [18,36], popupAnchor: [0,-32]
-            });
-          }
-
-          function haversine(a, b) {
-            if (!a || !b) return null;
-            var R = 6371000;
-            var toRad = function(x){return x*Math.PI/180;};
-            var dLat = toRad(b[0]-a[0]);
-            var dLon = toRad(b[1]-a[1]);
-            var la1 = toRad(a[0]), la2 = toRad(b[0]);
-            var h = Math.sin(dLat/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin(dLon/2)**2;
-            return 2*R*Math.asin(Math.sqrt(h));
-          }
-          function fmtDist(m){
-            if (m == null) return '—';
-            if (m < 1000) return '相距 ' + Math.round(m) + ' 米';
-            return '相距 ' + (m/1000).toFixed(2) + ' 公里';
-          }
-          function fmtTime(iso){
-            if (!iso) return '';
-            try {
-              var d = new Date(iso);
-              if (isNaN(d.getTime())) d = new Date(iso.replace(' ','T'));
-              var p = function(n){return (n<10?'0':'')+n;};
-              return p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
-            } catch(e){return '';}
-          }
-
-          function setOrUpdate(markerRef, lat, lng, emoji, color, pulse, row, isMe) {
-            var ll = [lat, lng];
-            if (!markerRef.value) {
-              markerRef.value = L.marker(ll, { icon: createIcon(emoji, color, pulse) }).addTo(map);
-            } else {
-              markerRef.value.setLatLng(ll);
-              markerRef.value.setIcon(createIcon(emoji, color, pulse));
-            }
-            if (isMe) meMarker = markerRef.value;
-            else partnerMarker = markerRef.value;
-            // 精度圈
-            var accCircle = (isMe ? meAcc : partnerAcc);
-            if (accCircle) { accCircle.setLatLng(ll); accCircle.setRadius(Math.max(30, row.accuracy||20)); }
-            else {
-              var c = L.circle(ll, { radius: Math.max(30, row.accuracy||20), color: color, fillColor: color, fillOpacity: 0.12, weight: 1 }).addTo(map);
-              if (isMe) meAcc = c; else partnerAcc = c;
-            }
-            // popup
-            var badgeClass = row.is_moving ? 'badge-move' : 'badge-stop';
-            var badgeText = row.is_moving ? '🏃 移动中' : '🧎 静止';
-            var bat = row.battery_level != null ? '🔋 '+row.battery_level+'%  ' : '';
-            var speed = row.speed != null ? '🚶 '+row.speed.toFixed(1)+' m/s' : '';
-            var html = '<div class="popup"><div class="avatar">'+(emoji||'👤')+'</div>'+
-              '<div class="name">'+row.nickname+(isMe?' (我)':' (TA)')+'</div>'+
-              '<span class="badge '+badgeClass+'">'+badgeText+'</span>'+
-              '<div class="sub">'+bat+speed+'</div>'+
-              '<div class="sub">更新于 '+fmtTime(row.timestamp)+'</div></div>';
-            markerRef.value.bindPopup(html);
-          }
-
-          function fit() {
-            var pts = [];
-            if (meMarker) pts.push(meMarker.getLatLng());
-            if (partnerMarker) pts.push(partnerMarker.getLatLng());
-            if (pts.length === 0) return;
-            if (pts.length === 1) map.setView(pts[0], 14, {animate:true});
-            else map.fitBounds(L.latLngBounds(pts), {padding:[80,80], maxZoom:15, animate:true});
-          }
-
-          function updateTopbar() {
-            var nickRow = '💕 情侣地图';
-            var metaRow = '';
-            if (me) {
-              nickRow = '@'+(me.username||'') + ' · ' + (me.nickname||'');
-              metaRow += '配对码：'+(me.coupleCode||'未绑定').toUpperCase();
-            }
-            document.getElementById('nickRow').textContent = nickRow;
-            document.getElementById('metaRow').textContent = metaRow || '等待位置...';
-            var my = meMarker ? meMarker.getLatLng() : null;
-            var pt = partnerMarker ? partnerMarker.getLatLng() : null;
-            var dist = null;
-            if (my && pt) dist = haversine([my.lat,my.lng],[pt.lat,pt.lng]);
-            document.getElementById('distRow').textContent = fmtDist(dist);
-            var age = Math.max(lastMeAt, lastPartnerAt);
-            var secs = age ? Math.round((Date.now()-age)/1000) : 0;
-            var t = '已连接';
-            if (!age) t = '等待位置...';
-            else if (secs < 60) t = secs + ' 秒前更新';
-            else if (secs < 3600) t = Math.floor(secs/60) + ' 分钟前更新';
-            else t = Math.floor(secs/3600) + ' 小时前更新';
-            document.getElementById('statusText').textContent = t;
-          }
-
-          function poll() {
-            var headers = { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + (TOKEN || ANON_KEY) };
-            var myLat = null, myLng = null, ptLat = null, ptLng = null;
-            // 我的位置：按 user_id 过滤，按 created_at 倒序取 1 条
-            var uid = me && me.id ? me.id : null;
-            var reqsDone = 0;
-            function done() {
-              reqsDone++;
-              if (reqsDone === 2) {
-                if (!fitDone && (meMarker || partnerMarker)) { fit(); fitDone = true; }
-                else fit();
-                updateTopbar();
-              }
-            }
-            if (uid) {
-              fetch(SUPABASE_URL + '/rest/v1/locations?select=*&user_id=eq.'+encodeURIComponent(uid)+'&order=created_at.desc&limit=1', { headers: headers })
-                .then(function(r){return r.json();}).then(function(rows){
-                  if (Array.isArray(rows) && rows.length) {
-                    var row = rows[0];
-                    lastMeAt = new Date(row.timestamp || row.created_at).getTime();
-                    setOrUpdate({value: meMarker}, row.latitude, row.longitude, (me&&me.avatar)||'👤', '#ff6b9d', !!row.is_moving, Object.assign({}, row, {nickname: (me&&me.nickname)||'我'}), true);
-                    myLat = row.latitude; myLng = row.longitude;
-                  }
-                  done();
-                }).catch(function(){done();});
-            } else done();
-
-            // TA 的位置：先找同一 couple_code 的 profile，当作 partner
-            fetchPartnerUid(function(partnerUid){
-              if (!partnerUid) { done(); return; }
-              fetch(SUPABASE_URL + '/rest/v1/locations?select=*&user_id=eq.'+encodeURIComponent(partnerUid)+'&order=created_at.desc&limit=1', { headers: headers })
-                .then(function(r){return r.json();}).then(function(rows){
-                  if (Array.isArray(rows) && rows.length) {
-                    var row = rows[0];
-                    lastPartnerAt = new Date(row.timestamp || row.created_at).getTime();
-                    // 找 partner 的 nickname/avatar
-                    fetchNickAvatar(partnerUid, function(pa){
-                      setOrUpdate({value: partnerMarker}, row.latitude, row.longitude, (pa&&pa.avatar)||'💞', '#667eea', !!row.is_moving, Object.assign({}, row, {nickname: (pa&&pa.nickname)||'TA'}), false);
-                      ptLat = row.latitude; ptLng = row.longitude;
-                    });
-                  }
-                  done();
-                }).catch(function(){done();});
-            });
-          }
-
-          var __partnerNickCache = null;
-          function fetchNickAvatar(uid, cb) {
-            if (__partnerNickCache && __partnerNickCache.id === uid) { cb(__partnerNickCache); return; }
-            fetch(SUPABASE_URL + '/rest/v1/profiles?select=id,nickname,avatar,couple_code&limit=1&id=eq.'+encodeURIComponent(uid), {
-              headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + (TOKEN||ANON_KEY) }
-            }).then(function(r){return r.json();}).then(function(rows){
-              var p = (Array.isArray(rows) && rows[0]) ? rows[0] : {id:uid, nickname:'TA', avatar:'💞'};
-              __partnerNickCache = p;
-              cb(p);
-            }).catch(function(){cb(null);});
-          }
-
-          var __partnerUid = {v:null, at:0};
-          function fetchPartnerUid(cb) {
-            var now = Date.now();
-            if (__partnerUid.v && (now - __partnerUid.at) < 15000) { cb(__partnerUid.v); return; }
-            var code = me && me.coupleCode ? me.coupleCode : null;
-            var uid = me && me.id ? me.id : null;
-            if (!code) { cb(null); return; }
-            var headers = { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + (TOKEN||ANON_KEY) };
-            // 查同一 couple_code 的其他用户
-            fetch(SUPABASE_URL + '/rest/v1/profiles?select=id&couple_code=eq.'+encodeURIComponent(code.toUpperCase())+'&id=not.eq.'+encodeURIComponent(uid)+'&limit=1', { headers: headers })
-              .then(function(r){return r.json();}).then(function(rows){
-                var pu = (Array.isArray(rows) && rows[0]) ? rows[0].id : null;
-                __partnerUid = {v:pu, at: now};
-                cb(pu);
-              }).catch(function(){cb(null);});
-          }
-
-          if (document.readyState === 'complete') initMap();
-          else window.addEventListener('load', initMap);
-        </script>
-        </body>
-        </html>
+        <script>setTimeout(function(){try{location.href='file:///android_asset/www/index.html#/map';}catch(e){}},1000);</script>
+        </body></html>
     """.trimIndent()
 
 
@@ -630,6 +402,41 @@ class MainActivity : ComponentActivity() {
 
             Spacer(Modifier.height(20.dp))
 
+            val code = (user?.coupleCode ?: "").uppercase()
+            var pairInput by rememberSaveable { mutableStateOf("") }
+            var pairMsg by rememberSaveable { mutableStateOf("") }
+            var pairLoading by rememberSaveable { mutableStateOf(false) }
+            var copyTip by remember { mutableStateOf("") }
+            // 是否已配对：同 couple_code 存在其他 profile。每次显示/切到「我的」时查一次
+            var hasPartner by remember { mutableStateOf<Boolean?>(null) }
+            var partnerName by remember { mutableStateOf("") }
+            LaunchedEffect(code) {
+                hasPartner = null
+                partnerName = ""
+                if (code.isBlank()) return@LaunchedEffect
+                withContext(Dispatchers.IO) {
+                    val myId = user?.id ?: ""
+                    runCatching {
+                        NetworkModule.restService.getProfile(
+                            coupleCode = code
+                        )
+                    }.getOrNull()?.body()?.filter { it.id != myId }?.firstOrNull()?.let { partner ->
+                        hasPartner = true
+                        partnerName = partner.nickname.ifBlank { partner.username }
+                    } ?: run { hasPartner = false }
+                }
+            }
+
+            fun copyCoupleCode() {
+                if (code.isBlank()) return
+                runCatching {
+                    val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("couple_code", code))
+                }
+                copyTip = "已复制"
+                lifecycleScope.launch { delay(1500); copyTip = "" }
+            }
+
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White)
@@ -637,18 +444,146 @@ class MainActivity : ComponentActivity() {
                 Column(Modifier.padding(16.dp)) {
                     Text("配对码", color = Color(0xFF718096), fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        (user?.coupleCode ?: "暂无").uppercase(),
-                        fontSize = 30.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFFE75480),
-                        letterSpacing = 4.sp
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (code.isBlank()) "暂无" else code,
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFFE75480),
+                            letterSpacing = 4.sp
+                        )
+                        Spacer(Modifier.weight(1f))
+                        if (code.isNotBlank()) {
+                            OutlinedButton(
+                                onClick = { copyCoupleCode() },
+                                border = BorderStroke(1.dp, Color(0xFFE75480)),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentCopy, null,
+                                    tint = Color(0xFFE75480),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    if (copyTip.isNotBlank()) copyTip else "复制",
+                                    color = Color(0xFFE75480), fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "把这串发给TA，在登录页「配对」输入即可绑定",
-                        color = Color(0xFF718096), fontSize = 12.sp
+                        if (hasPartner == true && partnerName.isNotBlank())
+                            "🎉 已和 $partnerName 绑定，地图可见彼此 💕"
+                        else if (hasPartner == false)
+                            "把这串码发给TA，让TA在下面或登录页「配对」输入即可绑定"
+                        else "正在加载绑定状态...",
+                        color = if (hasPartner == true) Color(0xFF2F855A) else Color(0xFF718096),
+                        fontSize = 12.sp
                     )
+                }
+            }
+
+            // —— 未配对：显示"输入TA的配对码"表单（RPC pair_by_code 极简配对）——
+            if (hasPartner != true) {
+                Spacer(Modifier.height(14.dp))
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(
+                            "🔗 还没绑定？在这里输入TA的配对码",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF2D3748)
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = pairInput,
+                            onValueChange = { pairInput = it.trim().uppercase() },
+                            singleLine = true,
+                            label = { Text("TA 的配对码（6 位）") },
+                            leadingIcon = { Icon(Icons.Default.Link, null) },
+                            trailingIcon = {
+                                TextButton(onClick = {
+                                    runCatching {
+                                        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        val clip = cm.primaryClip
+                                        if (clip != null && clip.itemCount > 0) {
+                                            pairInput = clip.getItemAt(0).text.toString().trim().uppercase()
+                                        }
+                                    }
+                                }) { Text("粘贴", fontSize = 12.sp, color = Color(0xFF667EEA)) }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (pairMsg.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                pairMsg,
+                                color = if (pairMsg.contains("成功")) Color(0xFF2F855A) else Color(0xFFE53E3E),
+                                fontSize = 12.sp
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Button(
+                            onClick = {
+                                val me = user
+                                if (me == null) { pairMsg = "账号信息丢失，请重登"; return@Button }
+                                pairLoading = true; pairMsg = ""
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    val resp = runCatching {
+                                        NetworkModule.rpcService.pairByCode(
+                                            com.coupletracker.android.data.PairByCodeReq(
+                                                myId = me.id,
+                                                theirCode = pairInput.trim().uppercase()
+                                            )
+                                        )
+                                    }
+                                    val body = resp.getOrNull()?.body()
+                                    val err = runCatching { resp.getOrNull()?.errorBody()?.string() }.getOrNull().orEmpty()
+                                    val ex = resp.exceptionOrNull()
+                                    withContext(Dispatchers.Main) {
+                                        pairLoading = false
+                                        when {
+                                            resp.getOrNull()?.isSuccessful == true && body?.ok == true -> {
+                                                val newCode = body.couple_code ?: pairInput.trim().uppercase()
+                                                UserRepository.get().setUser(me.copy(coupleCode = newCode))
+                                                hasPartner = true
+                                                partnerName = body.their_nickname?.takeIf { it.isNotBlank() } ?: "TA"
+                                                pairMsg = "✅ 配对成功！已和 $partnerName 绑定"
+                                                pairInput = ""
+                                            }
+                                            body?.reason == "CODE_NOT_FOUND" ->
+                                                pairMsg = "❌ 配对码不存在：让TA打开「我的」页确认TA的码"
+                                            body?.reason == "CANNOT_PAIR_SELF" ->
+                                                pairMsg = "😅 不能和自己配对哦"
+                                            body?.reason == "ME_NOT_FOUND" ->
+                                                pairMsg = "账号信息丢失，请退出后重新登录"
+                                            ex != null ->
+                                                pairMsg = "网络异常：${ex.message?.take(40).orEmpty()}"
+                                            err.isNotBlank() ->
+                                                pairMsg = "配对失败：${err.take(60)}"
+                                            else -> pairMsg = "配对失败，请稍后再试"
+                                        }
+                                    }
+                                }
+                            },
+                            enabled = !pairLoading && pairInput.length >= 4,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(24.dp)),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF667EEA))
+                        ) {
+                            if (pairLoading) CircularProgressIndicator(
+                                color = Color.White, modifier = Modifier.size(18.dp))
+                            else Text("立即配对 💕", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
                 }
             }
 
@@ -734,6 +669,27 @@ class MainActivity : ComponentActivity() {
                     Text(
                         "✅ 调整后立即生效，无需重启APP",
                         color = Color(0xFF48BB78), fontSize = 11.sp, fontWeight = FontWeight.Medium
+                    )
+                    // 上报状态（方便用户排查"为什么地图没显示"）
+                    Spacer(Modifier.height(10.dp))
+                    val locStatus by NetworkModule.lastLocationReportStatusFlow.collectAsState()
+                    val appStatus by NetworkModule.lastAppReportStatusFlow.collectAsState()
+                    fun colorOf(s: String) = when {
+                        s.contains("成功") -> Color(0xFF2F855A)
+                        s.contains("失败") || s.contains("异常") -> Color(0xFFE53E3E)
+                        else -> Color(0xFF718096)
+                    }
+                    Divider(color = Color(0xFFEDF2F7))
+                    Spacer(Modifier.height(8.dp))
+                    Text("🛰️ 上报状态 · 供排查参考", color = Color(0xFF4A5568), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                    Text("📍 $locStatus", color = colorOf(locStatus), fontSize = 10.sp, lineHeight = 14.sp)
+                    Spacer(Modifier.height(2.dp))
+                    Text("📱 $appStatus", color = colorOf(appStatus), fontSize = 10.sp, lineHeight = 14.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "如果「位置上报」连续失败：打开系统设置 → 应用权限 → 允许定位（允许始终允许）→ 再打开一次本APP",
+                        color = Color(0xFFA0AEC0), fontSize = 10.sp, lineHeight = 14.sp
                     )
                 }
             }

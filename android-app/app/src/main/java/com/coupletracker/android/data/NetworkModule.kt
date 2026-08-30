@@ -4,11 +4,12 @@ import com.coupletracker.android.BuildConfig
 import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * 网络模块单例 — 对接 Supabase BaaS
@@ -36,6 +37,13 @@ object NetworkModule {
     /** RPC API（/rest/v1/rpc/） - 调用 SECURITY DEFINER 函数（如 register_user）*/
     lateinit var rpcService: RpcService
         private set
+
+    /** 最近一次位置上报状态（成功/错误明细），供「我的」页采集频率卡片底部显示 */
+    val lastLocationReportStatus = MutableStateFlow("等待启动服务…")
+    /** 最近一次 APP 使用上报状态 */
+    val lastAppReportStatus = MutableStateFlow("等待启动服务…")
+    val lastLocationReportStatusFlow = lastLocationReportStatus.asStateFlow()
+    val lastAppReportStatusFlow = lastAppReportStatus.asStateFlow()
 
     private const val SUPABASE_URL = BuildConfig.SUPABASE_URL
     private const val SUPABASE_ANON_KEY = BuildConfig.SUPABASE_ANON_KEY
