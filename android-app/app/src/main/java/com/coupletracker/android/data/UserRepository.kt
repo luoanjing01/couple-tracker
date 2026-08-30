@@ -2,6 +2,7 @@ package com.coupletracker.android.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.coupletracker.android.BuildConfig
@@ -25,6 +26,15 @@ class UserRepository private constructor(private val context: Context) {
         private val KEY_USER = stringPreferencesKey("user_info_json")
         private val KEY_API_BASE = stringPreferencesKey("server_api_base")
         private val KEY_WEB_BASE = stringPreferencesKey("server_web_base")
+        // 采集频率（秒）—— 默认位置 8s、APP 4s，降低卡顿
+        private val KEY_LOC_INTERVAL_SEC = intPreferencesKey("loc_interval_sec")
+        private val KEY_APP_INTERVAL_SEC = intPreferencesKey("app_interval_sec")
+        const val DEFAULT_LOC_INTERVAL_SEC = 8
+        const val DEFAULT_APP_INTERVAL_SEC = 4
+        const val MIN_LOC_INTERVAL_SEC = 3
+        const val MAX_LOC_INTERVAL_SEC = 60
+        const val MIN_APP_INTERVAL_SEC = 2
+        const val MAX_APP_INTERVAL_SEC = 30
 
         @Volatile private var INSTANCE: UserRepository? = null
         fun init(context: Context) {
@@ -76,4 +86,25 @@ class UserRepository private constructor(private val context: Context) {
     // ---- 便捷 ----
     suspend fun isLoggedIn(): Boolean = getToken() != null && getUser() != null
     suspend fun logout() { setToken(null); setUser(null) }
+
+    // ---- 采集频率（可在设置页动态调整，Service 监听 Flow 自动重启） ----
+    val locationIntervalSecFlow: Flow<Int> = context.store.data.map {
+        (it[KEY_LOC_INTERVAL_SEC] ?: DEFAULT_LOC_INTERVAL_SEC)
+            .coerceIn(MIN_LOC_INTERVAL_SEC, MAX_LOC_INTERVAL_SEC)
+    }
+    suspend fun getLocationIntervalSec(): Int = locationIntervalSecFlow.first()
+    suspend fun setLocationIntervalSec(sec: Int) {
+        val v = sec.coerceIn(MIN_LOC_INTERVAL_SEC, MAX_LOC_INTERVAL_SEC)
+        context.store.edit { it[KEY_LOC_INTERVAL_SEC] = v }
+    }
+
+    val appIntervalSecFlow: Flow<Int> = context.store.data.map {
+        (it[KEY_APP_INTERVAL_SEC] ?: DEFAULT_APP_INTERVAL_SEC)
+            .coerceIn(MIN_APP_INTERVAL_SEC, MAX_APP_INTERVAL_SEC)
+    }
+    suspend fun getAppIntervalSec(): Int = appIntervalSecFlow.first()
+    suspend fun setAppIntervalSec(sec: Int) {
+        val v = sec.coerceIn(MIN_APP_INTERVAL_SEC, MAX_APP_INTERVAL_SEC)
+        context.store.edit { it[KEY_APP_INTERVAL_SEC] = v }
+    }
 }

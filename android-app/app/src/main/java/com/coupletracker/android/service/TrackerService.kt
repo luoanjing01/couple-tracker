@@ -36,6 +36,8 @@ class TrackerService : Service() {
     private var locationTracker: LocationTracker? = null
     private var appMonitor: AppUsageMonitor? = null
     private var batteryJob: Job? = null
+    private var locationJob: Job? = null
+    private var appJob: Job? = null
     private var createdSafely: Boolean = false
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -54,35 +56,68 @@ class TrackerService : Service() {
                 }
             }
 
-            // 3. 监听用户登录态 → 启动上报循环
+            // 3. 监听用户登录态 + 采集频率 → 动态启停 tracker
             serviceScope.launch {
                 runCatching {
-                    UserRepository.get().userFlow.collect { user ->
-                        runCatching {
-                            if (user != null) {
-                                if (canStartForeground()) {
-                                    runCatching {
-                                        updateNotification("💕 已登录 · ${user.nickname.ifBlank { user.username }}")
+                    val repo = UserRepository.get()
+                    // 同时组合 3 个流：用户态、位置频率、APP频率
+                    kotlinx.coroutines.flow.combine(
+                        repo.userFlow,
+                        repo.locationIntervalSecFlow,
+                        repo.appIntervalSecFlow
+                    ) { user, locSec, appSec -> Triple(user, locSec, appSec) }
+                        .collect { (user, locSec, appSec) ->
+                            runCatching {
+                                if (user != null) {
+                                    if (canStartForeground()) {
+                                        runCatching {
+                                            updateNotification("💕 已登录 · ${user.nickname.ifBlank { user.username }}")
+                                        }
                                     }
+                                    // 位置采集：频率变化时重启
+                                    val locMs = (locSec * 1000L).coerceAtLeast(2000L)
+                                    restartLocation(locMs)
+                                    // APP 使用采集：频率变化时重启
+                                    val appMs = (appSec * 1000L).coerceAtLeast(1000L)
+                                    restartAppMonitor(appMs)
+                                    // 电量检测（10秒一次）
+                                    startBatteryMonitor()
+                                } else {
+                                    stopSelf()
                                 }
-                                // 定位（5秒一次）
-                                if (locationTracker?.hasPermission() == true) {
-                                    runCatching { locationTracker?.start(5000L) }
-                                }
-                                // APP 监控（2秒一次）
-                                if (appMonitor?.hasUsagePermission() == true) {
-                                    runCatching { appMonitor?.start(2000L) }
-                                }
-                                // 电量检测（10秒一次）
-                                startBatteryMonitor()
-                            } else {
-                                stopSelf()
                             }
                         }
-                    }
                 }
             }
             createdSafely = true
+        }
+    }
+
+    /** 启动位置采集（若已有旧协程，先停后起） */
+    private fun restartLocation(intervalMs: Long) {
+        runCatching {
+            locationJob?.cancel()
+            val tracker = locationTracker ?: return
+            if (tracker.hasPermission()) {
+                locationJob = serviceScope.launch(Dispatchers.Default) {
+                    runCatching { tracker.stop() }
+                    runCatching { tracker.start(intervalMs) }
+                }
+            }
+        }
+    }
+
+    /** 启动 APP 使用监控采集（若已有旧协程，先停后起） */
+    private fun restartAppMonitor(pollMs: Long) {
+        runCatching {
+            appJob?.cancel()
+            val mon = appMonitor ?: return
+            if (mon.hasUsagePermission()) {
+                appJob = serviceScope.launch(Dispatchers.Default) {
+                    runCatching { mon.stop() }
+                    runCatching { mon.start(pollMs) }
+                }
+            }
         }
     }
 
