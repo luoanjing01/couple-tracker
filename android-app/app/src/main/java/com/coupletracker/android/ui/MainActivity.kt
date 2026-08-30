@@ -299,78 +299,17 @@ class MainActivity : ComponentActivity() {
 
             Spacer(Modifier.height(26.dp))
 
-            // ====== 服务器地址设置（真机连不到时在这里改） ======
-            var apiBase by remember { mutableStateOf(NetworkModule.getApiBase()) }
-            var webBase by remember { mutableStateOf(BuildConfig.DEFAULT_WEB_BASE) }
-            var serverEditing by remember { mutableStateOf(false) }
-            var saveMsg by remember { mutableStateOf("") }
-
-            LaunchedEffect(Unit) {
-                webBase = NetworkModule.getWebBase()
-            }
-
+            // ====== 云端服务信息（Supabase BaaS） ======
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
                 Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("🖥️ 服务器地址", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
-                        Spacer(Modifier.weight(1f))
-                        TextButton(onClick = { serverEditing = !serverEditing }) {
-                            Text(if (serverEditing) "收起" else "修改", color = Color(0xFF667EEA), fontSize = 13.sp)
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    if (!serverEditing) {
-                        Text("API: ${NetworkModule.getApiBase()}", color = Color(0xFF718096), fontSize = 11.sp)
-                        Text("Web: $webBase", color = Color(0xFF718096), fontSize = 11.sp)
-                    } else {
-                        Text("后端 API 地址", color = Color(0xFF718096), fontSize = 12.sp)
-                        OutlinedTextField(
-                            value = apiBase,
-                            onValueChange = { apiBase = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            placeholder = { Text("http://192.168.x.x:3001", fontSize = 12.sp) }
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text("前端 Web 地址", color = Color(0xFF718096), fontSize = 12.sp)
-                        OutlinedTextField(
-                            value = webBase,
-                            onValueChange = { webBase = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            placeholder = { Text("http://192.168.x.x:5173", fontSize = 12.sp) }
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    apiBase = BuildConfig.DEFAULT_API_BASE
-                                    webBase = BuildConfig.DEFAULT_WEB_BASE
-                                },
-                                modifier = Modifier.weight(1f).height(42.dp),
-                                shape = RoundedCornerShape(21.dp)
-                            ) { Text("恢复默认", fontSize = 12.sp) }
-                            Button(
-                                onClick = {
-                                    lifecycleScope.launch(Dispatchers.IO) {
-                                        NetworkModule.updateServer(apiBase, webBase)
-                                        saveMsg = "✅ 已保存，请重新进入地图页"
-                                        serverEditing = false
-                                    }
-                                },
-                                modifier = Modifier.weight(1f).height(42.dp),
-                                shape = RoundedCornerShape(21.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF667EEA))
-                            ) { Text("保存", fontSize = 12.sp) }
-                        }
-                        if (saveMsg.isNotEmpty()) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(saveMsg, color = Color(0xFF38A169), fontSize = 11.sp)
-                        }
-                    }
+                    Text("☁️ 云端服务", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+                    Spacer(Modifier.height(8.dp))
+                    Text("Supabase", color = Color(0xFF718096), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text("Auth: ${NetworkModule.getApiBase().replace("/rest/v1", "/auth/v1")}", color = Color(0xFF718096), fontSize = 11.sp)
+                    Text("REST: ${NetworkModule.getApiBase()}", color = Color(0xFF718096), fontSize = 11.sp)
                 }
             }
 

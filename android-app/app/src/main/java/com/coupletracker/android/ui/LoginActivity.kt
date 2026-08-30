@@ -34,6 +34,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.coupletracker.android.appmonitor.AppUsageMonitor
 import com.coupletracker.android.data.NetworkModule
+import com.coupletracker.android.data.SignUpBody
+import com.coupletracker.android.data.SignUpMetadata
 import com.coupletracker.android.data.UserRepository
 import com.coupletracker.android.data.model.*
 import com.coupletracker.android.service.TrackerService
