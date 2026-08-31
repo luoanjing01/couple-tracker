@@ -378,8 +378,10 @@ class LoginActivity : ComponentActivity() {
                 val pCoupleCode = str("couple_code", "f6")
                 val pCoupleId   = strN("couple_id", "f7")
 
-                // 存 placeholder token（后续 REST API 用 anon key 就能读写，RLS 全放开）
-                UserRepository.get().setToken("rpc_auth_${userId.take(16)}")
+                // ✅ RLS 全放开，anon key 就能读写所有表，根本不需要 JWT token！
+                // 这里千万不能存假 token → NetworkModule 拦截器会带上 Authorization: Bearer 头，
+                // PostgREST 收到无效 JWT 直接返回 401 PGRST301，所有 REST API 全部挂掉！
+                UserRepository.get().setToken(null)
 
                 val finalGender = pGender.takeIf { it.isNotBlank() } ?: gender
                 val finalAvatar = pAvatar.takeIf { it.isNotBlank() } ?: avatar

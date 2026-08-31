@@ -82,7 +82,11 @@ function readLsUser(){
 // 保存到 localStorage（方便下次进入时，即使注入还没生效，也有历史可用）
 function saveLs(){
   try {
-    if (window.__AUTH_TOKEN__) localStorage.setItem('token', window.__AUTH_TOKEN__);
+    // ✅ 只存合法 JWT，清掉之前可能残留的假 token（如 "rpc_auth_xxx"）
+    //    RLS 全放开，anon key 就能读写，根本不需要 JWT
+    if (isValidJWT(window.__AUTH_TOKEN__)) localStorage.setItem('token', window.__AUTH_TOKEN__);
+    else localStorage.removeItem('token');
+
     if (window.__CURRENT_USER__) localStorage.setItem('user', typeof window.__CURRENT_USER__ === 'string' ? window.__CURRENT_USER__ : JSON.stringify(window.__CURRENT_USER__));
     if (window.__SUPABASE_URL__) localStorage.setItem('sb_url', window.__SUPABASE_URL__);
     if (window.__SUPABASE_ANON_KEY__) localStorage.setItem('sb_anon', window.__SUPABASE_ANON_KEY__);
@@ -153,7 +157,24 @@ window.__applyAndroidInjection = function(){
 
 var SUPABASE_URL = (window.__SUPABASE_URL__ || (localStorage && localStorage.getItem('sb_url')) || 'https://gvytqbgangyjjurekyid.supabase.co').replace(/\/$/, '');
 var ANON_KEY    = window.__SUPABASE_ANON_KEY__ || (localStorage && localStorage.getItem('sb_anon')) || 'sb_publishable_TmlnyTou7Z7JGt3vNP3TTw_3-KkCiCM';
-var TOKEN       = window.__AUTH_TOKEN__ || (localStorage && localStorage.getItem('token')) || ANON_KEY;
+
+/* ============================================================
+   ✅ Token 安全校验：只有合法 JWT 才带 Authorization 头
+      JWT 格式 = base64url.header.payload.signature（三段，点号分隔）
+      假 token 如 "rpc_auth_xxx" 或 anon key 都会被过滤掉
+      👉 RLS 已全放开，只用 apikey(anon) 就能读写所有表，根本不需要 JWT！
+   ============================================================ */
+function isValidJWT(t){ return typeof t === 'string' && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(t.trim()); }
+var __rawToken = window.__AUTH_TOKEN__ || (localStorage && localStorage.getItem('token'));
+var TOKEN = isValidJWT(__rawToken) ? __rawToken : null;  // 只有合法 JWT 才保留，否则=null（不写 Authorization 头）
+
+// ✅ 统一构造安全 headers：只有 TOKEN 是合法 JWT 才加 Authorization
+//    RLS 全放开，anon key 就能读写，绝大多数场景不需要 Authorization 头
+function makeHeaders() {
+  var h = { 'apikey': ANON_KEY };
+  if (TOKEN) h.Authorization = 'Bearer ' + TOKEN;
+  return h;
+}
 
 var meMarker = null, partnerMarker = null, meAcc = null, partnerAcc = null, fitDone = false;
 var lastMeAt = 0, lastPartnerAt = 0;
@@ -454,7 +475,7 @@ function updateTopbar() {
 }
 
 function poll() {
-  var headers = { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + (TOKEN || ANON_KEY) };
+  var headers = makeHeaders();
   var uid = me && me.id ? me.id : null;
   var reqsDone = 0;
   var myErr = '', partnerErr = '';
@@ -508,7 +529,7 @@ var __partnerNickCache = null;
 function fetchNickAvatar(uid, cb) {
   if (__partnerNickCache && __partnerNickCache.id === uid) { cb(__partnerNickCache); return; }
   fetch(SUPABASE_URL + '/rest/v1/profiles?select=id,nickname,avatar,couple_code&limit=1&id=eq.'+encodeURIComponent(uid), {
-    headers: { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + (TOKEN||ANON_KEY) }
+    headers: makeHeaders()
   }).then(function(r){return r.json();}).then(function(rows){
     var p = (Array.isArray(rows) && rows[0]) ? rows[0] : {id:uid, nickname:'TA', avatar:'💞'};
     __partnerNickCache = p;
@@ -523,7 +544,7 @@ function fetchPartnerUid(cb) {
   var code = me && me.coupleCode ? me.coupleCode : null;
   var uid = me && me.id ? me.id : null;
   if (!code) { cb(null, null); return; }
-  var headers = { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + (TOKEN||ANON_KEY) };
+  var headers = makeHeaders();
   fetch(SUPABASE_URL + '/rest/v1/profiles?select=id&couple_code=eq.'+encodeURIComponent(String(code).toUpperCase())+'&id=not.eq.'+encodeURIComponent(uid)+'&limit=1', { headers: headers })
     .then(function(r){
       if (!r.ok) throw new Error('HTTP '+r.status);
