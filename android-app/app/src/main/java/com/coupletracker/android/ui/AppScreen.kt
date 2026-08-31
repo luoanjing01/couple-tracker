@@ -18,6 +18,7 @@ import android.os.Process
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -313,6 +314,7 @@ private fun CurrentAppCard(
 // =====================================================================
 // ② 📱 手机状态 —— 网格小卡片
 // =====================================================================
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PhoneStatusCard(
     subjectId: String,
@@ -777,22 +779,6 @@ private fun getWifiSsidMultiAttempt(ctx: Context): String? {
             if (!ssid.isNullOrBlank()) {
                 val cleaned = ssid.removeSurrounding("\"")
                 if (cleaned.isNotBlank() && cleaned != "<unknown ssid>") return cleaned
-            }
-        }
-    }
-
-    // 方案 4: WifiManager.querySavedNetworks (Android 13+)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        runCatching {
-            val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            // 这个 API 虽然要 NEARBY_WIFI_DEVICES 权限，但有些 ROM 不放行
-            val networks = wm.querySavedNetworks(android.net.wifi.SoftApConfiguration.Builder().build())
-            if (networks.isNotEmpty()) {
-                val ssid = networks.firstOrNull()?.ssid
-                if (!ssid.isNullOrBlank()) {
-                    val cleaned = ssid.removeSurrounding("\"")
-                    if (cleaned.isNotBlank()) return cleaned
-                }
             }
         }
     }
