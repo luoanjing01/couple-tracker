@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -274,26 +274,7 @@ function initMap() {
       document.addEventListener('visibilitychange', function(){ if (!document.hidden) setTimeout(kickSize, 150); });
     } catch(e){}
 
-    // 5.5 秒如果底图一张都没加载出来 → 切下一个图源（高图源不通时自动切换）
-    var tileLoadTimer = setTimeout(function(){
-      if (map && !fitDone) { tryNextTileLayer(); }
-    }, 5500);
-    if (tileLayer && tileLayer.on) {
-      tileLayer.on('load', function(){
-      console.log('[CT] tileLayer LOADED!');
-      clearTimeout(tileLoadTimer);
-    });
-    tileLayer.on('tileerror', function(ev){
-      console.log('[CT] tile ERROR:', ev && ev.coords);
-      var box = document.getElementById('debugBox');
-      if (box) box.innerHTML += '<span style=""color:#c53030"">❌ 瓦片加载失败 ' + (ev && ev.coords ? ev.coords.x+','+ev.coords.y+','+ev.coords.z : '') + '</span><br>';
-    });
-      tileLayer.on('tileerror', function(){
-        // 有一张瓦片失败就踢一次切图源计数器（连续出错 → 下一轮自动切换）
-      });
-    }
-
-    // ✅ 离线模式：无换图源按钮
+    // ✅ 离线模式：无底图瓦片、无换图源按钮
 
     // 关闭 loading
     setTimeout(function(){
@@ -331,8 +312,8 @@ function initMap() {
         var ms = map.getSize();
         var mEl = document.getElementById('map');
         var hh = document.body ? document.body.scrollHeight : 0;
-        // 数一下 tileLayer 里有多少已加载瓦片
-        var loaded = '离线模式'; // 无瓦片
+        // 离线模式不加载瓦片
+        var loaded = '离线模式';
         var markerCount = 0;
         if (map) map.eachLayer(function(l){ if (l instanceof L.Marker) markerCount++; });
         box.innerHTML =
@@ -346,6 +327,7 @@ function initMap() {
       }
       setTimeout(debugLoop, 1000);
     })();
+  } catch(e) {
     var loading = document.getElementById('loading');
     if (loading) {
       loading.innerHTML = '<div style="color:#e53e3e">❌ 地图初始化异常</div>'
