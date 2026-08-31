@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -244,6 +244,9 @@ function tryInitMap(){
   initMap();
 }
 
+
+/* ---- WebView 尺寸踢醒（全局可见，initMap + setOrUpdate 都会调）---- */
+function kickSize() { try { if (map) map.invalidateSize(true); } catch(e){} }
 function initMap() {
   try {
     map = L.map('map', { zoomControl: true, preferCanvas: true }).setView([39.9042, 116.4074], 11);
@@ -252,7 +255,6 @@ function initMap() {
 
     // ✅ WebView 经典修复：容器尺寸在 load 时往往还是 0，导致 Leaflet 以为没有可视区 → 瓦片 0 张 → 全空白
     //    常见现象：整个地图只有 body 粉色背景，什么都不渲染，但没有报错。必须多次调用 invalidateSize() 踢醒
-    function kickSize() { try { if (map) map.invalidateSize(true); } catch(e){} }
     // ① 前 3 秒密集踢（Compose 动画 / WebView 第一次 / 第二次 / 第三次布局）
     setTimeout(kickSize, 200);
     setTimeout(kickSize, 600);
