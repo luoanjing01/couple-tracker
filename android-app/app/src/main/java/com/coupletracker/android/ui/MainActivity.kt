@@ -481,9 +481,9 @@ class MainActivity : ComponentActivity() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            painterResource(id = android.R.drawable.star_big_on),
+                            Icons.Default.Favorite,
                             null,
-                            tint = Color(0xFF2F855A),
+                            tint = Color(0xFFE75480),
                             modifier = Modifier.size(30.dp)
                         )
                         Spacer(Modifier.width(12.dp))
