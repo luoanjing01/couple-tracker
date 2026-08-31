@@ -11,6 +11,7 @@ import android.content.pm.ApplicationInfo
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Process
@@ -470,11 +471,36 @@ private fun PhoneStatusCard(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // 状态：开机 / 充电中 / 离线(可能关机)
+            val statusLabel: String
+            val statusIcon: String
+            val statusValue: String
+            val statusAccent: Color
+            when {
+                !isOnline -> {
+                    statusLabel = "离线/关机"
+                    statusIcon = "🔴"
+                    statusValue = if (subjectIsMe) "—" else relativeTime(taUpdatedAt).ifBlank { "未知" }
+                    statusAccent = Color(0xFFE53E3E)
+                }
+                charging -> {
+                    statusLabel = "充电中"
+                    statusIcon = "🔌"
+                    statusValue = if (subjectIsMe) "充电中" else "充电中 · $batPct%"
+                    statusAccent = Color(0xFF38A169)
+                }
+                else -> {
+                    statusLabel = "开机"
+                    statusIcon = "🟢"
+                    statusValue = if (subjectIsMe) "正常使用" else "在线 · $batPct%"
+                    statusAccent = Color(0xFF2F855A)
+                }
+            }
             StatusChip(
-                icon = if (isOnline) "🟢" else "🔴",
-                label = if (isOnline) "在线" else "离线/可能关机",
-                value = if (subjectIsMe) "实时" else relativeTime(taUpdatedAt),
-                accent = if (isOnline) Color(0xFF2F855A) else Color(0xFFE53E3E),
+                icon = statusIcon,
+                label = statusLabel,
+                value = statusValue,
+                accent = statusAccent,
                 modifier = Modifier.weight(1f)
             )
             StatusChip(
@@ -530,13 +556,10 @@ private fun HistoryOpenList(
         if (subjectId.isBlank()) { rows = emptyList(); return@LaunchedEffect }
         loading = true; loadError = null
         withContext(Dispatchers.IO) {
-            // 查今日 + 昨日的 app_usage（各 1000 条够用了）
-            val (gte, lt) = dateRangeForDays(2)
+            // 用简单的 getAppUsage，按时间倒序拉最新 2000 条
             val resp = runCatching {
-                NetworkModule.restService.getAppUsageInRange(
+                NetworkModule.restService.getAppUsage(
                     userId = subjectId,
-                    createdAtGte = gte,
-                    createdAtLt = lt,
                     order = "created_at.desc",
                     limit = 2000
                 )
@@ -690,13 +713,22 @@ private fun getNetworkType(ctx: Context): String {
     val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     val nc = cm.getNetworkCapabilities(cm.activeNetwork) ?: return "无网络"
     return when {
-        nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WiFi"
+        nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> {
+            // 尝试拿 WiFi SSID
+            val ssid = runCatching {
+                val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                val info = wm.connectionInfo
+                info.ssid?.let { s ->
+                    // Android 10+ 可能返回 "<unknown SSID>" 或者系统限制
+                    if (s.isNotBlank() && s != "<unknown ssid>" && s != "0x") {
+                        s.removeSurrounding("\"")
+                    } else null
+                }
+            }.getOrNull()
+            if (ssid != null) "WiFi · $ssid" else "WiFi"
+        }
         nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> {
-            // 进一步区分 5G/4G/3G
-            when (Build.VERSION.SDK_INT) {
-                in 31..Int.MAX_VALUE -> "蜂窝" // Android 12+ 直接用这个
-                else -> "移动网络"
-            }
+            "移动数据"
         }
         nc.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "蓝牙"
         nc.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "有线"
