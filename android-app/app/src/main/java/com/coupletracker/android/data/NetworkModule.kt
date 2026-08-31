@@ -116,7 +116,9 @@ object NetworkModule {
             val token = runCatching {
                 runBlocking { UserRepository.get().getToken() }
             }.getOrNull()
-            if (!token.isNullOrBlank()) {
+            // ✅ 只有合法 JWT 才加 Authorization 头
+            //    假 token 如 "rpc_auth_xxx"（旧版本残留）一律跳过，避免 401 PGRST301
+            if (UserRepository.get().isValidJwt(token)) {
                 builder.header("Authorization", "Bearer $token")
             }
         }

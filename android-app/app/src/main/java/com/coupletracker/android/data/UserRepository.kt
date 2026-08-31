@@ -84,7 +84,25 @@ class UserRepository private constructor(private val context: Context) {
     suspend fun resolveWebBase(): String = getWebBase()
 
     // ---- 便捷 ----
-    suspend fun isLoggedIn(): Boolean = getToken() != null && getUser() != null
+    /** 判断一个字符串是否是合法 JWT 格式（三段 base64url 用点号分隔）
+     *  假 token 如 "rpc_auth_xxx"、anon key 等都会返回 false */
+    private val JWT_REGEX = Regex("^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$")
+    fun isValidJwt(tok: String?): Boolean = tok != null && JWT_REGEX.matches(tok.trim())
+
+    /** 检查并清洗非法 token：如果 token 不是合法 JWT，自动清除 */
+    suspend fun sanitizeToken() {
+        val t = getToken()
+        if (t != null && !isValidJwt(t)) {
+            setToken(null)
+        }
+    }
+
+    /** 已登录 = 有合法 JWT token 且有 user 信息
+     *  旧版本残留的假 token（如 "rpc_auth_xxx"）会被清洗 */
+    suspend fun isLoggedIn(): Boolean {
+        sanitizeToken()
+        return getToken() != null && getUser() != null
+    }
     suspend fun logout() { setToken(null); setUser(null) }
 
     // ---- 采集频率（可在设置页动态调整，Service 监听 Flow 自动重启） ----

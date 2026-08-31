@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.os.Build
 import com.coupletracker.android.data.NetworkModule
 import com.coupletracker.android.data.UserRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 /**
  * 情侣报备 APP - Application 入口
@@ -21,6 +23,11 @@ class TrackerApp : Application() {
         // 2. 初始化网络模块和用户仓库
         UserRepository.init(this)
         NetworkModule.init()
+        // 3. ✅ 主动清洗旧版本残留的假 token（如 "rpc_auth_xxx"）
+        //    升级安装时 DataStore 保留旧数据，脏 token 会导致所有请求 401
+        runBlocking(Dispatchers.IO) {
+            UserRepository.get().sanitizeToken()
+        }
     }
 
     private fun createNotificationChannels() {
