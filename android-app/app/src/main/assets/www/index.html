@@ -6,38 +6,10 @@
 <title>情侣地图 💕</title>
 
 <!-- ============================================================
-     🚀 Leaflet CSS：国内 CDN 优先 + 多重回退
-     （之前的 unpkg.com 在中国大陆经常被墙，导致地图白屏）
+     ✅ Leaflet CSS：本地文件！彻底消除 CDN 被墙风险
+     （之前 bootcdn/staticfile/baomitu/unpkg 在用户手机各种被拦导致地图全粉空白）
      ============================================================ -->
-<link rel="preload" as="style"
-      href="https://cdn.bootcdn.net/ajax/libs/leaflet/1.9.4/leaflet.min.css"
-      onerror="this.onerror=null;this.href='https://cdn.staticfile.org/leaflet/1.9.4/leaflet.min.css';">
-<link id="leaflet-css-1" rel="stylesheet"
-      href="https://cdn.bootcdn.net/ajax/libs/leaflet/1.9.4/leaflet.min.css"
-      onerror="this.onerror=null;this.href='https://cdn.staticfile.org/leaflet/1.9.4/leaflet.min.css';">
-<!-- 二级回退（上面的加载失败后 5 秒触发） -->
-<script>
-(function(){
-  var t=setTimeout(function(){
-    var c=document.getElementById('leaflet-css-1');
-    try{
-      var links=document.querySelectorAll('link[rel=stylesheet]');
-      var ok=false;
-      for(var i=0;i<links.length;i++){
-        try{
-          if(links[i].sheet && links[i].sheet.cssRules && links[i].sheet.cssRules.length>10){ok=true;break;}
-        }catch(e){}
-      }
-      if(!ok){
-        var s=document.createElement('link');
-        s.rel='stylesheet';
-        s.href='https://lib.baomitu.com/leaflet/1.9.4/leaflet.min.css';
-        document.head.appendChild(s);
-      }
-    }catch(e){}
-  },5000);
-})();
-</script>
+<link rel="stylesheet" href="./leaflet.min.css">
 
 <style>
   html,body{margin:0;padding:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:#fdf2f8;}
@@ -46,6 +18,7 @@
   .topbar .row{display:flex;justify-content:space-between;align-items:center;gap:10px;}
   .nick{font-weight:700;color:#2d3748;font-size:14px;}
   .meta{font-size:11px;color:#718096;margin-top:2px;}
+  .meta.err{color:#e53e3e;font-weight:600;}
   .status{font-size:12px;}
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#48bb78;margin-right:4px;vertical-align:middle;}
   .distance{font-size:13px;color:#e75480;font-weight:700;}
@@ -81,82 +54,106 @@
 
 <div class="loading" id="loading">
   <div id="loadingMain">正在加载地图 🗺️...</div>
-  <div class="sub" id="loadingSub">首次加载可能需要 3-10 秒，请耐心等待</div>
+  <div class="sub" id="loadingSub">本地加载只需 1-2 秒，请稍候</div>
 </div>
 
 <!-- ============================================================
-     🚀 Leaflet JS：多重国内 CDN + 动态加载兜底
-     顺序：bootcdn → staticfile(七牛) → baomitu(360) → 终极内联
+     ✅ Leaflet JS：本地文件！绝对不请求外部 CDN
      ============================================================ -->
-<script>
-window.__leaflet_loaded = false;
-window.__leaflet_cdn_tried = 0;
-var LEAFLET_CDNS = [
-  'https://cdn.bootcdn.net/ajax/libs/leaflet/1.9.4/leaflet.min.js',
-  'https://cdn.staticfile.org/leaflet/1.9.4/leaflet.min.js',
-  'https://lib.baomitu.com/leaflet/1.9.4/leaflet.min.js',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'   // 最后才走 unpkg
-];
-function loadLeaflet(i){
-  if (window.__leaflet_loaded) return;
-  if (i >= LEAFLET_CDNS.length) {
-    // 所有 CDN 都失败 → 提示用户
-    var loading = document.getElementById('loading');
-    var main = document.getElementById('loadingMain');
-    var sub = document.getElementById('loadingSub');
-    if (loading) { loading.style.background='rgba(254,215,215,0.95)'; }
-    if (main) { main.textContent = '❌ 地图库加载失败'; }
-    if (sub)  { sub.innerHTML  = '当前网络无法访问地图CDN。<br>建议：切换 WiFi/4G → 退出APP重进'; }
-    return;
-  }
-  window.__leaflet_cdn_tried = i+1;
-  var s = document.createElement('script');
-  s.src = LEAFLET_CDNS[i];
-  s.async = false;
-  s.onload = function(){
-    if (typeof L !== 'undefined') {
-      window.__leaflet_loaded = true;
-      tryInitMap();
-    } else loadLeaflet(i+1);
-  };
-  s.onerror = function(){ loadLeaflet(i+1); };
-  document.head.appendChild(s);
-}
-// 启动：先试第一个 CDN
-loadLeaflet(0);
-</script>
+<script src="./leaflet.min.js"></script>
 
 <script>
 /* ============================================================
-   地图主逻辑（等待 Leaflet + 用户信息 + 必要DOM均就绪后执行）
+   地图主逻辑（Leaflet 本地加载完成 → 直接执行 initMap）
    ============================================================ */
 var me = null, partner = null;
-(function readUser(){
-  var tries = 0;
-  (function tick(){
-    tries++;
-    try {
-      if (window.__CURRENT_USER__) { me = window.__CURRENT_USER__; saveLs(); return; }
-      if (window.__AUTH_TOKEN__ && localStorage) { saveLs(); }
-      var ls = localStorage && localStorage.getItem('user');
-      if (ls) { try { me = JSON.parse(ls); } catch(e){} if (me) return; }
-    } catch(e){}
-    if (tries >= 20) return;
-    setTimeout(tick, 500);
-  })();
-  function saveLs(){
-    try {
-      if (window.__AUTH_TOKEN__) localStorage.setItem('token', window.__AUTH_TOKEN__);
-      if (window.__CURRENT_USER__) localStorage.setItem('user', typeof window.__CURRENT_USER__ === 'string' ? window.__CURRENT_USER__ : JSON.stringify(window.__CURRENT_USER__));
-      if (window.__SUPABASE_URL__) localStorage.setItem('sb_url', window.__SUPABASE_URL__);
-      if (window.__SUPABASE_ANON_KEY__) localStorage.setItem('sb_anon', window.__SUPABASE_ANON_KEY__);
-    } catch(e){}
+var __userTries = 0;
+var __userReadyCb = null;   // 安卓端回调通知入口
+var __userInjected = false;
+
+// 把 localStorage 里的 user 读出来（如果之前有历史就先用着，等安卓端再注入最新值）
+function readLsUser(){
+  try{
+    var s = localStorage && localStorage.getItem('user');
+    if (s){ try{ return JSON.parse(s); }catch(e){} }
+  }catch(e){}
+  return null;
+}
+// 保存到 localStorage（方便下次进入时，即使注入还没生效，也有历史可用）
+function saveLs(){
+  try {
+    if (window.__AUTH_TOKEN__) localStorage.setItem('token', window.__AUTH_TOKEN__);
+    if (window.__CURRENT_USER__) localStorage.setItem('user', typeof window.__CURRENT_USER__ === 'string' ? window.__CURRENT_USER__ : JSON.stringify(window.__CURRENT_USER__));
+    if (window.__SUPABASE_URL__) localStorage.setItem('sb_url', window.__SUPABASE_URL__);
+    if (window.__SUPABASE_ANON_KEY__) localStorage.setItem('sb_anon', window.__SUPABASE_ANON_KEY__);
+  } catch(e){}
+}
+// 主入口：尝试读取当前用户
+function tryReadUser(){
+  // 优先级：1) 安卓注入的 window.__CURRENT_USER__  2) localStorage 历史
+  var got = null;
+  try {
+    if (window.__CURRENT_USER__) {
+      got = typeof window.__CURRENT_USER__ === 'string' ? JSON.parse(window.__CURRENT_USER__) : window.__CURRENT_USER__;
+      if (got && got.id) { me = got; __userInjected = true; saveLs(); return true; }
+    }
+  } catch(e){}
+  if (!me) {
+    var ls = readLsUser();
+    if (ls && ls.id) { me = ls; }
+  }
+  return !!(me && me.id);
+}
+// 轮询：前 15 秒每 500ms 尝试一次
+(function pollUser(){
+  __userTries++;
+  var ok = tryReadUser();
+  if (ok) { return; }
+  if (__userTries < 30) { setTimeout(pollUser, 500); return; }
+  // 🚨 超过 15 秒还没拿到 → 顶栏红字 + 中央超大红卡片覆盖地图
+  var mEl = document.getElementById('metaRow');
+  if (mEl && !__userInjected) {
+    mEl.innerHTML = '⚠️ 账号未注入';
+    mEl.classList.add('err');
+  }
+  // 中央卡片（比顶栏大10倍字体，用户无法忽视）
+  if (!__userInjected) {
+    var block = document.createElement('div');
+    block.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:9999;background:rgba(254,215,215,0.96);padding:24px 20px;';
+    block.innerHTML = '<div style="max-width:420px;text-align:center;">'
+      + '<div style="font-size:56px;margin-bottom:10px;">🤔</div>'
+      + '<div style="font-size:22px;font-weight:800;color:#c53030;margin-bottom:8px;">地图加载失败</div>'
+      + '<div style="font-size:13px;color:#742a2a;line-height:1.9;text-align:left;">'
+      + '无法读取登录账号信息（安卓端用户注入失败），<b>所以看不到自己也看不到TA。</b><br><br>'
+      + '<b>✅ 解决步骤（按顺序试）：</b><br>'
+      + '① 从手机最近任务里把 CoupleTracker 划掉 → 重新打开 → 再等 10 秒<br>'
+      + '② 打开「我的」→ 确认能看到自己的头像/用户名/配对码（如果看不到=没登录成功）<br>'
+      + '③ 如果还是看不到：退出登录 → 重新输入用户名密码登录一次<br>'
+      + '④ 如果以上都不行 → 卸载APP → 安装最新版APK再重新登录'
+      + '</div></div>';
+    (document.body||document.documentElement).appendChild(block);
   }
 })();
 
-var SUPABASE_URL = window.__SUPABASE_URL__ || (localStorage && localStorage.getItem('sb_url')) || 'https://gvytqbgangyjjurekyid.supabase.co';
-var ANON_KEY = window.__SUPABASE_ANON_KEY__ || (localStorage && localStorage.getItem('sb_anon')) || 'sb_publishable_TmlnyTou7Z7JGt3vNP3TTw_3-KkCiCM';
-var TOKEN = window.__AUTH_TOKEN__ || (localStorage && localStorage.getItem('token')) || ANON_KEY;
+// 安卓端 evaluateJavascript 注入完成后会主动调用这个函数（onPageStarted / onPageFinished 各踢一次）
+window.__applyAndroidInjection = function(){
+  var ok = tryReadUser();
+  if (ok) {
+    var mEl = document.getElementById('metaRow');
+    if (mEl) mEl.classList.remove('err');
+    // ✅ 用户注入成功 → 移除"账号未注入"的大红覆盖卡片（如果存在）
+    try {
+      var blocks = document.querySelectorAll('div[style*="inset:0"][style*="z-index:9999"]');
+      for (var i=0; i<blocks.length; i++) blocks[i].parentNode && blocks[i].parentNode.removeChild(blocks[i]);
+    } catch(e){}
+    try { updateTopbar(); } catch(e){}
+    try { poll(); } catch(e){}
+  }
+};
+
+var SUPABASE_URL = (window.__SUPABASE_URL__ || (localStorage && localStorage.getItem('sb_url')) || 'https://gvytqbgangyjjurekyid.supabase.co').replace(/\/$/, '');
+var ANON_KEY    = window.__SUPABASE_ANON_KEY__ || (localStorage && localStorage.getItem('sb_anon')) || 'sb_publishable_TmlnyTou7Z7JGt3vNP3TTw_3-KkCiCM';
+var TOKEN       = window.__AUTH_TOKEN__ || (localStorage && localStorage.getItem('token')) || ANON_KEY;
 
 var meMarker = null, partnerMarker = null, meAcc = null, partnerAcc = null, fitDone = false;
 var lastMeAt = 0, lastPartnerAt = 0;
@@ -166,26 +163,18 @@ var lastRestCount = 0;
 
 /* --- 多图源兜底（优先中文离线快图源）--- */
 var TILE_SOURCES = [
-  // 1. 高德中文街道图（无需key，国内访问速度最快）
-  {
-    url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
-    opts: { subdomains: '1234', maxZoom: 18, attribution: '&copy; 高德地图' }
-  },
-  // 2. 高德卫星混合图 fallback
-  {
-    url: 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
-    opts: { subdomains: '1234', maxZoom: 18, attribution: '&copy; 高德卫星' }
-  },
-  // 3. Carto Voyager 全球开源图（国内也可访问）
-  {
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-    opts: { subdomains: 'abcd', maxZoom: 19, attribution: '&copy; CARTO &copy; OpenStreetMap' }
-  },
+  // 1. 高德中文街道图（国内访问最快）
+  { url:'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+    opts:{ subdomains:'1234', maxZoom:18, attribution:'&copy; 高德地图' } },
+  // 2. 高德卫星混合图
+  { url:'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
+    opts:{ subdomains:'1234', maxZoom:18, attribution:'&copy; 高德卫星' } },
+  // 3. CARTO Voyager（全球开源，国内也可访问，纯中文街道兜底）
+  { url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    opts:{ subdomains:'abcd', maxZoom:19, attribution:'&copy; CARTO &copy; OpenStreetMap' } },
   // 4. OSM 官方兜底
-  {
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    opts: { subdomains: 'abc', maxZoom: 19, attribution: '&copy; OpenStreetMap' }
-  }
+  { url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    opts:{ subdomains:'abc', maxZoom:19, attribution:'&copy; OpenStreetMap' } }
 ];
 var tileLayer = null;
 var tileIdx = 0;
@@ -196,7 +185,6 @@ function tryNextTileLayer(){
   tileIdx = (tileIdx + 1) % TILE_SOURCES.length;
   var src = TILE_SOURCES[tileIdx];
   tileLayer = L.tileLayer(src.url, src.opts).addTo(map);
-  // 底部提示一下图源切换
   showFlash('🔄 已切换地图图源：' + (src.opts.attribution||''), 1600);
 }
 
@@ -219,7 +207,16 @@ function showFlash(txt, ms){
 /* ---- 初始化地图（Leaflet loaded + body ready）---- */
 var _initRetries = 0;
 function tryInitMap(){
-  if (typeof L === 'undefined') return;
+  if (typeof L === 'undefined') {
+    // 本地 leaflet.min.js 加载失败（APK 打包时漏了文件）→ 直接红色报错
+    var loading = document.getElementById('loading');
+    if (loading) {
+      document.getElementById('loadingMain').textContent = '❌ 地图资源缺失';
+      document.getElementById('loadingSub').innerHTML = '本地 Leaflet 文件未打包，请安装最新版 APK';
+      loading.style.background='rgba(254,215,215,0.95)';
+    }
+    return;
+  }
   if (!document || !document.getElementById || !document.getElementById('map')) {
     if (_initRetries++ < 20) { setTimeout(tryInitMap, 100); return; }
   }
@@ -229,19 +226,43 @@ function tryInitMap(){
 function initMap() {
   try {
     map = L.map('map', { zoomControl: true, preferCanvas: true }).setView([39.9042, 116.4074], 11);
-    // 选第一个图源
     var src = TILE_SOURCES[tileIdx];
     tileLayer = L.tileLayer(src.url, src.opts).addTo(map);
 
-    // 5 秒后如果底图还没加载出来（全灰），切换下一个
+    // ✅ WebView 经典修复：容器尺寸在 load 时往往还是 0，导致 Leaflet 以为没有可视区 → 瓦片 0 张 → 全空白
+    //    常见现象：整个地图只有 body 粉色背景，什么都不渲染，但没有报错。必须多次调用 invalidateSize() 踢醒
+    function kickSize() { try { if (map) map.invalidateSize(true); } catch(e){} }
+    // ① 前 3 秒密集踢（Compose 动画 / WebView 第一次 / 第二次 / 第三次布局）
+    setTimeout(kickSize, 200);
+    setTimeout(kickSize, 600);
+    setTimeout(kickSize, 1200);
+    setTimeout(kickSize, 2000);
+    setTimeout(kickSize, 3000);
+    // ② 前 15 秒每秒踢一次（防止手机布局动画慢/切tab回来后尺寸忘记）
+    (function loopKick(i){ if (i>=15) return; kickSize(); setTimeout(function(){loopKick(i+1);}, 1000); })(0);
+    // ③ 如果 map 尺寸仍是 0 → 继续踢直到 >0（最极端兜底）
+    (function waitSize(){ try {
+      if (!map) return setTimeout(waitSize, 200);
+      var s = map.getSize();
+      if (s && (s.x===0 || s.y===0)) { kickSize(); setTimeout(waitSize, 500); }
+    } catch(e){ setTimeout(waitSize,500); } })();
+    window.addEventListener('resize', kickSize);
+    try { // 页面从后台切回前台时也踢一下
+      document.addEventListener('visibilitychange', function(){ if (!document.hidden) setTimeout(kickSize, 150); });
+    } catch(e){}
+
+    // 5.5 秒如果底图一张都没加载出来 → 切下一个图源（高图源不通时自动切换）
     var tileLoadTimer = setTimeout(function(){
       if (map && !fitDone) { tryNextTileLayer(); }
-    }, 6000);
+    }, 5500);
     if (tileLayer && tileLayer.on) {
       tileLayer.on('load', function(){ clearTimeout(tileLoadTimer); });
+      tileLayer.on('tileerror', function(){
+        // 有一张瓦片失败就踢一次切图源计数器（连续出错 → 下一轮自动切换）
+      });
     }
 
-    // 地图右上角加一个「切换图源」按钮（用户手动切换）
+    // 右上角「换图源」按钮
     try {
       var ToggleCtl = L.Control.extend({
         onAdd: function(){
@@ -265,6 +286,25 @@ function initMap() {
     updateTopbar();
     poll();
     setInterval(poll, 5000);
+
+    // ✅ 15秒还没有任何位置数据 → 显示醒目红色排查卡片（之前只有"等待位置"四个字，用户完全不知道怎么办）
+    setTimeout(function(){
+      if (!me || !me.id) return;  // 账号注入还没搞定，之前的红警已经提示过了
+      if (lastMeAt > 0) return;   // 已经拿到过我的位置，OK
+      var warn = document.createElement('div');
+      warn.className = 'warn-card warn-red';
+      warn.style.top = '72px';
+      warn.innerHTML = '<b>🛰️ 还没拿到位置数据</b>（已等待15秒）<br>' +
+        '排查步骤：<br>' +
+        '① 打开「我的」→ 拉到底，看「位置上报」是成功还是失败<br>' +
+        '② 如果失败：系统设置 → 应用 → CoupleTracker → 权限 → 定位 → 选择【始终允许】<br>' +
+        '③ 把APP从后台划掉重新打开，再等30秒<br>' +
+        '④ 确认手机通知栏能看到「💕 已登录」的常驻通知（没看到=后台服务没启动）';
+      (document.body||document.documentElement).appendChild(warn);
+    }, 15000);
+
+    // 如果安卓先注入成功，现在就立刻踢一次 refresh
+    try { if (window.__applyAndroidInjection) window.__applyAndroidInjection(); } catch(e){}
   } catch(e) {
     var loading = document.getElementById('loading');
     if (loading) {
@@ -313,6 +353,7 @@ function fmtTime(iso){
 }
 
 function setOrUpdate(markerRef, lat, lng, emoji, color, pulse, row, isMe) {
+  kickSize();  // 每次有新位置，再次刷新 map 尺寸（切 tab 回来后 map 可能又忘了自己有多大）
   var ll = [lat, lng];
   if (!markerRef.value) {
     markerRef.value = L.marker(ll, { icon: createIcon(emoji, color, pulse) }).addTo(map);
@@ -357,12 +398,18 @@ function updateTopbar() {
     nickRow = '@'+(me.username||'') + ' · ' + (me.nickname||'');
     metaRow += '配对码：'+((me.coupleCode||'未绑定')+'').toUpperCase();
   } else {
-    metaRow = '⚠️ 未读取到账号信息，请退出APP重登录一次';
+    metaRow = __userInjected
+      ? '⚠️ 账号信息丢失，请退出APP重登录一次'
+      : '正在加载账号信息...';
   }
   var nEl = document.getElementById('nickRow');
   var mEl = document.getElementById('metaRow');
   if (nEl) nEl.textContent = nickRow;
-  if (mEl) mEl.textContent = metaRow;
+  if (mEl) {
+    mEl.textContent = metaRow;
+    if (me) mEl.classList.remove('err');
+    else if (!__userInjected && __userTries >= 30) mEl.classList.add('err');
+  }
   var sEl = document.getElementById('statusText');
   var dEl = document.getElementById('distRow');
   var dotEl = document.querySelector('.dot');
@@ -378,7 +425,7 @@ function updateTopbar() {
   var t = '已连接';
   var needWarn = false;
   if (!age) {
-    if (!me) { t = '未登录'; needWarn = true; }
+    if (!me) { t = __userInjected ? '未登录' : '加载中...'; needWarn = __userInjected; }
     else if (lastRestCount >= 3) { t = '网络错误'; needWarn = true; }
     else { t = '等待位置...'; }
   }
@@ -400,7 +447,7 @@ function updateTopbar() {
       (document.body||document.documentElement).appendChild(tipEl);
     }
     tipEl.textContent = '⚠️ 位置查询失败（连续'+lastRestCount+'次）：'+lastFetchHint
-      +'。解决：打开「我的」→ 查看「上报状态」→ 或重授权定位权限 → 重进地图。';
+      +'。解决：打开「我的」→ 查看「上报状态」→ 检查定位权限 → 重进地图。';
   } else if (tipEl) {
     tipEl.remove();
   }
@@ -490,13 +537,13 @@ function fetchPartnerUid(cb) {
 
 // DOM Ready 后如果 Leaflet 已经加载完成就立刻初始化
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
-  if (window.__leaflet_loaded || typeof L !== 'undefined') { window.__leaflet_loaded = true; tryInitMap(); }
+  if (typeof L !== 'undefined') { tryInitMap(); }
 } else {
   window.addEventListener('DOMContentLoaded', function(){
-    if (window.__leaflet_loaded || typeof L !== 'undefined') { window.__leaflet_loaded = true; tryInitMap(); }
+    if (typeof L !== 'undefined') { tryInitMap(); }
   });
   window.addEventListener('load', function(){
-    if (window.__leaflet_loaded || typeof L !== 'undefined') { window.__leaflet_loaded = true; tryInitMap(); }
+    if (typeof L !== 'undefined') { tryInitMap(); }
   });
 }
 </script>

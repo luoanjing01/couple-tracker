@@ -173,31 +173,57 @@ class MainActivity : ComponentActivity() {
                             settings.displayZoomControls = false
                             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                             webViewClient = object : WebViewClient() {
+                                /** 构造注入脚本（每次同步读取最新 user/token，保证值不陈旧） */
+                                fun buildInjectionJs(): String {
+                                    // DataStore 读本地文件极快，但 API 是 suspend，用 runBlocking 包一层保证这里能同步取值
+                                    val token = runCatching { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { UserRepository.get().getToken() } }.getOrNull()
+                                    val u = runCatching { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { UserRepository.get().getUser() } }.getOrNull()
+                                    val userJson = u?.let { org.json.JSONObject().apply {
+                                        put("id", it.id)
+                                        put("username", it.username)
+                                        put("nickname", it.nickname)
+                                        put("avatar", it.avatar ?: "")
+                                        put("gender", it.gender ?: "")
+                                        put("coupleCode", it.coupleCode ?: "")
+                                    }.toString() } ?: "null"
+                                    val tokenJs = if (token.isNullOrBlank()) "null" else "\"${token.replace("\"","\\\"")}\""
+                                    return """
+                                        (function(){
+                                          window.__SUPABASE_URL__ = "${BuildConfig.SUPABASE_URL}";
+                                          window.__SUPABASE_ANON_KEY__ = "${BuildConfig.SUPABASE_ANON_KEY}";
+                                          window.__AUTH_TOKEN__ = $tokenJs;
+                                          window.__CURRENT_USER__ = $userJson;
+                                          try {
+                                            localStorage.setItem('sb_url',  window.__SUPABASE_URL__ || '');
+                                            localStorage.setItem('sb_anon', window.__SUPABASE_ANON_KEY__ || '');
+                                            localStorage.setItem('token',   window.__AUTH_TOKEN__ || '');
+                                            localStorage.setItem('user',    typeof window.__CURRENT_USER__==='string' ? window.__CURRENT_USER__ : JSON.stringify(window.__CURRENT_USER__));
+                                          } catch(e){}
+                                          // 通知前端重新读取用户（解决 onPageStarted 注入时序 <-> HTML 脚本执行的竞态）
+                                          if (typeof window.__applyAndroidInjection === 'function') { try { window.__applyAndroidInjection(); } catch(e){} }
+                                        })();
+                                    """.trimIndent()
+                                }
+
                                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                     super.onPageStarted(view, url, favicon)
-                                    // 注入 token + user + supabase 配置，让前端直接读取
-                                    lifecycleScope.launch(Dispatchers.IO) {
-                                        val token = UserRepository.get().getToken()
-                                        val u = UserRepository.get().getUser()
-                                        val userJson = u?.let { org.json.JSONObject().apply {
-                                            put("id", it.id)
-                                            put("username", it.username)
-                                            put("nickname", it.nickname)
-                                            put("avatar", it.avatar)
-                                            put("gender", it.gender ?: "")
-                                            put("coupleCode", it.coupleCode ?: "")
-                                        }.toString() } ?: "null"
-                                        val js = """
-                                            window.__SUPABASE_URL__ = "${BuildConfig.SUPABASE_URL}";
-                                            window.__SUPABASE_ANON_KEY__ = "${BuildConfig.SUPABASE_ANON_KEY}";
-                                            window.__AUTH_TOKEN__ = ${if (token == null) "null" else "\"$token\""};
-                                            window.__CURRENT_USER__ = $userJson;
-                                            localStorage.setItem('token', window.__AUTH_TOKEN__ || '');
-                                            localStorage.setItem('user', window.__CURRENT_USER__ || 'null');
-                                        """.trimIndent()
-                                        withContext(Dispatchers.Main) {
-                                            runCatching { view?.evaluateJavascript(js, null) }
-                                        }
+                                    // 🚨 必须在主线程立刻注入：onPageStarted 时 evaluateJavascript 对 file:// 页面基本是同步生效的
+                                    // 之前放在 lifecycleScope.launch(IO) 会延迟几十~几百毫秒，刚好错过 HTML <script> 的 readUser() 20次重试窗口，导致 me 永远 null，永远"等待位置"
+                                    view ?: return
+                                    runCatching { view.evaluateJavascript(buildInjectionJs(), null) }
+                                }
+
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    super.onPageFinished(view, url)
+                                    // 双保险：onPageFinished 再注入一次 + 触发前端刷新回调
+                                    // （HTML里的 Leaflet 初始化可能早于 onPageStarted，需要再手动通知）
+                                    view ?: return
+                                    runCatching {
+                                        view.evaluateJavascript(buildInjectionJs(), null)
+                                        // 100ms 后再发一次"信号"（如果前端在轮询用户，就当再踢一次）
+                                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                            runCatching { view.evaluateJavascript("(function(){try{window.__applyAndroidInjection&&window.__applyAndroidInjection();}catch(e){}})();", null) }
+                                        }, 120)
                                     }
                                 }
                             }
@@ -229,7 +255,11 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     update = { wv ->
-                        // 每次重组都不用重新加载，避免 WebView 闪烁
+                        // 🚨 Tab 切换回来时（PlaceholderScreen 重组会触发 update）
+                        //    ① 重新注入用户信息：防止刚登录/刚配对后切回地图页，前端仍用旧数据
+                        //    ② 踢一下地图尺寸：防止 WebView 在后台状态中尺寸被清零
+                        val js = buildInjectionJs() + "; try{ var m = (typeof map !== 'undefined' && map); if (m) { m.invalidateSize(true); setTimeout(function(){m.invalidateSize(true);},300);} } catch(e){}"
+                        runCatching { wv.evaluateJavascript(js, null) }
                     }
                 )
                 // 右下角悬浮卡片：显示采集频率，避免遮挡地图关键区域
@@ -437,52 +467,89 @@ class MainActivity : ComponentActivity() {
                 lifecycleScope.launch { delay(1500); copyTip = "" }
             }
 
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("配对码", color = Color(0xFF718096), fontSize = 12.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            if (code.isBlank()) "暂无" else code,
-                            fontSize = 30.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFFE75480),
-                            letterSpacing = 4.sp
+            // 🎯 已配对状态 → 配对码 + 配对按钮 全部消失，只显示"已与 TA 绑定"状态卡
+            //    （完全按用户要求：「配对上之后配对码和配对按钮才消失」）
+            if (hasPartner == true && partnerName.isNotBlank()) {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FFF4))
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            painterResource(id = android.R.drawable.star_big_on),
+                            null,
+                            tint = Color(0xFF2F855A),
+                            modifier = Modifier.size(30.dp)
                         )
-                        Spacer(Modifier.weight(1f))
-                        if (code.isNotBlank()) {
-                            OutlinedButton(
-                                onClick = { copyCoupleCode() },
-                                border = BorderStroke(1.dp, Color(0xFFE75480)),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                shape = RoundedCornerShape(50)
-                            ) {
-                                Icon(
-                                    Icons.Default.ContentCopy, null,
-                                    tint = Color(0xFFE75480),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    if (copyTip.isNotBlank()) copyTip else "复制",
-                                    color = Color(0xFFE75480), fontSize = 12.sp
-                                )
-                            }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                "💞 已与 $partnerName 绑定",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 18.sp,
+                                color = Color(0xFF2F855A)
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "去地图页查看彼此的实时位置吧 💕",
+                                fontSize = 12.sp,
+                                color = Color(0xFF38A169)
+                            )
                         }
                     }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        if (hasPartner == true && partnerName.isNotBlank())
-                            "🎉 已和 $partnerName 绑定，地图可见彼此 💕"
-                        else if (hasPartner == false)
-                            "把这串码发给TA，让TA在下面或登录页「配对」输入即可绑定"
-                        else "正在加载绑定状态...",
-                        color = if (hasPartner == true) Color(0xFF2F855A) else Color(0xFF718096),
-                        fontSize = 12.sp
-                    )
+                }
+            } else {
+                // —— 未配对 / 加载中：显示我的配对码（含复制按钮）——
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("配对码", color = Color(0xFF718096), fontSize = 12.sp)
+                        Spacer(Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                if (code.isBlank()) "暂无" else code,
+                                fontSize = 30.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFFE75480),
+                                letterSpacing = 4.sp
+                            )
+                            Spacer(Modifier.weight(1f))
+                            if (code.isNotBlank()) {
+                                OutlinedButton(
+                                    onClick = { copyCoupleCode() },
+                                    border = BorderStroke(1.dp, Color(0xFFE75480)),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(50)
+                                ) {
+                                    Icon(
+                                        Icons.Default.ContentCopy, null,
+                                        tint = Color(0xFFE75480),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        if (copyTip.isNotBlank()) copyTip else "复制",
+                                        color = Color(0xFFE75480), fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            if (hasPartner == false)
+                                "把这串码发给TA，让TA在下面或登录页「配对」输入即可绑定"
+                            else "正在加载绑定状态...",
+                            color = Color(0xFF718096),
+                            fontSize = 12.sp
+                        )
+                    }
                 }
             }
 

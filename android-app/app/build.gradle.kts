@@ -67,9 +67,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // ===== 定位 - Google Fused Location Provider =====
-    implementation("com.google.android.gms:play-services-location:21.1.0")
-
     // ===== 网络：OkHttp + Retrofit + Socket.IO =====
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
@@ -79,7 +76,6 @@ dependencies {
 
     // ===== 协程 =====
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
 
     // ===== 持久化（token存储） =====
     implementation("androidx.datastore:datastore-preferences:1.0.0")
