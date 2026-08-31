@@ -201,7 +201,7 @@ class MainActivity : ComponentActivity() {
                                 if (w != oldw || h != oldh) {
                                     runCatching {
                                         evaluateJavascript(
-                                            ""try{ if(typeof kickSize==='function') kickSize(); if(typeof map!=='undefined'&&map) map.invalidateSize(true); }catch(e){}"",
+                                            "(function(){try{if(typeof kickSize===''function'')kickSize();if(typeof map!==''undefined''&&map)map.invalidateSize(true);}catch(e){}})();",
                                             null
                                         )
                                     }
