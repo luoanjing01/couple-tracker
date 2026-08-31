@@ -194,6 +194,14 @@ interface RestService {
         @Query("limit") limit: Int = 20
     ): Response<List<LocationRow>>
 
+    /** 查某用户的位置（按 user_id 过滤，拿最新 1 条即可）*/
+    @GET("locations")
+    suspend fun getUserLocations(
+        @Query("user_id") userId: String,
+        @Query("order") order: String = "created_at.desc",
+        @Query("limit") limit: Int = 5
+    ): Response<List<LocationRow>>
+
     // --- app_usage ---
 
     /** 上报 APP 时长 */

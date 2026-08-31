@@ -112,12 +112,7 @@ class MainActivity : ComponentActivity() {
                                 accent = Color(0xFFE75480),
                                 useMapWebView = true
                             )
-                            Tab.APPS  -> PlaceholderScreen(
-                                icon = { Text("📱", fontSize = 40.sp) },
-                                title = "应用使用",
-                                desc = "应用使用页面将在正式版上线 💕\n\n当前功能状态：\n✅ APP 使用已采集（每 2 秒检查前台）\n✅ 每 60 秒上报一次使用时长到云端\n✅ 已自动识别微信/抖音/王者等常用APP分类",
-                                accent = Color(0xFF667EEA)
-                            )
+                            Tab.APPS  -> AppScreen()
                             Tab.STATS -> StatsScreen()
                             Tab.ME    -> SettingsScreen(onBackToMap = { selected = Tab.MAP })
                         }
