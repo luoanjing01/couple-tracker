@@ -529,7 +529,7 @@ class MainActivity : ComponentActivity() {
                                     shape = RoundedCornerShape(50)
                                 ) {
                                     Icon(
-                                        Icons.Default.ContentCopy, null,
+                                        Icons.Default.Share, null,
                                         tint = Color(0xFFE75480),
                                         modifier = Modifier.size(14.dp)
                                     )
@@ -573,7 +573,7 @@ class MainActivity : ComponentActivity() {
                             onValueChange = { pairInput = it.trim().uppercase() },
                             singleLine = true,
                             label = { Text("TA 的配对码（6 位）") },
-                            leadingIcon = { Icon(Icons.Default.Link, null) },
+                            leadingIcon = { Icon(Icons.Default.CallMade, null) },
                             trailingIcon = {
                                 TextButton(onClick = {
                                     runCatching {
