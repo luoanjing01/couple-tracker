@@ -371,6 +371,10 @@ private fun PhoneStatusCard(
     var taCharging by remember { mutableStateOf(false) }
     var taUpdatedAt by remember { mutableStateOf(0L) }
 
+    // 当前正在用的 APP（供"正在玩"卡使用）
+    var playingEmoji by remember { mutableStateOf("") }
+    var playingName by remember { mutableStateOf("") }
+
     // 自己：注册广播 + 网络监听
     LaunchedEffect(subjectIsMe, reloadKey) {
         if (subjectIsMe) {
@@ -437,6 +441,36 @@ private fun PhoneStatusCard(
         }
     }
 
+    // 当前正在用的 APP（自己查本地，TA 查云端最新 app_usage）
+    LaunchedEffect(subjectIsMe, subjectId, reloadKey) {
+        while (isActive) {
+            if (subjectIsMe) {
+                // 自己：查本地前台 APP
+                runCatching {
+                    val current = queryForegroundApp(ctx)
+                    if (current != null) {
+                        val (pkg, name) = current
+                        playingName = name
+                        playingEmoji = categoryEmoji(categoryOf(ctx, pkg))
+                    }
+                }
+            } else if (subjectId.isNotBlank()) {
+                // TA：查云端最新 app_usage
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        NetworkModule.restService.getAppUsage(
+                            userId = subjectId, order = "created_at.desc", limit = 1
+                        )
+                    }.getOrNull()?.body()?.firstOrNull()?.let { row ->
+                        playingName = row.app_name?.takeIf { it.isNotBlank() } ?: row.package_name.orEmpty()
+                        playingEmoji = categoryEmoji(row.category.orEmpty())
+                    }
+                }
+            }
+            delay(if (subjectIsMe) 5000 else 15000)
+        }
+    }
+
     val pink = Color(0xFFE75480)
     val blue = Color(0xFF667EEA)
     val accent = if (subjectIsMe) pink else blue
@@ -471,42 +505,38 @@ private fun PhoneStatusCard(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // 状态：开机 / 充电中 / 离线(可能关机)
-            val statusLabel: String
+            // 状态：开机 / 充电中 / 离线(可能关机) — label 统一叫"状态"
             val statusIcon: String
             val statusValue: String
             val statusAccent: Color
             when {
                 !isOnline -> {
-                    statusLabel = "离线/关机"
                     statusIcon = "🔴"
-                    statusValue = if (subjectIsMe) "—" else relativeTime(taUpdatedAt).ifBlank { "未知" }
+                    statusValue = "关机"
                     statusAccent = Color(0xFFE53E3E)
                 }
                 charging -> {
-                    statusLabel = "充电中"
                     statusIcon = "🔌"
-                    statusValue = if (subjectIsMe) "充电中" else "充电中 · $batPct%"
+                    statusValue = "充电中"
                     statusAccent = Color(0xFF38A169)
                 }
                 else -> {
-                    statusLabel = "开机"
                     statusIcon = "🟢"
-                    statusValue = if (subjectIsMe) "正常使用" else "在线 · $batPct%"
+                    statusValue = "开机"
                     statusAccent = Color(0xFF2F855A)
                 }
             }
             StatusChip(
                 icon = statusIcon,
-                label = statusLabel,
+                label = "状态",
                 value = statusValue,
                 accent = statusAccent,
                 modifier = Modifier.weight(1f)
             )
             StatusChip(
-                icon = "📍",
-                label = "最后定位",
-                value = if (subjectIsMe) "实时" else relativeTime(taUpdatedAt).ifBlank { "—" },
+                icon = if (playingEmoji.isNotBlank()) playingEmoji else "⏸️",
+                label = "正在玩",
+                value = if (playingName.isNotBlank()) playingName else "暂无",
                 accent = accent,
                 modifier = Modifier.weight(1f)
             )
@@ -556,12 +586,12 @@ private fun HistoryOpenList(
         if (subjectId.isBlank()) { rows = emptyList(); return@LaunchedEffect }
         loading = true; loadError = null
         withContext(Dispatchers.IO) {
-            // 用简单的 getAppUsage，按时间倒序拉最新 2000 条
+            // 用简单的 getAppUsage，按时间倒序拉最新 1000 条（PostgREST 默认 max-rows=1000）
             val resp = runCatching {
                 NetworkModule.restService.getAppUsage(
                     userId = subjectId,
                     order = "created_at.desc",
-                    limit = 2000
+                    limit = 1000
                 )
             }
             val r = resp.getOrNull()

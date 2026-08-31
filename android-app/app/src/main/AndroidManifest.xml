@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        tools:ignore="AndroidPermission" />
 
     <!-- ===== 前台服务 ===== -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
