@@ -118,12 +118,7 @@ class MainActivity : ComponentActivity() {
                                 desc = "应用使用页面将在正式版上线 💕\n\n当前功能状态：\n✅ APP 使用已采集（每 2 秒检查前台）\n✅ 每 60 秒上报一次使用时长到云端\n✅ 已自动识别微信/抖音/王者等常用APP分类",
                                 accent = Color(0xFF667EEA)
                             )
-                            Tab.STATS -> PlaceholderScreen(
-                                icon = { Text("📊", fontSize = 40.sp) },
-                                title = "每日统计",
-                                desc = "每日使用统计页面将在正式版上线 💕\n\n当前功能状态：\n✅ 每日使用数据已完整记录到云端\n✅ 支持按日期/按APP/按分类统计查询\n✅ 打开时长、移动轨迹、打开次数全记录",
-                                accent = Color(0xFF48BB78)
-                            )
+                            Tab.STATS -> StatsScreen()
                             Tab.ME    -> SettingsScreen(onBackToMap = { selected = Tab.MAP })
                         }
                     }

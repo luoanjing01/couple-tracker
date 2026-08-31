@@ -202,12 +202,25 @@ interface RestService {
         @Body body: AppUsageRow
     ): Response<Unit>
 
-    /** 查某天的 APP 使用 */
+    /** 查某用户的 APP 使用（旧接口，无日期过滤，limit 100 仅用于排查） */
     @GET("app_usage")
     suspend fun getAppUsage(
         @Query("user_id") userId: String,
         @Query("order") order: String = "created_at.desc",
         @Query("limit") limit: Int = 100
+    ): Response<List<AppUsageRow>>
+
+    /** 查某用户在指定日期范围内的 APP 使用记录
+     *  PostgREST 过滤：created_at=gte.<iso> AND created_at=lt.<iso>
+     *  两个 @Query 同名 → 生成 created_at=gte..&created_at=lt.. 两条查询参数，PostgREST 解释为 AND
+     *  limit 提到 1000：一天 60s 一行最坏 1440 行，实际有前台活动才记录，1000 够用 */
+    @GET("app_usage")
+    suspend fun getAppUsageInRange(
+        @Query("user_id") userId: String,
+        @Query("created_at") createdAtGte: String? = null,
+        @Query("created_at") createdAtLt: String? = null,
+        @Query("order") order: String = "created_at.desc",
+        @Query("limit") limit: Int = 1000
     ): Response<List<AppUsageRow>>
 }
 
