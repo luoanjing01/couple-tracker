@@ -13,7 +13,13 @@
 
 <style>
   html,body{margin:0;padding:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:#fdf2f8;}
-  #map{width:100%;height:100%;}
+  #map{width:100%;height:100%;background:linear-gradient(135deg,#e8f4fd 0%,#d4edda 50%,#fef3c7 100%);position:relative;}
+  /* 网格线：让纯色背景看起来像地图 */
+  #map::before{content:'';position:absolute;inset:0;background-image:
+    linear-gradient(rgba(102,126,234,0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(102,126,234,0.08) 1px, transparent 1px);
+    background-size:40px 40px;pointer-events:none;z-index:1;}
+  #map::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 70% 30%, rgba(231,84,128,0.12) 0%, transparent 40%), radial-gradient(circle at 20% 80%, rgba(102,126,234,0.12) 0%, transparent 40%);pointer-events:none;z-index:1;}
   .topbar{position:absolute;top:10px;left:10px;right:10px;z-index:500;background:rgba(255,255,255,0.96);border-radius:14px;padding:10px 14px;box-shadow:0 4px 18px rgba(0,0,0,0.08);}
   .topbar .row{display:flex;justify-content:space-between;align-items:center;gap:10px;}
   .nick{font-weight:700;color:#2d3748;font-size:14px;}
@@ -197,32 +203,7 @@ var map;
 var lastFetchHint = '';
 var lastRestCount = 0;
 
-/* --- 多图源兜底（优先中文离线快图源）--- */
-var TILE_SOURCES = [
-  // 1. 高德中文街道图（国内访问最快）
-  { url:'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
-    opts:{ subdomains:'1234', maxZoom:18, attribution:'&copy; 高德地图' } },
-  // 2. 高德卫星混合图
-  { url:'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
-    opts:{ subdomains:'1234', maxZoom:18, attribution:'&copy; 高德卫星' } },
-  // 3. CARTO Voyager（全球开源，国内也可访问，纯中文街道兜底）
-  { url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-    opts:{ subdomains:'abcd', maxZoom:19, attribution:'&copy; CARTO &copy; OpenStreetMap' } },
-  // 4. OSM 官方兜底
-  { url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    opts:{ subdomains:'abc', maxZoom:19, attribution:'&copy; OpenStreetMap' } }
-];
-var tileLayer = null;
-var tileIdx = 0;
-
-function tryNextTileLayer(){
-  if (!map) return;
-  if (tileLayer) { try { map.removeLayer(tileLayer); } catch(e){} }
-  tileIdx = (tileIdx + 1) % TILE_SOURCES.length;
-  var src = TILE_SOURCES[tileIdx];
-  tileLayer = L.tileLayer(src.url, src.opts).addTo(map);
-  showFlash('🔄 已切换地图图源：' + (src.opts.attribution||''), 1600);
-}
+/* ✅ 纯离线模式：不加载任何底图瓦片，用 CSS 渐变+网格做背景 */
 
 /* ---- 小工具：短暂闪提示 ---- */
 var _flashTimer = null;
@@ -268,8 +249,7 @@ function initMap() {
     map = L.map('map', { zoomControl: true, preferCanvas: true }).setView([39.9042, 116.4074], 11);
     var _sz0 = map.getSize();
     console.log('[CT] map after L.map(): size=', _sz0, ', container w/h=', document.getElementById('map').offsetWidth, document.getElementById('map').offsetHeight);
-    var src = TILE_SOURCES[tileIdx];
-    tileLayer = L.tileLayer(src.url, src.opts).addTo(map);
+    // ✅ 离线模式：不加载任何底图瓦片
 
     // ✅ WebView 经典修复：容器尺寸在 load 时往往还是 0，导致 Leaflet 以为没有可视区 → 瓦片 0 张 → 全空白
     //    常见现象：整个地图只有 body 粉色背景，什么都不渲染，但没有报错。必须多次调用 invalidateSize() 踢醒
@@ -313,20 +293,7 @@ function initMap() {
       });
     }
 
-    // 右上角「换图源」按钮
-    try {
-      var ToggleCtl = L.Control.extend({
-        onAdd: function(){
-          var b = L.DomUtil.create('button');
-          b.innerHTML = '🔄 换图源';
-          b.style.cssText = 'background:#fff;border:1px solid #ddd;border-radius:8px;padding:4px 10px;font-size:12px;color:#e75480;font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.1);cursor:pointer;';
-          L.DomEvent.disableClickPropagation(b);
-          L.DomEvent.on(b, 'click', function(ev){ L.DomEvent.stop(ev); tryNextTileLayer(); });
-          return b;
-        }
-      });
-      (new ToggleCtl({ position: 'topright' })).addTo(map);
-    } catch(e){}
+    // ✅ 离线模式：无换图源按钮
 
     // 关闭 loading
     setTimeout(function(){
@@ -365,10 +332,7 @@ function initMap() {
         var mEl = document.getElementById('map');
         var hh = document.body ? document.body.scrollHeight : 0;
         // 数一下 tileLayer 里有多少已加载瓦片
-        var loaded = 0;
-        if (tileLayer && tileLayer._tiles) {
-          for (var k in tileLayer._tiles) if (tileLayer._tiles[k] && tileLayer._tiles[k].complete) loaded++;
-        }
+        var loaded = '离线模式'; // 无瓦片
         var markerCount = 0;
         if (map) map.eachLayer(function(l){ if (l instanceof L.Marker) markerCount++; });
         box.innerHTML =

@@ -191,20 +191,23 @@ class MainActivity : ComponentActivity() {
                                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                                 android.view.ViewGroup.LayoutParams.MATCH_PARENT
                             )
-                            // ✅ 当 WebView 尺寸变化时通知 Leaflet（Compose 重组/动画可能改变尺寸）
-                            setOnResizedListener { w, h, oldW, oldH ->
-                                if (w != oldW || h != oldH) {
+                            setBackgroundColor(0x00000000) // 透明背景，避免 WebView 默认白色闪烁
+                            overScrollMode = android.view.View.OVER_SCROLL_NEVER
+                            isScrollContainer = false
+
+                            // ✅ onSizeChanged：最可靠的尺寸变化回调（WebView 原生提供）
+                            override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+                                super.onSizeChanged(w, h, oldw, oldh)
+                                if (w != oldw || h != oldh) {
                                     runCatching {
-                                        w?.evaluateJavascript(
-                                            """try{ if(typeof kickSize==='function') kickSize(); if(typeof map!=='undefined'&&map) map.invalidateSize(true); }catch(e){}""",
+                                        evaluateJavascript(
+                                            ""try{ if(typeof kickSize==='function') kickSize(); if(typeof map!=='undefined'&&map) map.invalidateSize(true); }catch(e){}"",
                                             null
                                         )
                                     }
                                 }
                             }
-                            setBackgroundColor(0x00000000) // 透明背景，避免 WebView 默认白色闪烁
-                            overScrollMode = android.view.View.OVER_SCROLL_NEVER
-                            isScrollContainer = false
+
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             settings.databaseEnabled = true
