@@ -70,8 +70,7 @@ fun StatsScreen() {
             val resp = runCatching {
                 NetworkModule.restService.getAppUsageInRange(
                     userId = targetId,
-                    createdAtGte = gte,
-                    createdAtLt = lt
+                    createdAtFilter = "and($gte,$lt)"
                 )
             }
             val r = resp.getOrNull()

@@ -26,9 +26,15 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
     private var job: Job? = null
     private var lastPackage: String = ""
     private var lastReportAt: Long = 0L
+    /** 累计使用时长（毫秒），从当前 APP 打开开始算，APP 切换就重置 */
+    private var sessionStartAt: Long = 0L
 
     private val _currentApp = MutableStateFlow<Pair<String, String>?>(null)
     val currentApp = _currentApp.asStateFlow()
+
+    /** 当前 APP 的累计使用时长（秒），UI 直接读这个就不会丢了 */
+    private val _currentSessionSeconds = MutableStateFlow(0)
+    val currentSessionSeconds = _currentSessionSeconds.asStateFlow()
 
     fun hasUsagePermission(): Boolean {
         val ops = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
@@ -67,9 +73,16 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
         if (fg.isEmpty()) return
 
         if (fg != lastPackage) {
-            // APP 切换了 → 把旧 APP 的使用时长结算一下（简化：切换时也上报一次 0 时长，方便统计）
+            // APP 切换了 → 重置 session
             lastPackage = fg
             lastReportAt = now
+            sessionStartAt = now
+            _currentSessionSeconds.tryEmit(0)
+        }
+
+        // 实时更新累计秒数（每 2 秒轮询一次）
+        if (sessionStartAt > 0) {
+            _currentSessionSeconds.tryEmit(((now - sessionStartAt) / 1000).toInt())
         }
 
         // 每 60 秒上报一次当前 APP 的使用时长

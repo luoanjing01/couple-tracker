@@ -219,14 +219,13 @@ interface RestService {
     ): Response<List<AppUsageRow>>
 
     /** 查某用户在指定日期范围内的 APP 使用记录
-     *  PostgREST 过滤：created_at=gte.<iso> AND created_at=lt.<iso>
-     *  两个 @Query 同名 → 生成 created_at=gte..&created_at=lt.. 两条查询参数，PostgREST 解释为 AND
-     *  limit 提到 1000：一天 60s 一行最坏 1440 行，实际有前台活动才记录，1000 够用 */
+     *  用 PostgREST and(gte.x,lt.y) 合并成单个 created_at query 避免 Retrofit 同名覆盖
+     *  limit 默认 1000 */
     @GET("app_usage")
     suspend fun getAppUsageInRange(
         @Query("user_id") userId: String,
-        @Query("created_at") createdAtGte: String? = null,
-        @Query("created_at") createdAtLt: String? = null,
+        /** 形如 and(gte.2025-09-01T00:00:00Z,lt.2025-09-08T00:00:00Z) */
+        @Query("created_at") createdAtFilter: String,
         @Query("order") order: String = "created_at.desc",
         @Query("limit") limit: Int = 1000
     ): Response<List<AppUsageRow>>

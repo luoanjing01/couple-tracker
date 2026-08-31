@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +38,7 @@ import com.coupletracker.android.data.AppUsageRow
 import com.coupletracker.android.data.LocationRow
 import com.coupletracker.android.data.NetworkModule
 import com.coupletracker.android.data.UserRepository
+import com.coupletracker.android.service.TrackerService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -188,12 +190,16 @@ private fun CurrentAppCard(
 ) {
     val ctx = LocalContext.current
 
-    // 本地实时查自己的前台 APP
+    // 本地实时查自己的前台 APP（名字/分类）
     var fgPkg by remember { mutableStateOf("") }
     var fgName by remember { mutableStateOf("") }
     var fgCategory by remember { mutableStateOf("") }
-    var fgStartAt by remember { mutableStateOf(0L) }
-    var elapsedMinutes by remember { mutableStateOf(0) }
+
+    // ✅ 自己的累计时长直接读后台 AppUsageMonitor StateFlow（页面重建不丢）
+    val sessionSeconds by TrackerService.appMonitor
+        ?.currentSessionSeconds
+        ?.collectAsState(initial = 0)
+        ?: remember { mutableStateOf(0) }
 
     // 远端查 TA 的（60 秒精度）
     var remoteAppName by remember { mutableStateOf("") }
@@ -201,21 +207,19 @@ private fun CurrentAppCard(
     var remoteSeconds by remember { mutableStateOf(0) }
     var remoteUpdateAt by remember { mutableStateOf(0L) }
 
-    // 自己：每 3 秒查一次前台 APP
+    // 自己：每 3 秒查一次前台 APP 名字（时长读后台 StateFlow，这里不再自己算）
     LaunchedEffect(subjectIsMe, reloadKey) {
         if (subjectIsMe) {
             if (!subjectHasPermission) return@LaunchedEffect
             while (isActive) {
                 runCatching {
-                    val now = System.currentTimeMillis()
                     val current = queryForegroundApp(ctx)
                     if (current != null && current.first.isNotEmpty()) {
                         val (pkg, name) = current
                         val cat = categoryOf(ctx, pkg)
                         if (pkg != fgPkg) {
-                            fgPkg = pkg; fgName = name; fgCategory = cat; fgStartAt = now
+                            fgPkg = pkg; fgName = name; fgCategory = cat
                         }
-                        elapsedMinutes = ((now - fgStartAt) / 60000L).toInt().coerceAtLeast(0)
                     }
                 }
                 delay(3000)
@@ -281,7 +285,7 @@ private fun CurrentAppCard(
                 // 有 APP 使用数据 → 左图标、右名字+时长
                 val appEmoji = categoryEmoji(if (subjectIsMe) fgCategory else "")
                 val appName = if (subjectIsMe) fgName else remoteAppName
-                val durationSec = if (subjectIsMe) elapsedMinutes * 60 else remoteSeconds
+                val durationSec = if (subjectIsMe) sessionSeconds else remoteSeconds
                 val duration = formatDuration(durationSec)
                 val accent = if (subjectIsMe) pink else blue
 
@@ -335,8 +339,8 @@ private fun PhoneStatusCard(
     var taCharging by remember { mutableStateOf(false) }
     var taUpdatedAt by remember { mutableStateOf(0L) }
 
-    // 当前心情（本地选 emoji）
-    var moodEmoji by remember { mutableStateOf("😐") }
+    // 当前心情（rememberSaveable 保证切 Tab 不丢）
+    var moodEmoji by rememberSaveable { mutableStateOf("😐") }
     var showMoodDialog by remember { mutableStateOf(false) }
     val moodOptions = listOf("😀","🥰","😎","😴","😠","🥺","🤔","🎉","💪","💔")
 
@@ -567,15 +571,14 @@ private fun HistoryOpenList(
         if (subjectId.isBlank()) { rows = emptyList(); return@LaunchedEffect }
         loading = true; loadError = null
         withContext(Dispatchers.IO) {
-            // 和 StatsScreen 完全同款：用 getAppUsageInRange 查最近 7 天
+            // 和 StatsScreen 同款：用 getAppUsageInRange 查最近 7 天
             val zone = ZoneId.systemDefault()
             val start = LocalDate.now(zone).minusDays(7).atStartOfDay(zone).toInstant().toString()
             val end = LocalDate.now(zone).plusDays(1).atStartOfDay(zone).toInstant().toString()
             val resp = runCatching {
                 NetworkModule.restService.getAppUsageInRange(
                     userId = subjectId,
-                    createdAtGte = "gte.$start",
-                    createdAtLt = "lt.$end"
+                    createdAtFilter = "and(gte.$start,lt.$end)"
                 )
             }
             val r = resp.getOrNull()

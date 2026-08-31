@@ -152,6 +152,7 @@ class TrackerService : Service() {
                     runCatching {
                         locationTracker = runCatching { LocationTracker(this, serviceScope) }.getOrNull()
                         appMonitor = runCatching { AppUsageMonitor(this, serviceScope) }.getOrNull()
+                        Companion.appMonitor = appMonitor
                     }
                     createdSafely = true
                 }
@@ -234,6 +235,9 @@ class TrackerService : Service() {
     companion object {
         private const val NOTIF_ID = 10086
         const val ACTION_STOP = "com.coupletracker.ACTION_STOP_SERVICE"
+
+        /** 静态引用 AppUsageMonitor，UI 层直接读后台数据（累计时长不丢） */
+        @Volatile var appMonitor: com.coupletracker.android.appmonitor.AppUsageMonitor? = null
 
         /** 启动前台服务所需权限（静态版，供 Activity 提前检查） */
         fun canStartForeground(ctx: Context): Boolean {
