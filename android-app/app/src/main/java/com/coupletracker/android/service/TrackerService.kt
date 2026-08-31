@@ -1,6 +1,8 @@
 package com.coupletracker.android.service
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
@@ -134,11 +136,11 @@ class TrackerService : Service() {
         //    此时补调 startForeground() 让服务真正变成前台服务，否则会被系统杀掉
         if (canStartForeground()) {
             runCatching {
-                val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+                val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
                 if (runCatching { nm.getNotificationChannel(getString(R.string.tracker_channel_id)) }.getOrNull() == null) {
                     // 兜底：渠道还没建（极端情况），赶紧建一个
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        nm.createNotificationChannel(android.app.NotificationChannel(
+                        nm.createNotificationChannel(NotificationChannel(
                             getString(R.string.tracker_channel_id),
                             getString(R.string.tracker_channel_name),
                             NotificationManager.IMPORTANCE_LOW
