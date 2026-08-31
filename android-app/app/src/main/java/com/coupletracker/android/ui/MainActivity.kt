@@ -1,4 +1,4 @@
-package com.coupletracker.android.ui
+﻿package com.coupletracker.android.ui
 
 import android.annotation.SuppressLint
 import android.content.ClipData
@@ -186,6 +186,25 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         WebView(ctx).apply {
+                            // ✅ 显式 LayoutParams：Compose AndroidView 有时不会自动给 match_parent
+                            layoutParams = android.view.ViewGroup.LayoutParams(
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                            // ✅ 当 WebView 尺寸变化时通知 Leaflet（Compose 重组/动画可能改变尺寸）
+                            setOnResizedListener { w, h, oldW, oldH ->
+                                if (w != oldW || h != oldH) {
+                                    runCatching {
+                                        w?.evaluateJavascript(
+                                            """try{ if(typeof kickSize==='function') kickSize(); if(typeof map!=='undefined'&&map) map.invalidateSize(true); }catch(e){}""",
+                                            null
+                                        )
+                                    }
+                                }
+                            }
+                            setBackgroundColor(0x00000000) // 透明背景，避免 WebView 默认白色闪烁
+                            overScrollMode = android.view.View.OVER_SCROLL_NEVER
+                            isScrollContainer = false
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             settings.databaseEnabled = true

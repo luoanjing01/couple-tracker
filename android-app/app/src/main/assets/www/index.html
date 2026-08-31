@@ -55,12 +55,26 @@
 <div class="loading" id="loading">
   <div id="loadingMain">正在加载地图 🗺️...</div>
   <div class="sub" id="loadingSub">本地加载只需 1-2 秒，请稍候</div>
+  <div class="sub" id="debugBox" style="margin-top:8px;font-family:monospace;font-size:11px;line-height:1.6;"></div>
 </div>
 
 <!-- ============================================================
      ✅ Leaflet JS：本地文件！绝对不请求外部 CDN
      ============================================================ -->
 <script src="./leaflet.min.js"></script>
+
+<script>
+/* 全局错误捕获 — 直接显示在页面上，WebView 没有控制台可看 */
+window.onerror = function(msg, url, line, col, err) {
+  var box = document.getElementById("debugBox");
+  if (box) box.innerHTML += "❌ ERROR: " + msg + (line ? " (L"+line+")" : "") + "<br>";
+  console.error("[CT]", msg, url, line, col, err);
+};
+window.addEventListener("unhandledrejection", function(e){
+  var box = document.getElementById("debugBox");
+  if (box) box.innerHTML += "⚠️ REJECT: " + (e.reason && e.reason.message || String(e.reason)) + "<br>";
+});
+</script>
 
 <script>
 /* ============================================================
@@ -246,10 +260,13 @@ function tryInitMap(){
 
 
 /* ---- WebView 尺寸踢醒（全局可见，initMap + setOrUpdate 都会调）---- */
-function kickSize() { try { if (map) map.invalidateSize(true); } catch(e){} }
+function kickSize() { try { if (map) { var _b = map.invalidateSize(true); console.log('[CT] kickSize done, mapSize=', map.getSize()); } } catch(e){ console.log('[CT] kickSize err', e && e.message); } }
 function initMap() {
   try {
+    console.log('[CT] initMap start, L=', typeof L, ', #map el=', !!document.getElementById('map'));
     map = L.map('map', { zoomControl: true, preferCanvas: true }).setView([39.9042, 116.4074], 11);
+    var _sz0 = map.getSize();
+    console.log('[CT] map after L.map(): size=', _sz0, ', container w/h=', document.getElementById('map').offsetWidth, document.getElementById('map').offsetHeight);
     var src = TILE_SOURCES[tileIdx];
     tileLayer = L.tileLayer(src.url, src.opts).addTo(map);
 
@@ -267,6 +284,8 @@ function initMap() {
     (function waitSize(){ try {
       if (!map) return setTimeout(waitSize, 200);
       var s = map.getSize();
+      var mEl = document.getElementById('map');
+      console.log('[CT] waitSize: mapSize=', s, ', #map offset=', mEl ? {w:mEl.offsetWidth,h:mEl.offsetHeight} : 'N/A', ', clientW/H=', mEl ? {w:mEl.clientWidth,h:mEl.clientHeight} : 'N/A', ', bodyW/H=', document.body ? {w:document.body.offsetWidth,h:document.body.offsetHeight} : 'N/A');
       if (s && (s.x===0 || s.y===0)) { kickSize(); setTimeout(waitSize, 500); }
     } catch(e){ setTimeout(waitSize,500); } })();
     window.addEventListener('resize', kickSize);
@@ -279,7 +298,15 @@ function initMap() {
       if (map && !fitDone) { tryNextTileLayer(); }
     }, 5500);
     if (tileLayer && tileLayer.on) {
-      tileLayer.on('load', function(){ clearTimeout(tileLoadTimer); });
+      tileLayer.on('load', function(){
+      console.log('[CT] tileLayer LOADED!');
+      clearTimeout(tileLoadTimer);
+    });
+    tileLayer.on('tileerror', function(ev){
+      console.log('[CT] tile ERROR:', ev && ev.coords);
+      var box = document.getElementById('debugBox');
+      if (box) box.innerHTML += '<span style=""color:#c53030"">❌ 瓦片加载失败 ' + (ev && ev.coords ? ev.coords.x+','+ev.coords.y+','+ev.coords.z : '') + '</span><br>';
+    });
       tileLayer.on('tileerror', function(){
         // 有一张瓦片失败就踢一次切图源计数器（连续出错 → 下一轮自动切换）
       });
@@ -328,7 +355,32 @@ function initMap() {
 
     // 如果安卓先注入成功，现在就立刻踢一次 refresh
     try { if (window.__applyAndroidInjection) window.__applyAndroidInjection(); } catch(e){}
-  } catch(e) {
+
+    // === 调试循环：每秒把 mapSize / tileCount 写到页面上 ===
+    (function debugLoop(){
+      var box = document.getElementById('debugBox');
+      if (box) {
+        var ms = map.getSize();
+        var mEl = document.getElementById('map');
+        var hh = document.body ? document.body.scrollHeight : 0;
+        // 数一下 tileLayer 里有多少已加载瓦片
+        var loaded = 0;
+        if (tileLayer && tileLayer._tiles) {
+          for (var k in tileLayer._tiles) if (tileLayer._tiles[k] && tileLayer._tiles[k].complete) loaded++;
+        }
+        var markerCount = 0;
+        if (map) map.eachLayer(function(l){ if (l instanceof L.Marker) markerCount++; });
+        box.innerHTML =
+          '📐 mapSize: ' + ms.x + '×' + ms.y + '<br>' +
+          '📦 #map offset: ' + (mEl ? mEl.offsetWidth+'×'+mEl.offsetHeight : '?') + '<br>' +
+          '📜 bodyScrollH: ' + hh + '<br>' +
+          '🗺️ 瓦片已加载: ' + loaded + '<br>' +
+          '📍 标记数: ' + markerCount + '<br>' +
+          '👤 me.id: ' + (me && me.id ? me.id.substr(0,8)+'...' : 'null') + '<br>' +
+          '🟢 lastMeAt: ' + (lastMeAt ? new Date(lastMeAt).toLocaleTimeString() : 'null');
+      }
+      setTimeout(debugLoop, 1000);
+    })();
     var loading = document.getElementById('loading');
     if (loading) {
       loading.innerHTML = '<div style="color:#e53e3e">❌ 地图初始化异常</div>'
@@ -493,7 +545,7 @@ function poll() {
     }
   }
   if (uid) {
-    fetch(SUPABASE_URL + '/rest/v1/locations?select=*&user_id=eq.'+encodeURIComponent(uid)+'&order=created_at.desc&limit=1', { headers: headers })
+    console.log('[CT] poll fetching my location, uid=', uid); fetch(SUPABASE_URL + '/rest/v1/locations?select=*&user_id=eq.'+encodeURIComponent(uid)+'&order=created_at.desc&limit=1', { headers: headers })
       .then(function(r){
         if (!r.ok) throw new Error('HTTP '+r.status);
         return r.json();
