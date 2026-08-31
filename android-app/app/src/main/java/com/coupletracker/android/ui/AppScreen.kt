@@ -1,14 +1,13 @@
 package com.coupletracker.android.ui
 
 import android.app.AppOpsManager
-import android.app.BroadcastReceiver
+import android.content.BroadcastReceiver
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
-import android.content.pm.ProcessInfo
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
