@@ -528,10 +528,10 @@ class MainActivity : ComponentActivity() {
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     shape = RoundedCornerShape(50)
                                 ) {
-                                    Icon(
-                                        Icons.Default.Share, null,
-                                        tint = Color(0xFFE75480),
-                                        modifier = Modifier.size(14.dp)
+                                    Text(
+                                        "📋",
+                                        color = Color(0xFFE75480),
+                                        fontSize = 12.sp
                                     )
                                     Spacer(Modifier.width(4.dp))
                                     Text(
@@ -573,7 +573,7 @@ class MainActivity : ComponentActivity() {
                             onValueChange = { pairInput = it.trim().uppercase() },
                             singleLine = true,
                             label = { Text("TA 的配对码（6 位）") },
-                            leadingIcon = { Icon(Icons.Default.CallMade, null) },
+                            leadingIcon = { Text("🔗", fontSize = 18.sp) },
                             trailingIcon = {
                                 TextButton(onClick = {
                                     runCatching {

@@ -587,7 +587,7 @@ class LoginActivity : ComponentActivity() {
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     shape = RoundedCornerShape(50)
                                 ) {
-                                    Icon(Icons.Default.Share, null, tint = Color(0xFFE75480), modifier = Modifier.size(14.dp))
+                                    Text("📋", fontSize = 12.sp, color = Color(0xFFE75480))
                                     Spacer(Modifier.width(4.dp))
                                     Text(
                                         if (copyTip.isNotBlank()) copyTip else "复制",
@@ -629,7 +629,7 @@ class LoginActivity : ComponentActivity() {
                         onValueChange = { inputCode = it.trim().uppercase() },
                         singleLine = true,
                         label = { Text("TA的配对码") },
-                        leadingIcon = { Icon(Icons.Default.CallMade, null) },
+                        leadingIcon = { Text("🔗", fontSize = 18.sp) },
                         trailingIcon = {
                             TextButton(onClick = {
                                 // 从剪贴板粘贴
