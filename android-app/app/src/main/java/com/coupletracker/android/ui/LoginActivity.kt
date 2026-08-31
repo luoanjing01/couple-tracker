@@ -675,7 +675,7 @@ class LoginActivity : ComponentActivity() {
                                     // 配对成功！把自己本地的 coupleCode 更新为 TA 的码
                                     val newCode = body.couple_code ?: theirCode
                                     UserRepository.get().setUser(
-                                        me.copy(coupleCode = newCode)
+                                        me!!.copy(coupleCode = newCode)
                                     )
                                     pairCode = newCode
                                     paired = true

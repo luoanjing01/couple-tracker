@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
@@ -131,6 +132,38 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** 构造注入脚本（每次同步读取最新 user/token，保证值不陈旧） */
+    private fun buildInjectionJs(): String {
+        // DataStore 读本地文件极快，但 API 是 suspend，用 runBlocking 包一层保证这里能同步取值
+        val token = runCatching { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { UserRepository.get().getToken() } }.getOrNull()
+        val u = runCatching { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { UserRepository.get().getUser() } }.getOrNull()
+        val userJson = u?.let { org.json.JSONObject().apply {
+            put("id", it.id)
+            put("username", it.username)
+            put("nickname", it.nickname)
+            put("avatar", it.avatar ?: "")
+            put("gender", it.gender ?: "")
+            put("coupleCode", it.coupleCode ?: "")
+        }.toString() } ?: "null"
+        val tokenJs = if (token.isNullOrBlank()) "null" else "\"${token.replace("\"","\\\"")}\""
+        return """
+            (function(){
+              window.__SUPABASE_URL__ = "${BuildConfig.SUPABASE_URL}";
+              window.__SUPABASE_ANON_KEY__ = "${BuildConfig.SUPABASE_ANON_KEY}";
+              window.__AUTH_TOKEN__ = $tokenJs;
+              window.__CURRENT_USER__ = $userJson;
+              try {
+                localStorage.setItem('sb_url',  window.__SUPABASE_URL__ || '');
+                localStorage.setItem('sb_anon', window.__SUPABASE_ANON_KEY__ || '');
+                localStorage.setItem('token',   window.__AUTH_TOKEN__ || '');
+                localStorage.setItem('user',    typeof window.__CURRENT_USER__==='string' ? window.__CURRENT_USER__ : JSON.stringify(window.__CURRENT_USER__));
+              } catch(e){}
+              // 通知前端重新读取用户（解决 onPageStarted 注入时序 <-> HTML 脚本执行的竞态）
+              if (typeof window.__applyAndroidInjection === 'function') { try { window.__applyAndroidInjection(); } catch(e){} }
+            })();
+        """.trimIndent()
+    }
+
     // ========================================================================
     //  原生占位页 + WebView 地图（前端 dist 部署到 assets/www 后直接离线加载）
     // ========================================================================
@@ -170,37 +203,6 @@ class MainActivity : ComponentActivity() {
                             settings.displayZoomControls = false
                             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                             webViewClient = object : WebViewClient() {
-                                /** 构造注入脚本（每次同步读取最新 user/token，保证值不陈旧） */
-                                fun buildInjectionJs(): String {
-                                    // DataStore 读本地文件极快，但 API 是 suspend，用 runBlocking 包一层保证这里能同步取值
-                                    val token = runCatching { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { UserRepository.get().getToken() } }.getOrNull()
-                                    val u = runCatching { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { UserRepository.get().getUser() } }.getOrNull()
-                                    val userJson = u?.let { org.json.JSONObject().apply {
-                                        put("id", it.id)
-                                        put("username", it.username)
-                                        put("nickname", it.nickname)
-                                        put("avatar", it.avatar ?: "")
-                                        put("gender", it.gender ?: "")
-                                        put("coupleCode", it.coupleCode ?: "")
-                                    }.toString() } ?: "null"
-                                    val tokenJs = if (token.isNullOrBlank()) "null" else "\"${token.replace("\"","\\\"")}\""
-                                    return """
-                                        (function(){
-                                          window.__SUPABASE_URL__ = "${BuildConfig.SUPABASE_URL}";
-                                          window.__SUPABASE_ANON_KEY__ = "${BuildConfig.SUPABASE_ANON_KEY}";
-                                          window.__AUTH_TOKEN__ = $tokenJs;
-                                          window.__CURRENT_USER__ = $userJson;
-                                          try {
-                                            localStorage.setItem('sb_url',  window.__SUPABASE_URL__ || '');
-                                            localStorage.setItem('sb_anon', window.__SUPABASE_ANON_KEY__ || '');
-                                            localStorage.setItem('token',   window.__AUTH_TOKEN__ || '');
-                                            localStorage.setItem('user',    typeof window.__CURRENT_USER__==='string' ? window.__CURRENT_USER__ : JSON.stringify(window.__CURRENT_USER__));
-                                          } catch(e){}
-                                          // 通知前端重新读取用户（解决 onPageStarted 注入时序 <-> HTML 脚本执行的竞态）
-                                          if (typeof window.__applyAndroidInjection === 'function') { try { window.__applyAndroidInjection(); } catch(e){} }
-                                        })();
-                                    """.trimIndent()
-                                }
 
                                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                     super.onPageStarted(view, url, favicon)

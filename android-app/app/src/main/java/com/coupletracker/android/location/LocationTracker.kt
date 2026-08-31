@@ -71,7 +71,7 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         }
 
         // —— 第一步：启动时立刻读取 lastKnownLocation（所有provider，取最新），force 上报 ——
-        runCatching { pickBestLastKnown() }?.let { report(it, force = true) }
+        runCatching { pickBestLastKnown() }.getOrNull()?.let { report(it, force = true) }
 
         // —— 第二步：订阅 GPS_PROVIDER 定期更新（高精度室外）——
         if (providersEnabled.contains(LocationManager.GPS_PROVIDER)) {
