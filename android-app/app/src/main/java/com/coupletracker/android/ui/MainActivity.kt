@@ -201,7 +201,7 @@ class MainActivity : ComponentActivity() {
                             settings.databaseEnabled = true
                             settings.allowFileAccess = true
                             settings.allowContentAccess = true
-                            // ✅ 本地 file:// HTML 需要加载外部 HTTPS 瓦片图片
+                            // ✅ 关键：file:// HTML 必须开这个才能加载外部 HTTPS 瓦片图片
                             settings.allowFileAccessFromFileURLs = true
                             settings.allowUniversalAccessFromFileURLs = true
                             settings.useWideViewPort = true
@@ -211,6 +211,10 @@ class MainActivity : ComponentActivity() {
                             settings.displayZoomControls = false
                             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                             settings.blockNetworkImage = false
+                            settings.loadsImagesAutomatically = true
+                            settings.cacheMode = WebSettings.LOAD_DEFAULT
+                            // 正确的 User-Agent，避免被 OSM/ArcGIS 瓦片服务器限流
+                            settings.userAgentString = settings.userAgentString + " CoupleTracker/1.0"
                             webViewClient = object : WebViewClient() {
 
                                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -240,7 +244,25 @@ class MainActivity : ComponentActivity() {
                                 setAcceptCookie(true)
                                 setAcceptThirdPartyCookies(webViewRef, true)
                             }
-                            webChromeClient = object : WebChromeClient() {}
+                            webChromeClient = object : WebChromeClient() {
+                                // ✅ 把 JS 的 console.log/warn/error 都桥接到 Android Logcat
+                                override fun onConsoleMessage(
+                                    consoleMessage: android.webkit.ConsoleMessage?
+                                ): Boolean {
+                                    val msg = consoleMessage?.message() ?: "?"
+                                    val src = consoleMessage?.sourceId()?.substringAfterLast('/') ?: "?"
+                                    val ln = consoleMessage?.lineNumber() ?: 0
+                                    when (consoleMessage?.messageLevel()) {
+                                        android.webkit.ConsoleMessage.MessageLevel.ERROR ->
+                                            android.util.Log.e("CT-WebView", "JS ❌ [$src:$ln] $msg")
+                                        android.webkit.ConsoleMessage.MessageLevel.WARNING ->
+                                            android.util.Log.w("CT-WebView", "JS ⚠️ [$src:$ln] $msg")
+                                        else ->
+                                            android.util.Log.d("CT-WebView", "JS [$src:$ln] $msg")
+                                    }
+                                    return true
+                                }
+                            }
                             // 优先加载本地离线地图（assets/www/index.html）
                             // 若该资源不存在，回退到加载占位网页（不会崩）
                             runCatching {

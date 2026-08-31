@@ -246,48 +246,69 @@ function initMap() {
     var _sz0 = map.getSize();
     console.log('[CT] map after L.map(): size=', _sz0, ', container w/h=', document.getElementById('map').offsetWidth, document.getElementById('map').offsetHeight);
 
-    // ✅ 真实地图瓦片（OSM）：支持从全球视图 (zoom=1) 到建筑级 (zoom=19)
-    //    多图源自动切换：OSM → OpenStreetMap中文镜像 → 失败降级回离线
+    // ✅ 真实地图瓦片：多图源自动切换（全部 HTTPS，国内可用）
+    //    顺序：ArcGIS 卫星图 → 高德中文地图 → CartoDB 路网
+    //    每个图源独立 tileerror 计数，3次失败自动换下一个
     var tileSources = [
-      { name: 'OSM', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', sub: 'abc', attrs: '&copy; OpenStreetMap contributors' },
-      { name: 'OSM-CN', url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图' }
+      // ① ArcGIS World Imagery：全球卫星图，HTTPS，国内CDN可用，zoom 1-19
+      { name: 'ArcGIS卫星', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', sub: '', attrs: '&copy; Esri, Maxar, Earthstar Geographics' },
+      // ② 高德地图中文路网：HTTPS，subdomains 1/2/3/4
+      { name: '高德地图', url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图' },
+      // ③ CartoDB 路网图：HTTPS，全球覆盖
+      { name: 'CartoDB路网', url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', sub: 'abcd', attrs: '&copy; OpenStreetMap &copy; CARTO' }
     ];
     var tileLayer = null;
     var tileFailCount = 0;
     var tileCurIdx = 0;
 
     function loadTileLayer(idx) {
-      // 先移除旧的
       if (tileLayer) { try { map.removeLayer(tileLayer); } catch(e){} tileLayer = null; }
       if (idx >= tileSources.length) {
-        // 全部图源都挂了 → 降级：只显示 marker + 背景色
-        console.warn('[CT] 所有地图图源加载失败，降级为纯标记模式');
+        console.warn('[CT] ⚠️ 所有地图图源都失败了，降级为纯标记模式');
+        // 显示降级提示
+        var box = document.getElementById('debugBox');
+        if (box) box.innerHTML += '<br><span style="color:#c53030">⚠️ 所有地图图源加载失败</span>';
         tileLayer = null;
         return;
       }
       var src = tileSources[idx];
-      console.log('[CT] 尝试图源 #' + idx + ': ' + src.name);
-      tileLayer = L.tileLayer(src.url, {
-        subdomains: src.sub,
-        attribution: src.attrs,
-        maxZoom: 19,
-        minZoom: 1,
-        errorTileUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNTYiIGhlaWdodD0iMjU2Ij48cmVjdCB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgZmlsbD0iI2ZhZmRmZiIvPjwvc3ZnPg=='
-      }).addTo(map);
-      // 监听瓦片加载失败 → 自动切下一个图源
-      tileLayer.on('tileerror', function(){
-        tileFailCount++;
-        if (tileFailCount >= 3) {
+      console.log('[CT] 🔄 尝试图源 #' + idx + ': ' + src.name + ' → ' + src.url.replace('{s}','?').replace('{z}/{x}/{y}','?'));
+      try {
+        tileLayer = L.tileLayer(src.url, {
+          subdomains: src.sub || 'a',
+          attribution: src.attrs,
+          maxZoom: 19,
+          minZoom: 1,
+          crossOrigin: true,
+          errorTileUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNTYiIGhlaWdodD0iMjU2Ij48cmVjdCB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgZmlsbD0iI2ZhZmRmZiIvPjwvc3ZnPg=='
+        }).addTo(map);
+        var _thisIdx = idx;
+        tileLayer.on('tileloadstart', function(){
+          console.log('[CT] 瓦片开始加载 #' + _thisIdx + ' ' + src.name);
+        });
+        tileLayer.on('tileload', function(){
+          console.log('[CT] ✅ 瓦片加载成功 #' + _thisIdx + ' ' + src.name);
           tileFailCount = 0;
-          tileCurIdx++;
-          setTimeout(function(){ loadTileLayer(tileCurIdx); }, 300);
-        }
-      });
-      tileLayer.on('load', function(){
-        // 图源加载成功 → 重置失败计数
-        tileFailCount = 0;
-        console.log('[CT] 图源 ' + src.name + ' 加载成功');
-      });
+        });
+        tileLayer.on('tileerror', function(err){
+          tileFailCount++;
+          console.warn('[CT] ❌ 瓦片加载失败 #' + _thisIdx + ' ' + src.name + ' (failCount=' + tileFailCount + ')');
+          if (tileFailCount >= 5) {
+            tileFailCount = 0;
+            tileCurIdx++;
+            console.warn('[CT] 🔀 切换到下一个图源...');
+            setTimeout(function(){ loadTileLayer(tileCurIdx); }, 400);
+          }
+        });
+        tileLayer.on('load', function(){
+          console.log('[CT] 🎉 图源 ' + src.name + ' 加载完成！');
+          tileFailCount = 0;
+        });
+      } catch(e) {
+        console.error('[CT] ❌ 创建 tileLayer 异常:', e);
+        tileCurIdx++;
+        setTimeout(function(){ loadTileLayer(tileCurIdx); }, 200);
+      }
     }
     loadTileLayer(0);
 
