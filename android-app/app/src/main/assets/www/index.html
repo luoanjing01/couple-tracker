@@ -55,8 +55,9 @@
 <div class="loading" id="loading">
   <div id="loadingMain">正在加载地图 🗺️...</div>
   <div class="sub" id="loadingSub">本地加载只需 1-2 秒，请稍候</div>
-  <div class="sub" id="debugBox" style="margin-top:8px;font-family:monospace;font-size:11px;line-height:1.6;"></div>
 </div>
+<!-- 🔴 调试面板：永远可见，不被隐藏 -->
+<div id="debugBox" style="position:absolute;bottom:70px;left:10px;z-index:9998;background:rgba(255,255,255,0.96);border:1px solid #e75480;border-radius:10px;padding:8px 10px;font-family:monospace;font-size:11px;line-height:1.6;color:#2d3748;box-shadow:0 4px 16px rgba(0,0,0,0.1);max-width:90%;"></div>
 
 <!-- ============================================================
      ✅ Leaflet JS：本地文件！绝对不请求外部 CDN
