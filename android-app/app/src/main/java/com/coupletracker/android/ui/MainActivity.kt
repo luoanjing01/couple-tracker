@@ -195,18 +195,6 @@ class MainActivity : ComponentActivity() {
                             overScrollMode = android.view.View.OVER_SCROLL_NEVER
                             isScrollContainer = false
 
-                            // ✅ onSizeChanged：最可靠的尺寸变化回调（WebView 原生提供）
-                            override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-                                super.onSizeChanged(w, h, oldw, oldh)
-                                if (w != oldw || h != oldh) {
-                                    runCatching {
-                                        evaluateJavascript(
-                                            "(function(){try{if(typeof kickSize===''function'')kickSize();if(typeof map!==''undefined''&&map)map.invalidateSize(true);}catch(e){}})();",
-                                            null
-                                        )
-                                    }
-                                }
-                            }
 
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
