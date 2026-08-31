@@ -251,7 +251,7 @@ private fun CurrentAppCard(
     ) {
         Column(Modifier.padding(20.dp)) {
             Text(
-                if (subjectIsMe) "🎯 我当前正在使用" else "🎯 $subjectName 当前正在使用",
+                if (subjectIsMe) "� 正在玩" else "� $subjectName 正在玩",
                 fontSize = 12.sp, color = Color(0xFF718096)
             )
             Spacer(Modifier.height(12.dp))
@@ -269,77 +269,39 @@ private fun CurrentAppCard(
                     Text("💤", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("${subjectName} 正在休息", fontSize = 15.sp, color = Color(0xFF718096), fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(2.dp))
-                    Text("屏幕可能熄了 或 暂时没操作", fontSize = 11.sp, color = Color(0xFFA0AEC0))
                 }
             } else if (!subjectIsMe && remoteAppName.isEmpty()) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("🤔", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("${subjectName} 暂无使用记录", fontSize = 15.sp, color = Color(0xFF718096), fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(2.dp))
-                    Text("可能在休息 或 TA 还没授予使用情况访问权限", fontSize = 11.sp, color = Color(0xFFA0AEC0))
                 }
             } else {
-                // 有 APP 使用数据 → 大卡片展示
+                // 有 APP 使用数据 → 左图标、右名字+时长
                 val appEmoji = categoryEmoji(if (subjectIsMe) fgCategory else "")
                 val appName = if (subjectIsMe) fgName else remoteAppName
-                val category = if (subjectIsMe) fgCategory else ""
-                val pkg = if (subjectIsMe) fgPkg else remotePkg
                 val durationSec = if (subjectIsMe) elapsedMinutes * 60 else remoteSeconds
-                val duration = if (subjectIsMe) formatDuration(durationSec) else formatDuration(durationSec)
+                val duration = formatDuration(durationSec)
                 val accent = if (subjectIsMe) pink else blue
 
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Box(
-                        Modifier
-                            .size(56.dp)
-                            .background(accent.copy(alpha = 0.12f), RoundedCornerShape(16.dp)),
+                        Modifier.size(52.dp).background(accent.copy(alpha = 0.12f), RoundedCornerShape(14.dp)),
                         contentAlignment = Alignment.Center
-                    ) {
-                        Text(appEmoji, fontSize = 28.sp)
-                    }
+                    ) { Text(appEmoji, fontSize = 26.sp) }
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
-                            appName, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
+                            appName, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold,
                             color = Color(0xFF2D3748), maxLines = 1
                         )
-                        Spacer(Modifier.height(2.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (category.isNotBlank()) {
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = accent.copy(alpha = 0.12f)
-                                ) {
-                                    Text(category, fontSize = 11.sp, color = accent,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                        fontWeight = FontWeight.SemiBold)
-                                }
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            Text(
-                                if (subjectIsMe) "使用中 · 已 ${duration}" else "最近一次 · ${duration}",
-                                fontSize = 12.sp, color = Color(0xFF718096)
-                            )
-                        }
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = accent.copy(alpha = 0.15f)
-                        ) {
-                            Text(
-                                if (subjectIsMe) "🟢 实时" else "📡 云端",
-                                fontSize = 10.sp, color = accent,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(4.dp))
                         Text(
-                            if (subjectIsMe) pkg.takeLast(12).ifBlank { "-" } else relativeTime(remoteUpdateAt),
-                            fontSize = 10.sp, color = Color(0xFFA0AEC0), maxLines = 1
+                            if (subjectIsMe) "已使用 $duration" else "最近一次 · $duration",
+                            fontSize = 12.sp, color = Color(0xFF718096)
                         )
                     }
                 }
@@ -371,9 +333,10 @@ private fun PhoneStatusCard(
     var taCharging by remember { mutableStateOf(false) }
     var taUpdatedAt by remember { mutableStateOf(0L) }
 
-    // 当前正在用的 APP（供"正在玩"卡使用）
-    var playingEmoji by remember { mutableStateOf("") }
-    var playingName by remember { mutableStateOf("") }
+    // 当前心情（本地选 emoji）
+    var moodEmoji by remember { mutableStateOf("😐") }
+    var showMoodDialog by remember { mutableStateOf(false) }
+    val moodOptions = listOf("😀","🥰","😎","😴","😠","🥺","🤔","🎉","💪","💔")
 
     // 自己：注册广播 + 网络监听
     LaunchedEffect(subjectIsMe, reloadKey) {
@@ -441,36 +404,6 @@ private fun PhoneStatusCard(
         }
     }
 
-    // 当前正在用的 APP（自己查本地，TA 查云端最新 app_usage）
-    LaunchedEffect(subjectIsMe, subjectId, reloadKey) {
-        while (isActive) {
-            if (subjectIsMe) {
-                // 自己：查本地前台 APP
-                runCatching {
-                    val current = queryForegroundApp(ctx)
-                    if (current != null) {
-                        val (pkg, name) = current
-                        playingName = name
-                        playingEmoji = categoryEmoji(categoryOf(ctx, pkg))
-                    }
-                }
-            } else if (subjectId.isNotBlank()) {
-                // TA：查云端最新 app_usage
-                withContext(Dispatchers.IO) {
-                    runCatching {
-                        NetworkModule.restService.getAppUsage(
-                            userId = subjectId, order = "created_at.desc", limit = 1
-                        )
-                    }.getOrNull()?.body()?.firstOrNull()?.let { row ->
-                        playingName = row.app_name?.takeIf { it.isNotBlank() } ?: row.package_name.orEmpty()
-                        playingEmoji = categoryEmoji(row.category.orEmpty())
-                    }
-                }
-            }
-            delay(if (subjectIsMe) 5000 else 15000)
-        }
-    }
-
     val pink = Color(0xFFE75480)
     val blue = Color(0xFF667EEA)
     val accent = if (subjectIsMe) pink else blue
@@ -533,14 +466,60 @@ private fun PhoneStatusCard(
                 accent = statusAccent,
                 modifier = Modifier.weight(1f)
             )
-            StatusChip(
-                icon = if (playingEmoji.isNotBlank()) playingEmoji else "⏸️",
-                label = "正在玩",
-                value = if (playingName.isNotBlank()) playingName else "暂无",
-                accent = accent,
-                modifier = Modifier.weight(1f)
-            )
+            // 心情卡 —— 自己可点击选 emoji
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                modifier = Modifier.weight(1f).then(
+                    if (subjectIsMe) Modifier.clickable { showMoodDialog = true } else Modifier
+                )
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("💖", fontSize = 16.sp)
+                        Spacer(Modifier.width(6.dp))
+                        Text("当前心情", fontSize = 11.sp, color = Color(0xFF718096))
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        moodEmoji, fontSize = 22.sp,
+                        modifier = Modifier.wrapContentSize(),
+                        maxLines = 1
+                    )
+                }
+            }
         }
+    }
+
+    // 心情选择对话框（仅自己能选）
+    if (showMoodDialog && subjectIsMe) {
+        AlertDialog(
+            onDismissRequest = { showMoodDialog = false },
+            title = { Text("选个心情") },
+            text = {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    moodOptions.forEach { emoji ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (emoji == moodEmoji) pink.copy(alpha = 0.15f) else Color.Transparent,
+                            modifier = Modifier.size(44.dp).clickable {
+                                moodEmoji = emoji; showMoodDialog = false
+                            }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(emoji, fontSize = 24.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showMoodDialog = false }) { Text("取消") }
+            }
+        )
     }
 }
 
@@ -586,12 +565,15 @@ private fun HistoryOpenList(
         if (subjectId.isBlank()) { rows = emptyList(); return@LaunchedEffect }
         loading = true; loadError = null
         withContext(Dispatchers.IO) {
-            // 用简单的 getAppUsage，按时间倒序拉最新 1000 条（PostgREST 默认 max-rows=1000）
+            // 和 StatsScreen 完全同款：用 getAppUsageInRange 查最近 7 天
+            val zone = ZoneId.systemDefault()
+            val start = LocalDate.now(zone).minusDays(7).atStartOfDay(zone).toInstant().toString()
+            val end = LocalDate.now(zone).plusDays(1).atStartOfDay(zone).toInstant().toString()
             val resp = runCatching {
-                NetworkModule.restService.getAppUsage(
+                NetworkModule.restService.getAppUsageInRange(
                     userId = subjectId,
-                    order = "created_at.desc",
-                    limit = 1000
+                    createdAtGte = "gte.$start",
+                    createdAtLt = "lt.$end"
                 )
             }
             val r = resp.getOrNull()
@@ -744,27 +726,79 @@ private fun getNetworkType(ctx: Context): String {
     val nc = cm.getNetworkCapabilities(cm.activeNetwork) ?: return "无网络"
     return when {
         nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> {
-            // 尝试拿 WiFi SSID
-            val ssid = runCatching {
-                val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                val info = wm.connectionInfo
-                info.ssid?.let { s ->
-                    // Android 10+ 可能返回 "<unknown SSID>" 或者系统限制
-                    if (s.isNotBlank() && s != "<unknown ssid>" && s != "0x") {
-                        s.removeSurrounding("\"")
-                    } else null
-                }
-            }.getOrNull()
+            val ssid = getWifiSsidMultiAttempt(ctx)
             if (ssid != null) "WiFi · $ssid" else "WiFi"
         }
-        nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> {
-            "移动数据"
-        }
+        nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "移动数据"
         nc.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "蓝牙"
         nc.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "有线"
         nc.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
         else -> "无网络"
     }
+}
+
+/** 多层尝试获取 WiFi SSID（不同 Android 版本/ROM 权限差异大） */
+private fun getWifiSsidMultiAttempt(ctx: Context): String? {
+    // 方案 1: WifiManager.connectionInfo (大多数场景可用)
+    runCatching {
+        val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val ssid = wm.connectionInfo?.ssid
+        if (!ssid.isNullOrBlank() && ssid != "<unknown ssid>" && ssid != "0x") {
+            val cleaned = ssid.removeSurrounding("\"")
+            if (cleaned.isNotBlank()) return cleaned
+        }
+    }
+
+    // 方案 2: NetworkCapabilities 里可能有 WiFi 信息（Android 12+）
+    runCatching {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val nc = cm.getNetworkCapabilities(cm.activeNetwork)
+        // 反射拿 wifi Ssid —— Android 12 后隐藏了但 ROM 可能还能拿到
+        val f = nc?.javaClass?.getDeclaredField("ssid")
+        if (f != null) {
+            f.isAccessible = true
+            val v = f.get(nc) as? String
+            if (!v.isNullOrBlank()) {
+                val cleaned = v.removeSurrounding("\"")
+                if (cleaned.isNotBlank() && cleaned != "<unknown ssid>") return cleaned
+            }
+        }
+    }
+
+    // 方案 3: 反射 WifiManager mWifiInfo (最老的方法，有些 ROM 还是有效)
+    runCatching {
+        val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val mWifiInfoField = wm.javaClass.getDeclaredMethod("getConnectionInfo")
+        val wifiInfo = mWifiInfoField.invoke(wm)
+        if (wifiInfo != null) {
+            val ssidField = wifiInfo.javaClass.getDeclaredField("mSSID")
+            ssidField.isAccessible = true
+            val ssid = ssidField.get(wifiInfo) as? String
+            if (!ssid.isNullOrBlank()) {
+                val cleaned = ssid.removeSurrounding("\"")
+                if (cleaned.isNotBlank() && cleaned != "<unknown ssid>") return cleaned
+            }
+        }
+    }
+
+    // 方案 4: WifiManager.querySavedNetworks (Android 13+)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        runCatching {
+            val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            // 这个 API 虽然要 NEARBY_WIFI_DEVICES 权限，但有些 ROM 不放行
+            val networks = wm.querySavedNetworks(android.net.wifi.SoftApConfiguration.Builder().build())
+            if (networks.isNotEmpty()) {
+                val ssid = networks.firstOrNull()?.ssid
+                if (!ssid.isNullOrBlank()) {
+                    val cleaned = ssid.removeSurrounding("\"")
+                    if (cleaned.isNotBlank()) return cleaned
+                }
+            }
+        }
+    }
+
+    // 全挂了 → 返回 null，上层显示 "WiFi" 不带名字
+    return null
 }
 
 /** package → category 映射（简化版） */
