@@ -13,8 +13,6 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,7 +20,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import com.coupletracker.android.R
 import kotlinx.coroutines.delay
@@ -156,7 +153,7 @@ class LoginActivity : ComponentActivity() {
                     onValueChange = { username = it },
                     label = { Text("用户名") },
                     singleLine = true,
-                    leadingIcon = { Icon(Icons.Default.Person, null) },
+                    leadingIcon = { Text("👤", fontSize = 18.sp) },
                     colors = outlinedPinkColors(),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -170,13 +167,10 @@ class LoginActivity : ComponentActivity() {
                         if (pwdVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { pwdVisible = !pwdVisible }) {
-                            Icon(
-                                if (pwdVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                null
-                            )
+                            Text(if (pwdVisible) "👁️" else "🙈", fontSize = 18.sp)
                         }
                     },
-                    leadingIcon = { Icon(Icons.Default.Lock, null) },
+                    leadingIcon = { Text("🔒", fontSize = 18.sp) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     colors = outlinedPinkColors(),
                     modifier = Modifier.fillMaxWidth()
@@ -189,7 +183,7 @@ class LoginActivity : ComponentActivity() {
                         onValueChange = { displayName = it },
                         label = { Text("昵称（在地图上显示）") },
                         singleLine = true,
-                        leadingIcon = { Icon(Icons.Default.Favorite, null) },
+                        leadingIcon = { Text("💗", fontSize = 18.sp) },
                         colors = outlinedPinkColors(),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -745,7 +739,7 @@ class LoginActivity : ComponentActivity() {
                 PermItem(
                     "location",
                     R.string.perm_location_title, R.string.perm_location_desc,
-                    Icons.Default.LocationOn,
+                    { Text("📍", fontSize = 24.sp) },
                     granted = hasAll(
                         listOf(Manifest.permission.ACCESS_FINE_LOCATION,
                             Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -754,17 +748,17 @@ class LoginActivity : ComponentActivity() {
                 PermItem(
                     "backgroundLocation", "后台定位",
                     "切到后台后也能让TA看到你（Android 10+需单独允许）",
-                    Icons.Default.MyLocation,
+                    { Text("📡", fontSize = 24.sp) },
                     granted = hasBgLocation()
                 ),
                 PermItem(
                     "usage", R.string.perm_usage_title, R.string.perm_usage_desc,
-                    Icons.Default.Apps, granted = usageMonitor.hasUsagePermission()
+                    { Text("📱", fontSize = 24.sp) }, granted = usageMonitor.hasUsagePermission()
                 ),
                 PermItem(
                     "notif", R.string.perm_notification_title,
                     R.string.perm_notification_desc,
-                    Icons.Default.Notifications,
+                    { Text("🔔", fontSize = 24.sp) },
                     granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                         has(Manifest.permission.POST_NOTIFICATIONS) else true
                 )
@@ -836,7 +830,7 @@ class LoginActivity : ComponentActivity() {
         val key: String,
         val title: Any,    // String or Int(R.string)
         val desc: Any,
-        val icon: ImageVector,
+        val icon: @Composable () -> Unit,
         var granted: Boolean
     )
 
@@ -851,7 +845,9 @@ class LoginActivity : ComponentActivity() {
                 modifier = Modifier.padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(p.icon, null, tint = Color(0xFFE75480), modifier = Modifier.size(36.dp))
+                Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                    p.icon()
+                }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(p.titleText(), color = Color(0xFF2D3748),

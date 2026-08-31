@@ -65,7 +65,8 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
+    // ⚠️ 不再引入 material-icons-extended：所有图标均使用 core 基础包或纯 Emoji，
+    //    避免 extended 版本解析/编译期找不到类的各种坑，还能减小 APK 体积
 
     // ===== 网络：OkHttp + Retrofit + Socket.IO =====
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

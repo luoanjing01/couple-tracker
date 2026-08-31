@@ -15,8 +15,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -24,7 +22,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,12 +54,12 @@ class MainActivity : ComponentActivity() {
     private enum class Tab(
         val path: String,
         val label: String,
-        val icon: ImageVector
+        val icon: @Composable () -> Unit
     ) {
-        MAP("/map", "地图", Icons.Default.LocationOn),
-        APPS("/apps", "应用", Icons.Default.Apps),
-        STATS("/stats", "统计", Icons.Default.BarChart),
-        ME("/me", "我的", Icons.Default.Person)
+        MAP("/map",   "地图", { Text("🗺️", fontSize = 20.sp) }),
+        APPS("/apps", "应用", { Text("📱", fontSize = 20.sp) }),
+        STATS("/stats","统计",{ Text("📊", fontSize = 20.sp) }),
+        ME("/me",     "我的", { Text("👤", fontSize = 20.sp) })
     }
 
     private var webView: WebView? = null
@@ -93,7 +90,7 @@ class MainActivity : ComponentActivity() {
                                 NavigationBarItem(
                                     selected = selected == t,
                                     onClick = { selected = t },
-                                    icon = { Icon(t.icon, null) },
+                                    icon = t.icon,
                                     label = { Text(t.label) },
                                     colors = NavigationBarItemDefaults.colors(
                                         selectedIconColor = Color(0xFFE75480),
@@ -108,20 +105,20 @@ class MainActivity : ComponentActivity() {
                     Box(Modifier.padding(pad).fillMaxSize()) {
                         when (selected) {
                             Tab.MAP   -> PlaceholderScreen(
-                                icon = Icons.Default.LocationOn,
+                                icon = { Text("🗺️", fontSize = 40.sp) },
                                 title = "实时地图",
                                 desc = "地图页面已接入 💕\n\n当前功能状态：\n✅ 位置已采集（后台按设置频率上报到云端）\n✅ 云端已保存所有位置记录\n✅ 两台手机同一个账号配对后即可互相查看\n✅ 已支持 WebView 本地地图 + Supabase 实时同步",
                                 accent = Color(0xFFE75480),
                                 useMapWebView = true
                             )
                             Tab.APPS  -> PlaceholderScreen(
-                                icon = Icons.Default.Apps,
+                                icon = { Text("📱", fontSize = 40.sp) },
                                 title = "应用使用",
                                 desc = "应用使用页面将在正式版上线 💕\n\n当前功能状态：\n✅ APP 使用已采集（每 2 秒检查前台）\n✅ 每 60 秒上报一次使用时长到云端\n✅ 已自动识别微信/抖音/王者等常用APP分类",
                                 accent = Color(0xFF667EEA)
                             )
                             Tab.STATS -> PlaceholderScreen(
-                                icon = Icons.Default.BarChart,
+                                icon = { Text("📊", fontSize = 40.sp) },
                                 title = "每日统计",
                                 desc = "每日使用统计页面将在正式版上线 💕\n\n当前功能状态：\n✅ 每日使用数据已完整记录到云端\n✅ 支持按日期/按APP/按分类统计查询\n✅ 打开时长、移动轨迹、打开次数全记录",
                                 accent = Color(0xFF48BB78)
@@ -141,7 +138,7 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     @Composable
     fun PlaceholderScreen(
-        icon: ImageVector,
+        icon: @Composable () -> Unit,
         title: String,
         desc: String,
         accent: Color,
@@ -296,7 +293,7 @@ class MainActivity : ComponentActivity() {
                     .background(accent.copy(alpha = 0.12f), RoundedCornerShape(28.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(icon, null, tint = accent, modifier = Modifier.size(44.dp))
+                icon()
             }
             Spacer(Modifier.height(18.dp))
             Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
@@ -480,12 +477,7 @@ class MainActivity : ComponentActivity() {
                             .padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            Icons.Default.Favorite,
-                            null,
-                            tint = Color(0xFFE75480),
-                            modifier = Modifier.size(30.dp)
-                        )
+                        Text("❤️", fontSize = 28.sp)
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(
@@ -773,7 +765,7 @@ class MainActivity : ComponentActivity() {
                         .height(48.dp),
                     shape = RoundedCornerShape(24.dp)
                 ) {
-                    Icon(Icons.Default.LocationOn, null)
+                    Text("🗺️", fontSize = 16.sp)
                     Spacer(Modifier.width(4.dp))
                     Text("看地图")
                 }
@@ -791,7 +783,7 @@ class MainActivity : ComponentActivity() {
                     shape = RoundedCornerShape(24.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF667EEA))
                 ) {
-                    Icon(Icons.Default.Refresh, null)
+                    Text("🔄", fontSize = 16.sp)
                     Spacer(Modifier.width(4.dp))
                     Text("重启服务")
                 }
