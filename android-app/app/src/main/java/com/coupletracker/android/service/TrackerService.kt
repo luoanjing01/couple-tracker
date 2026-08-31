@@ -129,6 +129,35 @@ class TrackerService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        // 🔴 关键修复：如果 onCreate 时因权限不够跳过了 startForeground，
+        //    但后来权限被授予 → onStartCommand 会在 MainActivity 再次 startService 时触发，
+        //    此时补调 startForeground() 让服务真正变成前台服务，否则会被系统杀掉
+        if (canStartForeground()) {
+            runCatching {
+                val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+                if (runCatching { nm.getNotificationChannel(getString(R.string.tracker_channel_id)) }.getOrNull() == null) {
+                    // 兜底：渠道还没建（极端情况），赶紧建一个
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        nm.createNotificationChannel(android.app.NotificationChannel(
+                            getString(R.string.tracker_channel_id),
+                            getString(R.string.tracker_channel_name),
+                            NotificationManager.IMPORTANCE_LOW
+                        ).apply { description = getString(R.string.tracker_channel_desc) })
+                    }
+                }
+                if (!createdSafely) {
+                    // onCreate 可能因为异常没跑完 → 现在补初始化
+                    runCatching {
+                        locationTracker = runCatching { LocationTracker(this, serviceScope) }.getOrNull()
+                        appMonitor = runCatching { AppUsageMonitor(this, serviceScope) }.getOrNull()
+                    }
+                    createdSafely = true
+                }
+                runCatching {
+                    startForeground(NOTIF_ID, buildNotification("💕 正在连接服务..."))
+                }
+            }
+        }
         return START_STICKY
     }
 

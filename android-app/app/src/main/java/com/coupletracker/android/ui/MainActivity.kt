@@ -1,4 +1,4 @@
-﻿package com.coupletracker.android.ui
+package com.coupletracker.android.ui
 
 import android.annotation.SuppressLint
 import android.content.ClipData
@@ -201,12 +201,16 @@ class MainActivity : ComponentActivity() {
                             settings.databaseEnabled = true
                             settings.allowFileAccess = true
                             settings.allowContentAccess = true
+                            // ✅ 本地 file:// HTML 需要加载外部 HTTPS 瓦片图片
+                            settings.allowFileAccessFromFileURLs = true
+                            settings.allowUniversalAccessFromFileURLs = true
                             settings.useWideViewPort = true
                             settings.loadWithOverviewMode = true
                             settings.setSupportZoom(true)
                             settings.builtInZoomControls = true
                             settings.displayZoomControls = false
                             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            settings.blockNetworkImage = false
                             webViewClient = object : WebViewClient() {
 
                                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {

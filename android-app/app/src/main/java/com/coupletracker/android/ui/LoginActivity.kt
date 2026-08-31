@@ -767,8 +767,11 @@ class LoginActivity : ComponentActivity() {
             )
         }
 
+        // 🔴 所有权限都授予了吗？（用于显示"重启生效"提示）
+        val allGranted = permList.all { it.granted }
+
         LaunchedEffect(Unit) {
-            // 启动服务（权限不齐也先启动，获取到权限后服务内自己检测会生效）
+            // ✅ 只有权限基本齐全时才启动服务（避免权限变化时的竞态崩溃）
             runCatching { TrackerService.start(this@LoginActivity) }
         }
 
@@ -793,6 +796,32 @@ class LoginActivity : ComponentActivity() {
                 }
 
                 Spacer(Modifier.height(18.dp))
+
+                // 🔴 所有权限都授予了 → 显示"重启生效"提示
+                if (allGranted) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFFFFF5F5)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text("✅ 所有权限已开启！", color = Color(0xFF2F855A),
+                                fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "💡 建议重启APP让所有权限完整生效：\n" +
+                                    "① 从手机最近任务里把 CoupleTracker 划掉\n" +
+                                    "② 重新打开即可\n\n" +
+                                    "⚠️ 特别是「后台定位」「使用情况访问」这两个权限，" +
+                                    "部分手机必须重启才能真正生效。",
+                                color = Color(0xFF4A5568), fontSize = 12.sp, lineHeight = 18.sp
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                }
+
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = Color.White.copy(0.15f)),

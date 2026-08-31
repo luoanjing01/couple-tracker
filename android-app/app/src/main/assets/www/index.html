@@ -13,13 +13,8 @@
 
 <style>
   html,body{margin:0;padding:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:#fdf2f8;}
-  #map{width:100%;height:100%;background:linear-gradient(135deg,#e8f4fd 0%,#d4edda 50%,#fef3c7 100%);position:relative;}
-  /* 网格线：让纯色背景看起来像地图 */
-  #map::before{content:'';position:absolute;inset:0;background-image:
-    linear-gradient(rgba(102,126,234,0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(102,126,234,0.08) 1px, transparent 1px);
-    background-size:40px 40px;pointer-events:none;z-index:1;}
-  #map::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 70% 30%, rgba(231,84,128,0.12) 0%, transparent 40%), radial-gradient(circle at 20% 80%, rgba(102,126,234,0.12) 0%, transparent 40%);pointer-events:none;z-index:1;}
+  #map{width:100%;height:100%;background:#dae1e7;position:relative;}
+  /* WebView 背景色（瓦片加载前显示浅灰底色，避免全白闪烁）*/
   .topbar{position:absolute;top:10px;left:10px;right:10px;z-index:500;background:rgba(255,255,255,0.96);border-radius:14px;padding:10px 14px;box-shadow:0 4px 18px rgba(0,0,0,0.08);}
   .topbar .row{display:flex;justify-content:space-between;align-items:center;gap:10px;}
   .nick{font-weight:700;color:#2d3748;font-size:14px;}
@@ -246,10 +241,55 @@ function kickSize() { try { if (map) { var _b = map.invalidateSize(true); consol
 function initMap() {
   try {
     console.log('[CT] initMap start, L=', typeof L, ', #map el=', !!document.getElementById('map'));
-    map = L.map('map', { zoomControl: true, preferCanvas: true }).setView([39.9042, 116.4074], 11);
+    // ✅ zoomControl:true 让 Leaflet 默认的 +/- 缩放按钮显示出来
+    map = L.map('map', { zoomControl: true, preferCanvas: true, minZoom: 1, maxZoom: 19, worldCopyJump: true }).setView([39.9042, 116.4074], 5);
     var _sz0 = map.getSize();
     console.log('[CT] map after L.map(): size=', _sz0, ', container w/h=', document.getElementById('map').offsetWidth, document.getElementById('map').offsetHeight);
-    // ✅ 离线模式：不加载任何底图瓦片
+
+    // ✅ 真实地图瓦片（OSM）：支持从全球视图 (zoom=1) 到建筑级 (zoom=19)
+    //    多图源自动切换：OSM → OpenStreetMap中文镜像 → 失败降级回离线
+    var tileSources = [
+      { name: 'OSM', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', sub: 'abc', attrs: '&copy; OpenStreetMap contributors' },
+      { name: 'OSM-CN', url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图' }
+    ];
+    var tileLayer = null;
+    var tileFailCount = 0;
+    var tileCurIdx = 0;
+
+    function loadTileLayer(idx) {
+      // 先移除旧的
+      if (tileLayer) { try { map.removeLayer(tileLayer); } catch(e){} tileLayer = null; }
+      if (idx >= tileSources.length) {
+        // 全部图源都挂了 → 降级：只显示 marker + 背景色
+        console.warn('[CT] 所有地图图源加载失败，降级为纯标记模式');
+        tileLayer = null;
+        return;
+      }
+      var src = tileSources[idx];
+      console.log('[CT] 尝试图源 #' + idx + ': ' + src.name);
+      tileLayer = L.tileLayer(src.url, {
+        subdomains: src.sub,
+        attribution: src.attrs,
+        maxZoom: 19,
+        minZoom: 1,
+        errorTileUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNTYiIGhlaWdodD0iMjU2Ij48cmVjdCB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgZmlsbD0iI2ZhZmRmZiIvPjwvc3ZnPg=='
+      }).addTo(map);
+      // 监听瓦片加载失败 → 自动切下一个图源
+      tileLayer.on('tileerror', function(){
+        tileFailCount++;
+        if (tileFailCount >= 3) {
+          tileFailCount = 0;
+          tileCurIdx++;
+          setTimeout(function(){ loadTileLayer(tileCurIdx); }, 300);
+        }
+      });
+      tileLayer.on('load', function(){
+        // 图源加载成功 → 重置失败计数
+        tileFailCount = 0;
+        console.log('[CT] 图源 ' + src.name + ' 加载成功');
+      });
+    }
+    loadTileLayer(0);
 
     // ✅ WebView 经典修复：容器尺寸在 load 时往往还是 0，导致 Leaflet 以为没有可视区 → 瓦片 0 张 → 全空白
     //    常见现象：整个地图只有 body 粉色背景，什么都不渲染，但没有报错。必须多次调用 invalidateSize() 踢醒
@@ -274,13 +314,19 @@ function initMap() {
       document.addEventListener('visibilitychange', function(){ if (!document.hidden) setTimeout(kickSize, 150); });
     } catch(e){}
 
-    // ✅ 离线模式：无底图瓦片、无换图源按钮
+    // ✅ 已切换为在线地图模式
 
-    // 关闭 loading
-    setTimeout(function(){
+    // 关闭 loading：等瓦片加载完 or 至少 1.5 秒（给地图一个缓冲时间）
+    var _loadingDismissed = false;
+    function dismissLoading(){
+      if (_loadingDismissed) return;
+      _loadingDismissed = true;
       var l = document.getElementById('loading');
       if (l) l.style.display='none';
-    }, 350);
+    }
+    setTimeout(dismissLoading, 1500);  // 兜底 1.5s 后强制关闭
+    // 如果瓦片提前加载完 → 提前关闭
+    try { if (tileLayer) tileLayer.on('load', function(){ setTimeout(dismissLoading, 200); }); } catch(e){}
 
     updateTopbar();
     poll();
@@ -312,15 +358,26 @@ function initMap() {
         var ms = map.getSize();
         var mEl = document.getElementById('map');
         var hh = document.body ? document.body.scrollHeight : 0;
-        // 离线模式不加载瓦片
-        var loaded = '离线模式';
+        // 真实瓦片状态：统计 tileLayer 的已加载瓦片数
+        var tileCount = 0;
+        var currentZoom = 0;
+        var curCenter = '—';
+        try {
+          if (typeof tileLayer !== 'undefined' && tileLayer) {
+            var container = tileLayer.getContainer();
+            if (container) tileCount = container.querySelectorAll('img.leaflet-tile-loaded').length;
+          }
+          currentZoom = map.getZoom();
+          var c = map.getCenter();
+          curCenter = c ? c.lat.toFixed(2)+','+c.lng.toFixed(2) : '—';
+        } catch(e){}
         var markerCount = 0;
         if (map) map.eachLayer(function(l){ if (l instanceof L.Marker) markerCount++; });
         box.innerHTML =
           '📐 mapSize: ' + ms.x + '×' + ms.y + '<br>' +
-          '📦 #map offset: ' + (mEl ? mEl.offsetWidth+'×'+mEl.offsetHeight : '?') + '<br>' +
-          '📜 bodyScrollH: ' + hh + '<br>' +
-          '🗺️ 瓦片已加载: ' + loaded + '<br>' +
+          '🔍 zoom: ' + currentZoom + '<br>' +
+          '📍 center: ' + curCenter + '<br>' +
+          '🗺️ 瓦片已加载: ' + tileCount + '<br>' +
           '📍 标记数: ' + markerCount + '<br>' +
           '👤 me.id: ' + (me && me.id ? me.id.substr(0,8)+'...' : 'null') + '<br>' +
           '🟢 lastMeAt: ' + (lastMeAt ? new Date(lastMeAt).toLocaleTimeString() : 'null');
@@ -409,8 +466,12 @@ function fit() {
   if (meMarker) pts.push(meMarker.getLatLng());
   if (partnerMarker) pts.push(partnerMarker.getLatLng());
   if (pts.length === 0) return;
-  if (pts.length === 1) map.setView(pts[0], 14, {animate:true});
-  else map.fitBounds(L.latLngBounds(pts), {padding:[80,80], maxZoom:15, animate:true});
+  if (pts.length === 1) map.setView(pts[0], 15, {animate:true});
+  else {
+    // 异地恋优化：fitBounds 自动根据两点距离计算合适的缩放
+    // maxZoom:15 避免两人在同个小区时放太大；但如果 fitBounds 算出来很小就用算出来的
+    map.fitBounds(L.latLngBounds(pts), {padding:[100,60], maxZoom:15, animate:true});
+  }
 }
 
 function updateTopbar() {
