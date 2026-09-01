@@ -1,4 +1,4 @@
-package com.coupletracker.android.ui
+﻿package com.coupletracker.android.ui
 
 import android.app.AppOpsManager
 import android.content.BroadcastReceiver
@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.coupletracker.android.data.AppUsageRow
 import com.coupletracker.android.data.LocationRow
+import com.coupletracker.android.data.AppSessionTracker
 import com.coupletracker.android.data.NetworkModule
 import com.coupletracker.android.data.UserRepository
 import com.coupletracker.android.service.TrackerService
@@ -195,11 +196,8 @@ private fun CurrentAppCard(
     var fgName by remember { mutableStateOf("") }
     var fgCategory by remember { mutableStateOf("") }
 
-    // ✅ 自己的累计时长直接读后台 AppUsageMonitor StateFlow（页面重建不丢）
-    val sessionSeconds by TrackerService.appMonitor
-        ?.currentSessionSeconds
-        ?.collectAsState(initial = 0)
-        ?: remember { mutableStateOf(0) }
+    // ✅ 自己的累计时长直接读 AppSessionTracker 单例（进程存活就不丢）
+    var sessionSeconds by remember { mutableStateOf(0) }
 
     // 远端查 TA 的（60 秒精度）
     var remoteAppName by remember { mutableStateOf("") }
@@ -207,7 +205,7 @@ private fun CurrentAppCard(
     var remoteSeconds by remember { mutableStateOf(0) }
     var remoteUpdateAt by remember { mutableStateOf(0L) }
 
-    // 自己：每 3 秒查一次前台 APP 名字（时长读后台 StateFlow，这里不再自己算）
+    // 自己：每 3 秒查一次前台 APP 名字 + 时长
     LaunchedEffect(subjectIsMe, reloadKey) {
         if (subjectIsMe) {
             if (!subjectHasPermission) return@LaunchedEffect
@@ -219,7 +217,12 @@ private fun CurrentAppCard(
                         val cat = categoryOf(ctx, pkg)
                         if (pkg != fgPkg) {
                             fgPkg = pkg; fgName = name; fgCategory = cat
+                        } else {
+                            fgName = name
                         }
+                        // ✅ 写入单例 + 读秒数
+                        AppSessionTracker.setCurrentApp(pkg, name)
+                        sessionSeconds = AppSessionTracker.sessionSeconds()
                     }
                 }
                 delay(3000)
@@ -339,8 +342,8 @@ private fun PhoneStatusCard(
     var taCharging by remember { mutableStateOf(false) }
     var taUpdatedAt by remember { mutableStateOf(0L) }
 
-    // 当前心情（rememberSaveable 保证切 Tab 不丢）
-    var moodEmoji by rememberSaveable { mutableStateOf("😐") }
+    // 当前心情（AppSessionTracker 单例，进程存活就不丢）
+    val moodEmoji by AppSessionTracker.mood.collectAsState()
     var showMoodDialog by remember { mutableStateOf(false) }
     val moodOptions = listOf("😀","🥰","😎","😴","😠","🥺","🤔","🎉","💪","💔")
 
@@ -512,7 +515,7 @@ private fun PhoneStatusCard(
                             shape = RoundedCornerShape(12.dp),
                             color = if (emoji == moodEmoji) pink.copy(alpha = 0.15f) else Color.Transparent,
                             modifier = Modifier.size(44.dp).clickable {
-                                moodEmoji = emoji; showMoodDialog = false
+                                AppSessionTracker.setMood(emoji); showMoodDialog = false
                             }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -571,14 +574,13 @@ private fun HistoryOpenList(
         if (subjectId.isBlank()) { rows = emptyList(); return@LaunchedEffect }
         loading = true; loadError = null
         withContext(Dispatchers.IO) {
-            // 和 StatsScreen 同款：用 getAppUsageInRange 查最近 7 天
-            val zone = ZoneId.systemDefault()
-            val start = LocalDate.now(zone).minusDays(7).atStartOfDay(zone).toInstant().toString()
-            val end = LocalDate.now(zone).plusDays(1).atStartOfDay(zone).toInstant().toString()
+            // 用最简单的 getAppUsage（无日期过滤），拉最新 100 条
+            // 不再用 getAppUsageInRange —— 那个 API 在 PostgREST 里一直 400
             val resp = runCatching {
-                NetworkModule.restService.getAppUsageInRange(
+                NetworkModule.restService.getAppUsage(
                     userId = subjectId,
-                    createdAtFilter = "and(gte.$start,lt.$end)"
+                    order = "created_at.desc",
+                    limit = 100
                 )
             }
             val r = resp.getOrNull()
