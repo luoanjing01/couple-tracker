@@ -73,14 +73,21 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
         if (fg.isEmpty()) return
 
         if (fg != lastPackage) {
-            // APP 切换了 → 重置 session
+            // ⚠️ APP 切换了 → 先补报前一个 APP（如果用了 ≥10 秒），再重置
+            if (lastPackage.isNotEmpty() && sessionStartAt > 0) {
+                val prevSeconds = ((now - sessionStartAt) / 1000).toInt()
+                if (prevSeconds >= 10) {
+                    val prevPkg = lastPackage
+                    reportOnce(prevPkg, prevSeconds)
+                }
+            }
             lastPackage = fg
             lastReportAt = now
             sessionStartAt = now
             _currentSessionSeconds.tryEmit(0)
         }
 
-        // 实时更新累计秒数（每 2 秒轮询一次）
+        // 实时更新累计秒数
         if (sessionStartAt > 0) {
             _currentSessionSeconds.tryEmit(((now - sessionStartAt) / 1000).toInt())
         }
@@ -89,32 +96,36 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
         if (now - lastReportAt >= 60_000L) {
             val elapsedSeconds = ((now - lastReportAt) / 1000).toInt().coerceAtLeast(1)
             lastReportAt = now
-            val (appName, category) = getAppMeta(fg)
-            _currentApp.tryEmit(fg to appName)
-            scope.launch(Dispatchers.IO) {
-                val user = UserRepository.get().getUser()
-                val userId = user?.id ?: return@launch
-                // ✅ couple_id 传 null（之前填 userId 会被 FK couples 拒绝）
-                val resp = runCatching {
-                    NetworkModule.restService.reportAppUsage(
-                        AppUsageRow(
-                            user_id = userId,
-                            couple_id = null,
-                            package_name = fg,
-                            app_name = appName,
-                            category = category,
-                            usage_seconds = elapsedSeconds
-                        )
+            reportOnce(fg, elapsedSeconds)
+        }
+    }
+
+    /** 上报一次（抽出来复用，APP 切换补报 + 定时上报都走这里） */
+    private fun reportOnce(pkg: String, seconds: Int) {
+        val (appName, category) = getAppMeta(pkg)
+        _currentApp.tryEmit(pkg to appName)
+        scope.launch(Dispatchers.IO) {
+            val user = UserRepository.get().getUser()
+            val userId = user?.id ?: return@launch
+            val resp = runCatching {
+                NetworkModule.restService.reportAppUsage(
+                    AppUsageRow(
+                        user_id = userId,
+                        couple_id = null,
+                        package_name = pkg,
+                        app_name = appName,
+                        category = category,
+                        usage_seconds = seconds
                     )
-                }
-                val http = resp.getOrNull()
-                NetworkModule.lastAppReportStatus.value =
-                    when {
-                        http == null -> "APP上报异常：${resp.exceptionOrNull()?.message?.take(40).orEmpty()}"
-                        !http.isSuccessful -> "APP上报失败 HTTP ${http.code()}：${http.errorBody()?.let { runCatching { it.string().take(60) }.getOrNull().orEmpty() }}"
-                        else -> "APP上报成功 · $appName ${elapsedSeconds}s"
-                    }
+                )
             }
+            val http = resp.getOrNull()
+            NetworkModule.lastAppReportStatus.value =
+                when {
+                    http == null -> "APP上报异常：${resp.exceptionOrNull()?.message?.take(40).orEmpty()}"
+                    !http.isSuccessful -> "APP上报失败 HTTP ${http.code()}：${http.errorBody()?.let { runCatching { it.string().take(60) }.getOrNull().orEmpty() }}"
+                    else -> "APP上报成功 · $appName ${seconds}s"
+                }
         }
     }
 

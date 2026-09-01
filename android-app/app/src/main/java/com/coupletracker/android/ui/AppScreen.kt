@@ -1,4 +1,4 @@
-﻿package com.coupletracker.android.ui
+package com.coupletracker.android.ui
 
 import android.app.AppOpsManager
 import android.content.BroadcastReceiver
@@ -101,7 +101,7 @@ fun AppScreen() {
     ) {
         // ---- 顶部标题 + 切换 ----
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("📱 应用动态", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+            Text("📱 应用动态", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { reloadKey++ }) {
                 Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = Color(0xFF667EEA))
@@ -147,7 +147,7 @@ fun AppScreen() {
             reloadKey = reloadKey
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
 
         // ============= ② 手机状态 =============
         PhoneStatusCard(
@@ -157,23 +157,16 @@ fun AppScreen() {
             reloadKey = reloadKey
         )
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(12.dp))
 
         // ============= ③ 历史打开记录 =============
-        Text("🕒 最近打开记录", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
-        Spacer(Modifier.height(10.dp))
+        Text("🕒 最近打开记录", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+        Spacer(Modifier.height(6.dp))
 
         HistoryOpenList(
             subjectId = subjectId,
             subjectName = subjectName,
             reloadKey = reloadKey
-        )
-
-        Spacer(Modifier.height(24.dp))
-        Text(
-            "数据来自云端 app_usage 表（每 60 秒一条），自己的实时数据来自本地系统",
-            fontSize = 10.sp, color = Color(0xFFA0AEC0),
-            modifier = Modifier.align(Alignment.CenterHorizontally)
         )
     }
 }
@@ -574,8 +567,6 @@ private fun HistoryOpenList(
         if (subjectId.isBlank()) { rows = emptyList(); return@LaunchedEffect }
         loading = true; loadError = null
         withContext(Dispatchers.IO) {
-            // 用最简单的 getAppUsage（无日期过滤），拉最新 100 条
-            // 不再用 getAppUsageInRange —— 那个 API 在 PostgREST 里一直 400
             val resp = runCatching {
                 NetworkModule.restService.getAppUsage(
                     userId = "eq.$subjectId",
@@ -587,7 +578,6 @@ private fun HistoryOpenList(
             when {
                 r == null -> loadError = resp.exceptionOrNull()?.message?.take(60) ?: "网络异常"
                 !r.isSuccessful -> {
-                    // 显示完整错误体，方便诊断 PostgREST 报错
                     val body = runCatching { r.errorBody()?.string()?.take(120) }.getOrNull() ?: ""
                     loadError = "HTTP " + r.code() + " — " + body
                 }
@@ -599,50 +589,29 @@ private fun HistoryOpenList(
 
     when {
         loading -> {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
-            ) {
-                Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Color(0xFFE75480), modifier = Modifier.size(24.dp))
-                }
+            Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Color(0xFFE75480), modifier = Modifier.size(20.dp))
             }
         }
         loadError != null -> {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
-            ) {
-                Column(
-                    Modifier.fillMaxWidth().padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("⚠️ 加载失败", fontSize = 14.sp, color = Color(0xFFE53E3E), fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(4.dp))
-                    Text(loadError ?: "", fontSize = 11.sp, color = Color(0xFF718096))
-                }
+            Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                Text("⚠️ 加载失败：" + loadError, fontSize = 12.sp, color = Color(0xFFE53E3E))
             }
         }
         rows.isEmpty() -> {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
-            ) {
-                Column(
-                    Modifier.fillMaxWidth().padding(28.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("📭", fontSize = 36.sp)
-                    Spacer(Modifier.height(6.dp))
-                    Text("最近 2 天没有打开记录", fontSize = 13.sp, color = Color(0xFF718096))
+            Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("📭", fontSize = 28.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("最近 24 小时没有打开记录", fontSize = 12.sp, color = Color(0xFF718096))
                 }
             }
         }
         else -> {
-            rows.forEachIndexed { idx, open ->
-                HistoryOpenRow(open = open)
-                if (idx < rows.lastIndex) {
-                    HorizontalDivider(color = Color(0xFFEDF2F7))
+            // 紧凑时间线 —— 每条一行，左 emoji + 中事件 + 右时间戳
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                rows.forEach { open ->
+                    HistoryTimelineItem(open)
                 }
             }
         }
@@ -650,36 +619,41 @@ private fun HistoryOpenList(
 }
 
 @Composable
-private fun HistoryOpenRow(open: HistoryOpen) {
+private fun HistoryTimelineItem(open: HistoryOpen) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            open.emoji, fontSize = 22.sp,
-            modifier = Modifier.width(36.dp)
-        )
+        // 左：emoji 图标
+        Text(open.emoji, fontSize = 18.sp, modifier = Modifier.width(28.dp))
         Spacer(Modifier.width(6.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                "打开了 ${open.appName}",
-                fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF2D3748)
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                open.timeLabel,
-                fontSize = 11.sp, color = Color(0xFF718096)
-            )
-        }
+        // 中：事件描述
         Text(
-            open.duration,
-            fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE75480)
+            "打开了 ${open.appName}",
+            fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFF2D3748),
+            modifier = Modifier.weight(1f)
+        )
+        // 右：时间戳
+        Text(
+            open.timeLabelShort,
+            fontSize = 11.sp, color = Color(0xFFA0AEC0)
         )
     }
 }
+
+private val HistoryOpen.timeLabelShort: String
+    get() {
+        val label = timeLabel
+        // "今天 19:38 打开" → "19:38"
+        // "昨天 16:11 打开" → "昨天 16:11"
+        // "09-01 10:00 打开" → "09-01 10:00"
+        return label
+            .replace("打开", "")
+            .trim()
+            .replace("今天 ", "")  // 今天只显示时间
+    }
 
 // =====================================================================
 // 🔧 辅助函数 —— 本地设备查询工具
