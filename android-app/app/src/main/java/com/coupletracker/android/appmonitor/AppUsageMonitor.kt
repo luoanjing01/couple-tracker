@@ -1,4 +1,4 @@
-package com.coupletracker.android.appmonitor
+﻿package com.coupletracker.android.appmonitor
 
 import android.app.AppOpsManager
 import android.app.usage.UsageEvents
@@ -93,7 +93,7 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
         }
 
         // 每 60 秒上报一次当前 APP 的使用时长
-        if (now - lastReportAt >= 60_000L) {
+        if \(now - lastReportAt >= 15_000L\) {
             val elapsedSeconds = ((now - lastReportAt) / 1000).toInt().coerceAtLeast(1)
             lastReportAt = now
             reportOnce(fg, elapsedSeconds)
@@ -186,3 +186,4 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
     @Suppress("unused")
     private val isSystemApp: Boolean get() = false
 }
+

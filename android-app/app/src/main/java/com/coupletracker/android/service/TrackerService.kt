@@ -1,4 +1,4 @@
-package com.coupletracker.android.service
+﻿package com.coupletracker.android.service
 
 import android.Manifest
 import android.app.NotificationChannel
@@ -161,6 +161,13 @@ class TrackerService : Service() {
                 }
             }
         }
+        // 🔴 兜底：无条件重启 AppUsageMonitor（不要等 combine flow 触发）
+        val mon = appMonitor
+        if (mon != null && mon.hasUsagePermission()) {
+            runCatching { appJob?.cancel() }
+            runCatching { mon.stop() }
+            runCatching { mon.start(4000L) }
+        }
         return START_STICKY
     }
 
@@ -275,3 +282,4 @@ class TrackerService : Service() {
         }
     }
 }
+
