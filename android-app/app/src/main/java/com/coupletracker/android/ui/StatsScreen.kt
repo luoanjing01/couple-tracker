@@ -1,4 +1,4 @@
-package com.coupletracker.android.ui
+﻿package com.coupletracker.android.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -69,7 +69,7 @@ fun StatsScreen() {
             val (gte, lt) = dateRangeFor(dayOffset)
             val resp = runCatching {
                 NetworkModule.restService.getAppUsageInRange(
-                    userId = targetId,
+                    userId = "eq.$targetId",
                     createdAtFilter = "and($gte,$lt)"
                 )
             }

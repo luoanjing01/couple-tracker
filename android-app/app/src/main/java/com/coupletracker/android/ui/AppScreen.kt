@@ -236,7 +236,7 @@ private fun CurrentAppCard(
             while (isActive) {
                 withContext(Dispatchers.IO) {
                     runCatching {
-                        NetworkModule.restService.getAppUsage(userId = subjectId, order = "created_at.desc", limit = 1)
+                        NetworkModule.restService.getAppUsage(userId = "eq.$subjectId", order = "created_at.desc", limit = 1)
                     }.getOrNull()?.body()?.firstOrNull()?.let { row ->
                         remotePkg = row.package_name
                         remoteAppName = row.app_name ?: row.package_name
@@ -399,7 +399,7 @@ private fun PhoneStatusCard(
                 withContext(Dispatchers.IO) {
                     runCatching {
                         NetworkModule.restService.getUserLocations(
-                            userId = subjectId, order = "created_at.desc", limit = 1
+                            userId = "eq.$subjectId", order = "created_at.desc", limit = 1
                         )
                     }.getOrNull()?.body()?.firstOrNull()?.let { loc ->
                         taBattery = loc.battery_level
@@ -578,7 +578,7 @@ private fun HistoryOpenList(
             // 不再用 getAppUsageInRange —— 那个 API 在 PostgREST 里一直 400
             val resp = runCatching {
                 NetworkModule.restService.getAppUsage(
-                    userId = subjectId,
+                    userId = "eq.$subjectId",
                     order = "created_at.desc",
                     limit = 100
                 )
@@ -586,7 +586,11 @@ private fun HistoryOpenList(
             val r = resp.getOrNull()
             when {
                 r == null -> loadError = resp.exceptionOrNull()?.message?.take(60) ?: "网络异常"
-                !r.isSuccessful -> loadError = "HTTP " + r.code()
+                !r.isSuccessful -> {
+                    // 显示完整错误体，方便诊断 PostgREST 报错
+                    val body = runCatching { r.errorBody()?.string()?.take(120) }.getOrNull() ?: ""
+                    loadError = "HTTP " + r.code() + " — " + body
+                }
                 else -> rows = aggregateOpens(r.body() ?: emptyList())
             }
             loading = false
@@ -942,3 +946,6 @@ private fun categoryEmoji(category: String): String = when (category) {
     "图像" -> "🖼️"
     else -> "📦"
 }
+
+
+
