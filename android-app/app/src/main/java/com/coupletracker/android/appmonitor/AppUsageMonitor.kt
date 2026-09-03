@@ -1,4 +1,4 @@
-package com.coupletracker.android.appmonitor
+﻿package com.coupletracker.android.appmonitor
 
 import android.app.AppOpsManager
 import android.app.usage.UsageEvents
@@ -102,7 +102,9 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
 
     /** 上报一次（抽出来复用，APP 切换补报 + 定时上报都走这里） */
     private fun reportOnce(pkg: String, seconds: Int) {
-        val (appName, category) = getAppMeta(pkg)
+    // 不记录系统桌面/输入法等噪音
+    if (isSystemNoisePkg(pkg)) return
+    val (appName, category) = getAppMeta(pkg)
         _currentApp.tryEmit(pkg to appName)
         scope.launch(Dispatchers.IO) {
             val user = UserRepository.get().getUser()
@@ -166,7 +168,22 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
         }.getOrElse { pkg to "其他" }
     }
 
-    private fun categorizeByPackage(pkg: String): String = when {
+    private fun isSystemNoisePkg(pkg: String?): Boolean {
+    if (pkg.isNullOrBlank()) return true
+    val p = pkg.lowercase()
+    if (p.contains("launcher") || p.contains("systemui") || p.contains("desk") || p.contains("homescreen")) return true
+    if (p.contains("inputmethod") || p.contains("ime") || p.contains("input.")
+        || p.contains("sougou") || p.contains("sogou") || p.contains("baidu.input")
+        || p.contains("iflytek") || p.contains("讯飞")) return true
+    if (p.contains("uiautomator") || p.contains("statusbar") || p.contains("navigationbar")
+        || p.contains("keyguard") || p.contains("lockscreen") || p.contains("powerui")
+        || p.contains("notifications") || p.contains("system.dialog")) return true
+    if (p.contains("packageinstaller") || p.contains("permissioncontroller")) return true
+    if (p.length < 5 || !p.contains('.')) return true
+    return false
+}
+
+private fun categorizeByPackage(pkg: String): String = when {
         pkg.contains("wechat") || pkg.contains("tencent.mm")
                 || pkg.contains("qq") -> "社交"
         pkg.contains("douyin") || pkg.contains("aweme")
@@ -186,4 +203,5 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
     @Suppress("unused")
     private val isSystemApp: Boolean get() = false
 }
+
 

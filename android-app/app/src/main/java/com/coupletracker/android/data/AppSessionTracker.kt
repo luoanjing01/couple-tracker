@@ -1,4 +1,4 @@
-package com.coupletracker.android.data
+﻿package com.coupletracker.android.data
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,8 +72,24 @@ object AppSessionTracker {
     }
 
     /** UI 层直接 POST 到 Supabase（和后台 TrackerService 互相独立的双保险） */
-    private fun uploadUsage(pkg: String, name: String, seconds: Int) {
-        scope.launch {
+    private fun isSystemNoisePkg(pkg: String?): Boolean {
+    if (pkg.isNullOrBlank()) return true
+    val p = pkg.lowercase()
+    if (p.contains("launcher") || p.contains("systemui") || p.contains("desk") || p.contains("homescreen")) return true
+    if (p.contains("inputmethod") || p.contains("ime") || p.contains("input.")
+        || p.contains("sougou") || p.contains("sogou") || p.contains("baidu.input")
+        || p.contains("iflytek") || p.contains("讯飞")) return true
+    if (p.contains("uiautomator") || p.contains("statusbar") || p.contains("navigationbar")
+        || p.contains("keyguard") || p.contains("lockscreen") || p.contains("powerui")
+        || p.contains("notifications") || p.contains("system.dialog")) return true
+    if (p.contains("packageinstaller") || p.contains("permissioncontroller")) return true
+    if (p.length < 5 || !p.contains('.')) return true
+    return false
+}
+
+private fun uploadUsage(pkg: String, name: String, seconds: Int) {
+    if (isSystemNoisePkg(pkg)) { _lastReportStatus.value = "跳过系统噪音 "; return }
+    scope.launch {
             runCatching {
                 val user = UserRepository.get().getUser()
                 val userId = user?.id ?: run {
@@ -116,3 +132,4 @@ object AppSessionTracker {
         else -> "其他"
     }
 }
+

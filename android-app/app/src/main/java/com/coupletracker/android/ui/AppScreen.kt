@@ -1,4 +1,4 @@
-package com.coupletracker.android.ui
+﻿package com.coupletracker.android.ui
 
 import android.app.AppOpsManager
 import android.content.BroadcastReceiver
@@ -788,6 +788,31 @@ private fun categoryOf(ctx: Context, pkg: String): String {
     }.getOrDefault(categorizeByPkg(pkg))
 }
 
+
+/** 系统噪音 APP：桌面、输入法、系统UI、锁屏、虚拟按键等，不记录也不展示 */
+fun isSystemNoisePkg(pkg: String?): Boolean {
+    if (pkg.isNullOrBlank()) return true
+    val p = pkg.lowercase()
+    // 桌面 / 启动器
+    if (p.contains("launcher") || p.contains("systemui") || p.contains("desk") || p.contains("homescreen")) return true
+    // 输入法
+    if (p.contains("inputmethod") || p.contains("ime") || p.contains("input.")
+        || p.contains("sougou") || p.contains("sogou") || p.contains("baidu.input")
+        || p.contains("iflytek") || p.contains("讯飞")) return true
+    // 系统 UI / 状态栏 / 通知
+    if (p.contains("uiautomator") || p.contains("statusbar") || p.contains("navigationbar")
+        || p.contains("keyguard") || p.contains("lockscreen") || p.contains("powerui")
+        || p.contains("notifications") || p.contains("system.dialog")) return true
+    // 设置 / 包安装器
+    if (p.contains("packageinstaller") || p.contains("permissioncontroller")) return true
+    // 包名显示异常（识别失败的 ?? API 这种）
+    if (p.length < 5) return true
+    if (!p.contains('.')) return true
+    return false
+}
+
+private fun categorizeByPkg(pkg: String): String
+
 private fun categorizeByPkg(pkg: String): String = when {
     pkg.contains("tencent.mm") || pkg.contains("qq") -> "社交"
     pkg.contains("douyin") || pkg.contains("aweme") || pkg.contains("bilibili") || pkg.contains("kuaishou") -> "视频"
@@ -920,6 +945,7 @@ private fun categoryEmoji(category: String): String = when (category) {
     "图像" -> "🖼️"
     else -> "📦"
 }
+
 
 
 
