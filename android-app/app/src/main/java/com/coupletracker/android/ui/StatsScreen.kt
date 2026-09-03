@@ -6,10 +6,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBackIos
-import androidx.compose.material.icons.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -253,11 +252,12 @@ fun StatsScreen() {
                 onClick = { dayOffset = (dayOffset + 1).coerceAtMost(30) },
                 modifier = Modifier.size(28.dp)
             ) {
-                Icon(
-                    Icons.Default.ArrowBackIos,
-                    contentDescription = "前一天",
-                    modifier = Modifier.size(14.dp),
-                    tint = Color(0xFF4A5568)
+                Text(
+                    "‹",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF4A5568),
+                    letterSpacing = 0.sp
                 )
             }
 
@@ -284,11 +284,12 @@ fun StatsScreen() {
                 enabled = dayOffset > 0 || tabIdx == 1 && dayOffset > 0,
                 modifier = Modifier.size(28.dp)
             ) {
-                Icon(
-                    Icons.Default.ArrowForwardIos,
-                    contentDescription = "后一天",
-                    modifier = Modifier.size(14.dp),
-                    tint = if (dayOffset > 0) Color(0xFF4A5568) else Color(0xFFCBD5E0)
+                Text(
+                    "›",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (dayOffset > 0) Color(0xFF4A5568) else Color(0xFFCBD5E0),
+                    letterSpacing = 0.sp
                 )
             }
         }

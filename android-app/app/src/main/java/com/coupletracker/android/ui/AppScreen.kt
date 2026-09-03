@@ -1,4 +1,4 @@
-﻿package com.coupletracker.android.ui
+package com.coupletracker.android.ui
 
 import android.app.AppOpsManager
 import android.content.BroadcastReceiver
@@ -810,8 +810,6 @@ fun isSystemNoisePkg(pkg: String?): Boolean {
     if (!p.contains('.')) return true
     return false
 }
-
-private fun categorizeByPkg(pkg: String): String
 
 private fun categorizeByPkg(pkg: String): String = when {
     pkg.contains("tencent.mm") || pkg.contains("qq") -> "社交"
