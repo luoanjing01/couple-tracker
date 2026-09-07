@@ -1,4 +1,4 @@
-﻿package com.coupletracker.android.service
+package com.coupletracker.android.service
 
 import android.Manifest
 import android.app.NotificationChannel
@@ -22,7 +22,7 @@ import com.coupletracker.android.ui.MainActivity
 import kotlinx.coroutines.*
 
 /**
- * 情侣实时报备前台服务
+ * 小世界前台服务
  * - 只要用户登录就保持运行，持续上报位置和APP使用情况
  * - 开机自启、APP更新自启、APP被杀死后尝试自恢复
  * - 使用 CoroutineScope + SupervisorJob 管理子协程

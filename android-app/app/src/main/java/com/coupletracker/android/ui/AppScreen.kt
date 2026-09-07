@@ -1,4 +1,4 @@
-package com.coupletracker.android.ui
+﻿package com.coupletracker.android.ui
 
 import android.app.AppOpsManager
 import android.content.BroadcastReceiver
@@ -101,7 +101,7 @@ fun AppScreen() {
     ) {
         // ---- 顶部标题 + 切换 ----
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("📱 应用动态", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+            Text("🌐 应用动态", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { reloadKey++ }) {
                 Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = Color(0xFF667EEA))
@@ -252,7 +252,7 @@ private fun CurrentAppCard(
     ) {
         Column(Modifier.padding(20.dp)) {
             Text(
-                if (subjectIsMe) "� 正在玩" else "� $subjectName 正在玩",
+                if (subjectIsMe) "🌍 正在玩" else "🌍 $subjectName 正在玩",
                 fontSize = 12.sp, color = Color(0xFF718096)
             )
             Spacer(Modifier.height(12.dp))
@@ -262,7 +262,7 @@ private fun CurrentAppCard(
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("⚠️ 未授予「使用情况访问」权限", fontSize = 14.sp, color = Color(0xFFE53E3E), fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
-                    Text("去手机设置 → 应用 → 特殊权限 → 使用情况访问 → 允许 CoupleTracker",
+                    Text("去手机设置 → 应用 → 特殊权限 → 使用情况访问 → 允许 小世界",
                         fontSize = 11.sp, color = Color(0xFF718096))
                 }
             } else if (subjectIsMe && fgPkg.isEmpty()) {

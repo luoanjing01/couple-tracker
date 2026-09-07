@@ -65,11 +65,12 @@ fun StatsScreen() {
         }
         loading = true; loadError = null
         withContext(Dispatchers.IO) {
-            val (gte, lt) = dateRangeFor(dayOffset)
+            // 不用 and(gte,lt) 语法（PostgREST 会 400），直接拉全部再客户端过滤
             val resp = runCatching {
-                NetworkModule.restService.getAppUsageInRange(
+                NetworkModule.restService.getAppUsage(
                     userId = "eq.$targetId",
-                    createdAtFilter = "and($gte,$lt)"
+                    order = "created_at.desc",
+                    limit = 1000
                 )
             }
             val r = resp.getOrNull()
@@ -83,8 +84,14 @@ fun StatsScreen() {
                     rows = emptyList()
                 }
                 else -> {
-                    // 过滤系统噪音（桌面/输入法等）
-                    rows = (r.body() ?: emptyList()).filter { !isStatsNoise(it.package_name) }
+                    val zone = ZoneId.systemDefault()
+                    val targetDate = LocalDate.now(zone).minusDays(dayOffset.toLong())
+                    // 客户端按日期过滤 + 过滤系统噪音
+                    rows = (r.body() ?: emptyList()).filter { row ->
+                        !isStatsNoise(row.package_name) && runCatching {
+                            java.time.Instant.parse(row.created_at).atZone(zone).toLocalDate() == targetDate
+                        }.getOrDefault(false)
+                    }
                 }
             }
             loading = false
@@ -134,7 +141,7 @@ fun StatsScreen() {
             .padding(horizontal = 16.dp, vertical = 18.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("📊 每日统计", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+            Text("🌍 每日统计", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
             Spacer(Modifier.weight(1f))
             TextButton(onClick = { reloadKey++ }) {
                 Text("🔄 刷新", color = blue, fontSize = 13.sp)
@@ -432,14 +439,6 @@ private data class AppStat(
     val category: String,
     val totalSeconds: Int
 )
-
-private fun dateRangeFor(dayOffset: Int): Pair<String, String> {
-    val zone = ZoneId.systemDefault()
-    val date = LocalDate.now(zone).minusDays(dayOffset.toLong())
-    val start = date.atStartOfDay(zone).toInstant().toString()
-    val end = date.plusDays(1).atStartOfDay(zone).toInstant().toString()
-    return "gte." + start to "lt." + end
-}
 
 private fun dateLabel(dayOffset: Int): String = when (dayOffset) {
     0 -> "今日"

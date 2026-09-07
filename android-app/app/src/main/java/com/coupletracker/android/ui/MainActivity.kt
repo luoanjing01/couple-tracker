@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
         val icon: @Composable () -> Unit
     ) {
         MAP("/map",   "地图", { Text("🗺️", fontSize = 20.sp) }),
-        APPS("/apps", "应用", { Text("📱", fontSize = 20.sp) }),
+        APPS("/apps", "应用", { Text("🌐", fontSize = 20.sp) }),
         STATS("/stats","统计",{ Text("📊", fontSize = 20.sp) }),
         ME("/me",     "我的", { Text("👤", fontSize = 20.sp) })
     }
