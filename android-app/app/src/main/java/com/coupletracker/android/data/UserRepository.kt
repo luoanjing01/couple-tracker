@@ -97,11 +97,11 @@ class UserRepository private constructor(private val context: Context) {
         }
     }
 
-    /** 已登录 = 有合法 JWT token 且有 user 信息
+    /** 已登录 = 有 user 信息（token 可为 null，因为 RPC 认证不需要 JWT）
      *  旧版本残留的假 token（如 "rpc_auth_xxx"）会被清洗 */
     suspend fun isLoggedIn(): Boolean {
         sanitizeToken()
-        return getToken() != null && getUser() != null
+        return getUser() != null
     }
     suspend fun logout() { setToken(null); setUser(null) }
 

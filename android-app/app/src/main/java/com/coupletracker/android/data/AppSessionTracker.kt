@@ -1,4 +1,4 @@
-﻿package com.coupletracker.android.data
+package com.coupletracker.android.data
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +37,7 @@ object AppSessionTracker {
     private val _lastReportStatus = MutableStateFlow("等待上报...")
     val lastReportStatus = _lastReportStatus.asStateFlow()
 
-    /** 设置当前 APP —— 同时触发 UI 层上报（双保险） */
+    /** 设置当前 APP —— 只负责 UI 显示和 APP 切换时补报，不做定时上报（避免和后台双报） */
     fun setCurrentApp(pkg: String, name: String) {
         if (pkg.isEmpty()) return
         
@@ -56,14 +56,8 @@ object AppSessionTracker {
         } else {
             _currentName.value = name
         }
-        
-        // 每 15 秒定时上报当前 APP（UI 层双保险）
-        val now = System.currentTimeMillis()
-        if (now - sessionReportAt >= 15_000L) {
-            val sec = ((now - sessionReportAt) / 1000).toInt().coerceAtLeast(1)
-            sessionReportAt = now
-            uploadUsage(pkg, name.ifBlank { pkg }, sec)
-        }
+        // ❌ 不做定时上报 —— 后台 AppUsageMonitor 每 15 秒已经在上报了
+        // 之前这里也每 15 秒上报 → 和后台双报 → 时长翻倍！
     }
 
     fun sessionSeconds(): Int {

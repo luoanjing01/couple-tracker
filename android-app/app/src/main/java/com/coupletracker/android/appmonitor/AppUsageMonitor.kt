@@ -1,4 +1,4 @@
-﻿package com.coupletracker.android.appmonitor
+package com.coupletracker.android.appmonitor
 
 import android.app.AppOpsManager
 import android.app.usage.UsageEvents
@@ -6,6 +6,7 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.os.PowerManager
 import android.os.Process
 import com.coupletracker.android.data.AppUsageRow
 import com.coupletracker.android.data.NetworkModule
@@ -23,11 +24,17 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
 
     private val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
     private val pm = context.packageManager
+    private val powerMgr = context.getSystemService(Context.POWER_SERVICE) as PowerManager
     private var job: Job? = null
     private var lastPackage: String = ""
     private var lastReportAt: Long = 0L
     /** 累计使用时长（毫秒），从当前 APP 打开开始算，APP 切换就重置 */
     private var sessionStartAt: Long = 0L
+    /** 熄屏时累计暂停的时间，恢复后扣除 */
+    private var screenOffSince: Long = 0L
+    /** 当前是否熄屏 */
+    var isScreenOn: Boolean = true
+        private set
 
     private val _currentApp = MutableStateFlow<Pair<String, String>?>(null)
     val currentApp = _currentApp.asStateFlow()
@@ -69,6 +76,23 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
     private fun checkAndReport() {
         if (!hasUsagePermission()) return
         val now = System.currentTimeMillis()
+
+        // ===== 屏幕状态检测 =====
+        val screenOn = powerMgr.isInteractive
+        isScreenOn = screenOn
+        if (!screenOn) {
+            // 熄屏 → 记录熄屏开始时间，暂停计时，不上报
+            if (screenOffSince == 0L) screenOffSince = now
+            _currentSessionSeconds.tryEmit(0)
+            return
+        }
+        // 亮屏 → 如果刚从熄屏恢复，把熄屏期间的时间扣掉
+        if (screenOffSince > 0L && sessionStartAt > 0L) {
+            // 把 sessionStartAt 往后移（相当于跳过熄屏时间）
+            sessionStartAt += (now - screenOffSince)
+            screenOffSince = 0L
+        }
+
         val fg = getForegroundPackage() ?: return
         if (fg.isEmpty()) return
 
@@ -87,12 +111,12 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
             _currentSessionSeconds.tryEmit(0)
         }
 
-        // 实时更新累计秒数
+        // 实时更新累计秒数（只算亮屏时间）
         if (sessionStartAt > 0) {
             _currentSessionSeconds.tryEmit(((now - sessionStartAt) / 1000).toInt())
         }
 
-        // 每 15 秒上报一次当前 APP 的使用时长
+        // 每 15 秒上报一次当前 APP 的使用时长（仅亮屏时）
         if (now - lastReportAt >= 15_000L) {
             val elapsedSeconds = ((now - lastReportAt) / 1000).toInt().coerceAtLeast(1)
             lastReportAt = now

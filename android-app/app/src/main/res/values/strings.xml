@@ -1,11 +1,11 @@
 <resources>
-    <string name="app_name">🌍 小世界</string>
+    <string name="app_name">小世界</string>
 
     <!-- 前台服务通知 -->
     <string name="tracker_channel_id">couple_tracker_service</string>
-    <string name="tracker_channel_name">🌍 小世界服务</string>
+    <string name="tracker_channel_name">小世界服务</string>
     <string name="tracker_channel_desc">持续同步位置和应用使用情况</string>
-    <string name="tracker_notif_title">🌍 小世界正在运行</string>
+    <string name="tracker_notif_title">小世界正在运行</string>
     <string name="tracker_notif_text">位置 · 应用使用 · 移动轨迹 实时同步</string>
 
     <!-- 权限说明 -->

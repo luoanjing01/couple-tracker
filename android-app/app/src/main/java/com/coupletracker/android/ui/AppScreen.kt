@@ -1,4 +1,4 @@
-﻿package com.coupletracker.android.ui
+package com.coupletracker.android.ui
 
 import android.app.AppOpsManager
 import android.content.BroadcastReceiver
@@ -14,6 +14,7 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.Process
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -101,7 +102,7 @@ fun AppScreen() {
     ) {
         // ---- 顶部标题 + 切换 ----
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("🌐 应用动态", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+            Text("应用动态", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { reloadKey++ }) {
                 Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = Color(0xFF667EEA))
@@ -191,6 +192,8 @@ private fun CurrentAppCard(
 
     // ✅ 自己的累计时长直接读 AppSessionTracker 单例（进程存活就不丢）
     var sessionSeconds by remember { mutableStateOf(0) }
+    // 熄屏状态
+    var screenOn by remember { mutableStateOf(true) }
 
     // 远端查 TA 的（60 秒精度）
     var remoteAppName by remember { mutableStateOf("") }
@@ -198,25 +201,32 @@ private fun CurrentAppCard(
     var remoteSeconds by remember { mutableStateOf(0) }
     var remoteUpdateAt by remember { mutableStateOf(0L) }
 
-    // 自己：每 3 秒查一次前台 APP 名字 + 时长
+    // 自己：每 3 秒查一次前台 APP 名字 + 时长 + 屏幕状态
     LaunchedEffect(subjectIsMe, reloadKey) {
         if (subjectIsMe) {
             if (!subjectHasPermission) return@LaunchedEffect
+            val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
             while (isActive) {
-                runCatching {
-                    val current = queryForegroundApp(ctx)
-                    if (current != null && current.first.isNotEmpty()) {
-                        val (pkg, name) = current
-                        val cat = categoryOf(ctx, pkg)
-                        if (pkg != fgPkg) {
-                            fgPkg = pkg; fgName = name; fgCategory = cat
-                        } else {
-                            fgName = name
+                screenOn = pm.isInteractive
+                if (screenOn) {
+                    runCatching {
+                        val current = queryForegroundApp(ctx)
+                        if (current != null && current.first.isNotEmpty()) {
+                            val (pkg, name) = current
+                            val cat = categoryOf(ctx, pkg)
+                            if (pkg != fgPkg) {
+                                fgPkg = pkg; fgName = name; fgCategory = cat
+                            } else {
+                                fgName = name
+                            }
+                            // ✅ 写入单例 + 读秒数
+                            AppSessionTracker.setCurrentApp(pkg, name)
+                            sessionSeconds = AppSessionTracker.sessionSeconds()
                         }
-                        // ✅ 写入单例 + 读秒数
-                        AppSessionTracker.setCurrentApp(pkg, name)
-                        sessionSeconds = AppSessionTracker.sessionSeconds()
                     }
+                } else {
+                    // 熄屏 → 清空当前正在玩
+                    fgPkg = ""; fgName = ""; sessionSeconds = 0
                 }
                 delay(3000)
             }
@@ -252,7 +262,7 @@ private fun CurrentAppCard(
     ) {
         Column(Modifier.padding(20.dp)) {
             Text(
-                if (subjectIsMe) "🌍 正在玩" else "🌍 $subjectName 正在玩",
+                if (subjectIsMe) "正在玩" else "$subjectName 正在玩",
                 fontSize = 12.sp, color = Color(0xFF718096)
             )
             Spacer(Modifier.height(12.dp))
@@ -264,6 +274,13 @@ private fun CurrentAppCard(
                     Spacer(Modifier.height(4.dp))
                     Text("去手机设置 → 应用 → 特殊权限 → 使用情况访问 → 允许 小世界",
                         fontSize = 11.sp, color = Color(0xFF718096))
+                }
+            } else if (subjectIsMe && !screenOn) {
+                // 熄屏状态
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Text("🌙", fontSize = 36.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("${subjectName} 熄屏中", fontSize = 15.sp, color = Color(0xFF805AD5), fontWeight = FontWeight.SemiBold)
                 }
             } else if (subjectIsMe && fgPkg.isEmpty()) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
@@ -329,6 +346,7 @@ private fun PhoneStatusCard(
     var isCharging by remember { mutableStateOf(false) }
     var networkType by remember { mutableStateOf("") }
     var online by remember { mutableStateOf(true) }
+    var screenOn by remember { mutableStateOf(true) }
 
     // TA 的最新位置（拿 battery_level + created_at 判断在线状态）
     var taBattery by remember { mutableStateOf<Int?>(null) }
@@ -347,6 +365,8 @@ private fun PhoneStatusCard(
             batteryPct = getBatteryPct(ctx)
             isCharging = getBatteryCharging(ctx)
             networkType = getNetworkType(ctx)
+            val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+            screenOn = pm.isInteractive
 
             // 注册电量变化监听
             val batteryReceiver = object : BroadcastReceiver() {
@@ -357,6 +377,21 @@ private fun PhoneStatusCard(
             }
             val batteryFilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
             ctx.registerReceiver(batteryReceiver, batteryFilter)
+
+            // 熄屏/亮屏监听
+            val screenReceiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    when (intent?.action) {
+                        Intent.ACTION_SCREEN_OFF -> screenOn = false
+                        Intent.ACTION_SCREEN_ON -> screenOn = true
+                    }
+                }
+            }
+            val screenFilter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            }
+            ctx.registerReceiver(screenReceiver, screenFilter)
 
             // 网络变化监听
             val connMgr = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -381,6 +416,7 @@ private fun PhoneStatusCard(
             // 清理
             while (isActive) { delay(30_000) }
             runCatching { ctx.unregisterReceiver(batteryReceiver) }
+            runCatching { ctx.unregisterReceiver(screenReceiver) }
             runCatching { connMgr.unregisterNetworkCallback(netCallback) }
         }
     }
@@ -440,7 +476,7 @@ private fun PhoneStatusCard(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // 状态：开机 / 充电中 / 离线(可能关机) — label 统一叫"状态"
+            // 状态：开机 / 熄屏 / 充电中 / 离线(可能关机) — label 统一叫"状态"
             val statusIcon: String
             val statusValue: String
             val statusAccent: Color
@@ -449,6 +485,11 @@ private fun PhoneStatusCard(
                     statusIcon = "🔴"
                     statusValue = "关机"
                     statusAccent = Color(0xFFE53E3E)
+                }
+                !screenOn -> {
+                    statusIcon = "🌙"
+                    statusValue = "熄屏"
+                    statusAccent = Color(0xFF805AD5)
                 }
                 charging -> {
                     statusIcon = "🔌"

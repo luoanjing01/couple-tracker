@@ -116,12 +116,8 @@ class LoginActivity : ComponentActivity() {
                     .padding(horizontal = 28.dp, vertical = 36.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("🌍", fontSize = 72.sp)
-                Spacer(Modifier.height(8.dp))
                 Text("小世界", fontSize = 32.sp,
                     color = Color.White, fontWeight = FontWeight.Bold)
-                Text("实时位置 · APP使用 · 每日陪伴",
-                    color = Color.White.copy(alpha = 0.85f), fontSize = 14.sp)
                 Spacer(Modifier.height(30.dp))
 
                 // 模式切换
