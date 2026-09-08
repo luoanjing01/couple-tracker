@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
                             Tab.MAP   -> PlaceholderScreen(
                                 icon = { Text("🗺️", fontSize = 40.sp) },
                                 title = "实时地图",
-                                desc = "地图页面已接入 💕\n\n当前功能状态：\n✅ 位置已采集（后台按设置频率上报到云端）\n✅ 云端已保存所有位置记录\n✅ 两台手机同一个账号配对后即可互相查看\n✅ 已支持 WebView 本地地图 + Supabase 实时同步",
+                                desc = "地图页面已接入\n\n当前功能状态：\n✅ 位置已采集（后台按设置频率上报到云端）\n✅ 云端已保存所有位置记录\n✅ 两台手机同一个账号配对后即可互相查看\n✅ 已支持 WebView 本地地图 + Supabase 实时同步",
                                 accent = Color(0xFFE75480),
                                 useMapWebView = true
                             )
@@ -180,7 +180,12 @@ class MainActivity : ComponentActivity() {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
-                        WebView(ctx).apply {
+                        // ✅ 缓存 WebView：切 Tab 回来不重新加载页面，保持实时轮询
+                        val cached = this@MainActivity.webView
+                        if (cached != null && cached.parent != null) {
+                            (cached.parent as? android.view.ViewGroup)?.removeView(cached)
+                        }
+                        cached ?: WebView(ctx).apply {
                             // ✅ 显式 LayoutParams：Compose AndroidView 有时不会自动给 match_parent
                             layoutParams = android.view.ViewGroup.LayoutParams(
                                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
@@ -277,13 +282,14 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             this@MainActivity.webView = this
-                        }
+                        }   // end: cached ?: WebView(ctx).apply { ... }
                     },
                     update = { wv ->
                         // 🚨 Tab 切换回来时（PlaceholderScreen 重组会触发 update）
                         //    ① 重新注入用户信息：防止刚登录/刚配对后切回地图页，前端仍用旧数据
                         //    ② 踢一下地图尺寸：防止 WebView 在后台状态中尺寸被清零
-                        val js = buildInjectionJs() + "; try{ var m = (typeof map !== 'undefined' && map); if (m) { m.invalidateSize(true); setTimeout(function(){m.invalidateSize(true);},300);} } catch(e){}"
+                        //    ③ 触发前端立即刷新位置：不等待下次轮询
+                        val js = buildInjectionJs() + "; try{ var m = (typeof map !== 'undefined' && map); if (m) { m.invalidateSize(true); setTimeout(function(){m.invalidateSize(true);},300);} } catch(e){} try{ if(typeof poll==='function') poll(); } catch(e){}"
                         runCatching { wv.evaluateJavascript(js, null) }
                     }
                 )

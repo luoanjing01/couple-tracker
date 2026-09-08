@@ -71,7 +71,11 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         }
 
         // —— 第一步：启动时立刻读取 lastKnownLocation（所有provider，取最新），force 上报 ——
-        runCatching { pickBestLastKnown() }.getOrNull()?.let { report(it, force = true) }
+        //    但如果超过 2 分钟就跳过（避免显示几小时前的旧位置）
+        runCatching { pickBestLastKnown() }.getOrNull()?.let {
+            val age = System.currentTimeMillis() - it.time
+            if (age < 120_000L) report(it, force = true)
+        }
 
         // —— 第二步：订阅 GPS_PROVIDER 定期更新（高精度室外）——
         if (providersEnabled.contains(LocationManager.GPS_PROVIDER)) {
@@ -144,7 +148,7 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         if (!force && lastLocation != null) {
             val delta = now - lastReportAt
             val moved = loc.distanceTo(lastLocation!!)
-            if (delta < 3000 && moved < 5f) return   // 3秒内移动不足5米 → 省电跳过
+            if (delta < 2000 && moved < 3f) return   // 2秒内移动不足3米 → 省电跳过
         }
         lastLocation = loc; lastReportAt = now
         val isMoving = (loc.hasSpeed() && loc.speed > 0.5f)

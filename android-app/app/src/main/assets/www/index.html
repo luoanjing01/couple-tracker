@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>情侣地图 💕</title>
+<title>小世界 · 地图</title>
 
 <!-- ============================================================
      ✅ Leaflet CSS：本地文件！彻底消除 CDN 被墙风险
@@ -35,6 +35,9 @@
   .warn-card{position:absolute;top:72px;left:10px;right:10px;z-index:499;border-radius:10px;padding:8px 10px;font-size:11px;line-height:1.4;}
   .warn-red{background:rgba(254,215,215,0.95);color:#742a2a;}
   .warn-yellow{background:rgba(254,235,200,0.95);color:#744210;}
+  /* 图层切换按钮 */
+  .layer-btn{position:absolute;bottom:80px;right:12px;z-index:500;background:rgba(255,255,255,0.96);border-radius:24px;padding:8px 14px;box-shadow:0 4px 16px rgba(0,0,0,0.15);font-size:13px;font-weight:600;color:#2d3748;cursor:pointer;user-select:none;border:2px solid #e75480;}
+  .layer-btn:active{transform:scale(0.95);}
 </style>
 </head>
 <body>
@@ -43,7 +46,7 @@
 <div class="topbar">
   <div class="row">
     <div>
-      <div class="nick" id="nickRow">💕 情侣地图</div>
+      <div class="nick" id="nickRow">小世界 · 地图</div>
       <div class="meta" id="metaRow">正在初始化...</div>
     </div>
     <div>
@@ -57,8 +60,8 @@
   <div id="loadingMain">正在加载地图 🗺️...</div>
   <div class="sub" id="loadingSub">本地加载只需 1-2 秒，请稍候</div>
 </div>
-<!-- 🔴 调试面板：永远可见，不被隐藏 -->
-<div id="debugBox" style="position:absolute;bottom:70px;left:10px;z-index:9998;background:rgba(255,255,255,0.96);border:1px solid #e75480;border-radius:10px;padding:8px 10px;font-family:monospace;font-size:11px;line-height:1.6;color:#2d3748;box-shadow:0 4px 16px rgba(0,0,0,0.1);max-width:90%;"></div>
+<!-- 🔴 调试面板：默认隐藏（display:none），开发时手动改 display:block -->
+<div id="debugBox" style="position:absolute;bottom:70px;left:10px;z-index:9998;background:rgba(255,255,255,0.96);border:1px solid #e75480;border-radius:10px;padding:8px 10px;font-family:monospace;font-size:11px;line-height:1.6;color:#2d3748;box-shadow:0 4px 16px rgba(0,0,0,0.1);max-width:90%;display:none;"></div>
 
 <!-- ============================================================
      ✅ Leaflet JS：本地文件！绝对不请求外部 CDN
@@ -198,6 +201,34 @@ var map;
 var lastFetchHint = '';
 var lastRestCount = 0;
 
+// ===== 图层切换全局变量 =====
+var __tileSources = [
+  // ① 高德地图中文路网：HTTPS，能看到路名和店名，默认用这个
+  { name: '街道图', label: '🛰️ 卫星', url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图' },
+  // ② ArcGIS 卫星图：全球卫星图
+  { name: '卫星图', label: '🛰️ 卫星', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', sub: '', attrs: '&copy; Esri, Maxar, Earthstar Geographics' },
+  // ③ CartoDB 路网图：兜底
+  { name: 'CartoDB', label: '🛰️ 卫星', url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', sub: 'abcd', attrs: '&copy; OpenStreetMap &copy; CARTO' }
+];
+var __tileLayer = null;
+var __tileIdx = 0;   // 当前图层索引，0=街道图
+
+function switchTileLayer() {
+  if (!map) return;
+  __tileIdx = (__tileIdx + 1) % __tileSources.length;
+  loadTileLayer(__tileIdx, true);
+  updateLayerBtn();
+}
+function updateLayerBtn() {
+  var btn = document.getElementById('layerBtn');
+  if (btn) {
+    var src = __tileSources[__tileIdx];
+    // 按钮文字：当前是什么图，点击切换到下一个
+    var nextIdx = (__tileIdx + 1) % __tileSources.length;
+    btn.textContent = '切换为' + __tileSources[nextIdx].name;
+  }
+}
+
 /* ✅ 纯离线模式：不加载任何底图瓦片，用 CSS 渐变+网格做背景 */
 
 /* ---- 小工具：短暂闪提示 ---- */
@@ -247,34 +278,20 @@ function initMap() {
     console.log('[CT] map after L.map(): size=', _sz0, ', container w/h=', document.getElementById('map').offsetWidth, document.getElementById('map').offsetHeight);
 
     // ✅ 真实地图瓦片：多图源自动切换（全部 HTTPS，国内可用）
-    //    顺序：ArcGIS 卫星图 → 高德中文地图 → CartoDB 路网
-    //    每个图源独立 tileerror 计数，3次失败自动换下一个
-    var tileSources = [
-      // ① ArcGIS World Imagery：全球卫星图，HTTPS，国内CDN可用，zoom 1-19
-      { name: 'ArcGIS卫星', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', sub: '', attrs: '&copy; Esri, Maxar, Earthstar Geographics' },
-      // ② 高德地图中文路网：HTTPS，subdomains 1/2/3/4
-      { name: '高德地图', url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图' },
-      // ③ CartoDB 路网图：HTTPS，全球覆盖
-      { name: 'CartoDB路网', url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', sub: 'abcd', attrs: '&copy; OpenStreetMap &copy; CARTO' }
-    ];
-    var tileLayer = null;
+    //    默认用高德街道图（能看到路名店名），可点击按钮切卫星图
     var tileFailCount = 0;
-    var tileCurIdx = 0;
 
-    function loadTileLayer(idx) {
-      if (tileLayer) { try { map.removeLayer(tileLayer); } catch(e){} tileLayer = null; }
-      if (idx >= tileSources.length) {
+    function loadTileLayer(idx, manual) {
+      if (__tileLayer) { try { map.removeLayer(__tileLayer); } catch(e){} __tileLayer = null; }
+      if (idx >= __tileSources.length) {
         console.warn('[CT] ⚠️ 所有地图图源都失败了，降级为纯标记模式');
-        // 显示降级提示
-        var box = document.getElementById('debugBox');
-        if (box) box.innerHTML += '<br><span style="color:#c53030">⚠️ 所有地图图源加载失败</span>';
-        tileLayer = null;
+        __tileLayer = null;
         return;
       }
-      var src = tileSources[idx];
+      var src = __tileSources[idx];
       console.log('[CT] 🔄 尝试图源 #' + idx + ': ' + src.name + ' → ' + src.url.replace('{s}','?').replace('{z}/{x}/{y}','?'));
       try {
-        tileLayer = L.tileLayer(src.url, {
+        __tileLayer = L.tileLayer(src.url, {
           subdomains: src.sub || 'a',
           attribution: src.attrs,
           maxZoom: 19,
@@ -283,34 +300,45 @@ function initMap() {
           errorTileUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNTYiIGhlaWdodD0iMjU2Ij48cmVjdCB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgZmlsbD0iI2ZhZmRmZiIvPjwvc3ZnPg=='
         }).addTo(map);
         var _thisIdx = idx;
-        tileLayer.on('tileloadstart', function(){
+        __tileLayer.on('tileloadstart', function(){
           console.log('[CT] 瓦片开始加载 #' + _thisIdx + ' ' + src.name);
         });
-        tileLayer.on('tileload', function(){
+        __tileLayer.on('tileload', function(){
           console.log('[CT] ✅ 瓦片加载成功 #' + _thisIdx + ' ' + src.name);
           tileFailCount = 0;
         });
-        tileLayer.on('tileerror', function(err){
+        __tileLayer.on('tileerror', function(err){
+          // 手动切换的图源失败了 → 不自动切（用户自己选的）
+          if (manual) return;
           tileFailCount++;
           console.warn('[CT] ❌ 瓦片加载失败 #' + _thisIdx + ' ' + src.name + ' (failCount=' + tileFailCount + ')');
           if (tileFailCount >= 5) {
             tileFailCount = 0;
-            tileCurIdx++;
+            __tileIdx++;
             console.warn('[CT] 🔀 切换到下一个图源...');
-            setTimeout(function(){ loadTileLayer(tileCurIdx); }, 400);
+            setTimeout(function(){ loadTileLayer(__tileIdx, false); }, 400);
           }
         });
-        tileLayer.on('load', function(){
+        __tileLayer.on('load', function(){
           console.log('[CT] 🎉 图源 ' + src.name + ' 加载完成！');
           tileFailCount = 0;
         });
       } catch(e) {
         console.error('[CT] ❌ 创建 tileLayer 异常:', e);
-        tileCurIdx++;
-        setTimeout(function(){ loadTileLayer(tileCurIdx); }, 200);
+        if (!manual) { __tileIdx++; setTimeout(function(){ loadTileLayer(__tileIdx, false); }, 200); }
       }
     }
-    loadTileLayer(0);
+    loadTileLayer(__tileIdx, false);
+
+    // ===== 添加图层切换按钮 =====
+    try {
+      var layerBtn = document.createElement('div');
+      layerBtn.id = 'layerBtn';
+      layerBtn.className = 'layer-btn';
+      layerBtn.textContent = '切换为卫星图';
+      layerBtn.onclick = switchTileLayer;
+      (document.body||document.documentElement).appendChild(layerBtn);
+    } catch(e){}
 
     // ✅ WebView 经典修复：容器尺寸在 load 时往往还是 0，导致 Leaflet 以为没有可视区 → 瓦片 0 张 → 全空白
     //    常见现象：整个地图只有 body 粉色背景，什么都不渲染，但没有报错。必须多次调用 invalidateSize() 踢醒
@@ -347,11 +375,11 @@ function initMap() {
     }
     setTimeout(dismissLoading, 1500);  // 兜底 1.5s 后强制关闭
     // 如果瓦片提前加载完 → 提前关闭
-    try { if (tileLayer) tileLayer.on('load', function(){ setTimeout(dismissLoading, 200); }); } catch(e){}
+    try { if (__tileLayer) __tileLayer.on('load', function(){ setTimeout(dismissLoading, 200); }); } catch(e){}
 
     updateTopbar();
     poll();
-    setInterval(poll, 5000);
+    setInterval(poll, 3000);  // 每 3 秒刷新位置（之前5秒太慢）
 
     // ✅ 15秒还没有任何位置数据 → 显示醒目红色排查卡片（之前只有"等待位置"四个字，用户完全不知道怎么办）
     setTimeout(function(){
@@ -384,8 +412,8 @@ function initMap() {
         var currentZoom = 0;
         var curCenter = '—';
         try {
-          if (typeof tileLayer !== 'undefined' && tileLayer) {
-            var container = tileLayer.getContainer();
+          if (__tileLayer) {
+            var container = __tileLayer.getContainer();
             if (container) tileCount = container.querySelectorAll('img.leaflet-tile-loaded').length;
           }
           currentZoom = map.getZoom();
@@ -496,7 +524,7 @@ function fit() {
 }
 
 function updateTopbar() {
-  var nickRow = '💕 情侣地图';
+  var nickRow = '小世界 · 地图';
   var metaRow = '';
   if (me) {
     nickRow = '@'+(me.username||'') + ' · ' + (me.nickname||'');
