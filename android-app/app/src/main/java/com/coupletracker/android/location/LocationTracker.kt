@@ -145,6 +145,23 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
     // ========================================================================
     private fun report(loc: Location, force: Boolean) {
         val now = System.currentTimeMillis()
+
+        // ✅ 精度过滤：防止基站/WiFi 定位偏差几百米导致"定位不对"
+        //    accuracy > 200m 的直接丢弃（除非是启动时的 force 上报且无其他位置）
+        val acc = if (loc.hasAccuracy()) loc.accuracy else 999f
+        if (!force && acc > 200f) {
+            android.util.Log.d("CT-Tracker", "丢弃低精度定位: acc=${acc}m provider=${loc.provider}")
+            return
+        }
+        // 如果已有更准的位置（30秒内），新位置精度差很多则丢弃
+        if (!force && lastLocation != null && lastLocation!!.hasAccuracy()) {
+            val lastAcc = lastLocation!!.accuracy
+            if (acc > lastAcc * 2 && acc > 50f && (now - lastReportAt) < 30_000L) {
+                android.util.Log.d("CT-Tracker", "丢弃退步定位: newAcc=${acc}m vs lastAcc=${lastAcc}m")
+                return
+            }
+        }
+
         if (!force && lastLocation != null) {
             val delta = now - lastReportAt
             val moved = loc.distanceTo(lastLocation!!)

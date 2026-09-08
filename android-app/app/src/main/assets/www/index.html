@@ -35,9 +35,9 @@
   .warn-card{position:absolute;top:72px;left:10px;right:10px;z-index:499;border-radius:10px;padding:8px 10px;font-size:11px;line-height:1.4;}
   .warn-red{background:rgba(254,215,215,0.95);color:#742a2a;}
   .warn-yellow{background:rgba(254,235,200,0.95);color:#744210;}
-  /* 图层切换按钮 */
-  .layer-btn{position:absolute;bottom:80px;right:12px;z-index:500;background:rgba(255,255,255,0.96);border-radius:24px;padding:8px 14px;box-shadow:0 4px 16px rgba(0,0,0,0.15);font-size:13px;font-weight:600;color:#2d3748;cursor:pointer;user-select:none;border:2px solid #e75480;}
-  .layer-btn:active{transform:scale(0.95);}
+  /* 图层切换按钮：右下角（原生采集频率卡片已移到左下角，不再遮挡） */
+  .layer-btn{position:absolute;bottom:90px;right:14px;z-index:500;background:rgba(255,255,255,0.97);border-radius:22px;padding:9px 16px;box-shadow:0 4px 16px rgba(0,0,0,0.2);font-size:13px;font-weight:600;color:#2d3748;cursor:pointer;user-select:none;border:2px solid #e75480;}
+  .layer-btn:active{transform:scale(0.95);background:#fff0f3;}
 </style>
 </head>
 <body>
@@ -202,28 +202,70 @@ var lastFetchHint = '';
 var lastRestCount = 0;
 
 // ===== 图层切换全局变量 =====
+// ① 高德标准路网(style=8)：含路名/店名/建筑，默认
+// ② 高德卫星图(style=6)：高清卫星影像，更新
+// ③ ArcGIS 全球卫星：兜底
 var __tileSources = [
-  // ① 高德地图中文路网：HTTPS，能看到路名和店名，默认用这个
-  { name: '街道图', label: '🛰️ 卫星', url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图' },
-  // ② ArcGIS 卫星图：全球卫星图
-  { name: '卫星图', label: '🛰️ 卫星', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', sub: '', attrs: '&copy; Esri, Maxar, Earthstar Geographics' },
-  // ③ CartoDB 路网图：兜底
-  { name: 'CartoDB', label: '🛰️ 卫星', url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', sub: 'abcd', attrs: '&copy; OpenStreetMap &copy; CARTO' }
+  { name: '街道图', url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图' },
+  { name: '卫星图', url: 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图' },
+  { name: 'ArcGIS', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', sub: '', attrs: '&copy; Esri' }
 ];
 var __tileLayer = null;
-var __tileIdx = 0;   // 当前图层索引，0=街道图
+var __tileIdx = 0;
+var __tileFailCount = 0;
+
+// ✅ loadTileLayer 必须放全局！之前定义在 initMap 内部，
+//    switchTileLayer(全局) 调用时报 ReferenceError → 页面崩溃
+function loadTileLayer(idx, manual) {
+  if (!map) return;
+  // 先移除旧图层
+  if (__tileLayer) { try { map.removeLayer(__tileLayer); } catch(e){} __tileLayer = null; }
+  // 索引越界 → 全部失败，降级为无瓦片模式
+  if (idx < 0 || idx >= __tileSources.length) {
+    console.warn('[CT] ⚠️ 所有图源都失败，降级为纯标记模式');
+    return;
+  }
+  var src = __tileSources[idx];
+  __tileIdx = idx;
+  console.log('[CT] 🔄 加载图源 #' + idx + ': ' + src.name);
+  try {
+    __tileLayer = L.tileLayer(src.url, {
+      subdomains: src.sub || 'a',
+      attribution: src.attrs,
+      maxZoom: 19, minZoom: 1,
+      crossOrigin: true
+    }).addTo(map);
+    var _thisIdx = idx;
+    __tileLayer.on('tileerror', function(){
+      if (manual) return;   // 手动选的图源失败不自动切
+      __tileFailCount++;
+      if (__tileFailCount >= 5) {
+        __tileFailCount = 0;
+        var next = (_thisIdx + 1) % __tileSources.length;
+        console.warn('[CT] 🔀 图源' + src.name + '多次失败，切换到 ' + __tileSources[next].name);
+        setTimeout(function(){ loadTileLayer(next, false); }, 300);
+      }
+    });
+    __tileLayer.on('tileload', function(){ __tileFailCount = 0; });
+  } catch(e) {
+    console.error('[CT] ❌ 创建图层异常:', e);
+    if (!manual) {
+      var next = (idx + 1) % __tileSources.length;
+      setTimeout(function(){ loadTileLayer(next, false); }, 200);
+    }
+  }
+  updateLayerBtn();
+}
 
 function switchTileLayer() {
   if (!map) return;
-  __tileIdx = (__tileIdx + 1) % __tileSources.length;
-  loadTileLayer(__tileIdx, true);
-  updateLayerBtn();
+  __tileFailCount = 0;
+  var next = (__tileIdx + 1) % __tileSources.length;
+  loadTileLayer(next, true);
 }
 function updateLayerBtn() {
   var btn = document.getElementById('layerBtn');
   if (btn) {
-    var src = __tileSources[__tileIdx];
-    // 按钮文字：当前是什么图，点击切换到下一个
     var nextIdx = (__tileIdx + 1) % __tileSources.length;
     btn.textContent = '切换为' + __tileSources[nextIdx].name;
   }
@@ -279,55 +321,7 @@ function initMap() {
 
     // ✅ 真实地图瓦片：多图源自动切换（全部 HTTPS，国内可用）
     //    默认用高德街道图（能看到路名店名），可点击按钮切卫星图
-    var tileFailCount = 0;
-
-    function loadTileLayer(idx, manual) {
-      if (__tileLayer) { try { map.removeLayer(__tileLayer); } catch(e){} __tileLayer = null; }
-      if (idx >= __tileSources.length) {
-        console.warn('[CT] ⚠️ 所有地图图源都失败了，降级为纯标记模式');
-        __tileLayer = null;
-        return;
-      }
-      var src = __tileSources[idx];
-      console.log('[CT] 🔄 尝试图源 #' + idx + ': ' + src.name + ' → ' + src.url.replace('{s}','?').replace('{z}/{x}/{y}','?'));
-      try {
-        __tileLayer = L.tileLayer(src.url, {
-          subdomains: src.sub || 'a',
-          attribution: src.attrs,
-          maxZoom: 19,
-          minZoom: 1,
-          crossOrigin: true,
-          errorTileUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNTYiIGhlaWdodD0iMjU2Ij48cmVjdCB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgZmlsbD0iI2ZhZmRmZiIvPjwvc3ZnPg=='
-        }).addTo(map);
-        var _thisIdx = idx;
-        __tileLayer.on('tileloadstart', function(){
-          console.log('[CT] 瓦片开始加载 #' + _thisIdx + ' ' + src.name);
-        });
-        __tileLayer.on('tileload', function(){
-          console.log('[CT] ✅ 瓦片加载成功 #' + _thisIdx + ' ' + src.name);
-          tileFailCount = 0;
-        });
-        __tileLayer.on('tileerror', function(err){
-          // 手动切换的图源失败了 → 不自动切（用户自己选的）
-          if (manual) return;
-          tileFailCount++;
-          console.warn('[CT] ❌ 瓦片加载失败 #' + _thisIdx + ' ' + src.name + ' (failCount=' + tileFailCount + ')');
-          if (tileFailCount >= 5) {
-            tileFailCount = 0;
-            __tileIdx++;
-            console.warn('[CT] 🔀 切换到下一个图源...');
-            setTimeout(function(){ loadTileLayer(__tileIdx, false); }, 400);
-          }
-        });
-        __tileLayer.on('load', function(){
-          console.log('[CT] 🎉 图源 ' + src.name + ' 加载完成！');
-          tileFailCount = 0;
-        });
-      } catch(e) {
-        console.error('[CT] ❌ 创建 tileLayer 异常:', e);
-        if (!manual) { __tileIdx++; setTimeout(function(){ loadTileLayer(__tileIdx, false); }, 200); }
-      }
-    }
+    //    loadTileLayer 已移到全局作用域（修复 switchTileLayer 作用域崩溃问题）
     loadTileLayer(__tileIdx, false);
 
     // ===== 添加图层切换按钮 =====
@@ -338,6 +332,7 @@ function initMap() {
       layerBtn.textContent = '切换为卫星图';
       layerBtn.onclick = switchTileLayer;
       (document.body||document.documentElement).appendChild(layerBtn);
+      updateLayerBtn();
     } catch(e){}
 
     // ✅ WebView 经典修复：容器尺寸在 load 时往往还是 0，导致 Leaflet 以为没有可视区 → 瓦片 0 张 → 全空白

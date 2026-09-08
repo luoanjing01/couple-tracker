@@ -293,11 +293,11 @@ class MainActivity : ComponentActivity() {
                         runCatching { wv.evaluateJavascript(js, null) }
                     }
                 )
-                // 右下角悬浮卡片：显示采集频率，避免遮挡地图关键区域
+                // 左下角悬浮卡片：显示采集频率（移到左边避免遮挡右下角图层切换按钮）
                 Column(
                     Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 14.dp, bottom = 18.dp)
+                        .align(Alignment.BottomStart)
+                        .padding(start = 14.dp, bottom = 18.dp)
                 ) {
                     Card(
                         shape = RoundedCornerShape(14.dp),
