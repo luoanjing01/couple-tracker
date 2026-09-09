@@ -25,12 +25,12 @@ data class UserInfo(
     @SerializedName("coupleCode")
     val coupleCode: String? = null,
     @SerializedName("createdAt")
-    val createdAt: String? = null
+    val createdAt: String? = null,
+    @SerializedName("partner_id")
+    val partnerId: String? = null
 ) {
     val displayName: String get() = nickname.ifBlank { username }
     val color: String get() = if (gender == "female") "#FF6B9D" else "#4C9AFF"
-    @SerializedName("partner_id")
-    val partnerId: String? = null
 }
 
 data class CoupleInfo(
