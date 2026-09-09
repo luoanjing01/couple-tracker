@@ -195,7 +195,8 @@ class MainActivity : ComponentActivity() {
                             setBackgroundColor(0x00000000) // 透明背景，避免 WebView 默认白色闪烁
                             overScrollMode = android.view.View.OVER_SCROLL_NEVER
                             isScrollContainer = false
-
+                            // ✅ 平板闪退修复：硬件加速渲染 + 渲染进程崩溃保护
+                            setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
 
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
@@ -238,6 +239,18 @@ class MainActivity : ComponentActivity() {
                                             runCatching { view.evaluateJavascript("(function(){try{window.__applyAndroidInjection&&window.__applyAndroidInjection();}catch(e){}})();", null) }
                                         }, 120)
                                     }
+                                }
+
+                                // ✅ 平板闪退修复：WebView 渲染进程崩溃时不杀 App，返回 true 让系统处理
+                                override fun onRenderProcessGone(
+                                    view: WebView?,
+                                    detail: android.webkit.RenderProcessGoneDetail?
+                                ): Boolean {
+                                    android.util.Log.e("CT-WebView", "渲染进程崩溃 didCrash=${detail?.didCrash()}")
+                                    // 返回 true 表示我们自己处理，避免 App 跟着崩溃
+                                    // 清除缓存的 WebView，下次进入地图时重建
+                                    this@MainActivity.webView = null
+                                    return true
                                 }
                             }
                             val webViewRef = this
