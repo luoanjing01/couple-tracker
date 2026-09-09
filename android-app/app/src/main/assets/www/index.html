@@ -254,8 +254,7 @@ function gcj2wgs(lat, lng) {
 // gcj02: true=该图源使用GCJ-02坐标系(需转换), false=WGS-84(不需要转)
 var __tileSources = [
   { name: '街道图', url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图', gcj02: true },
-  { name: '卫星图', url: 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图', gcj02: true },
-  { name: 'ArcGIS', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', sub: '', attrs: '&copy; Esri', gcj02: false }
+  { name: '卫星图', url: 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图', gcj02: true }
 ];
 var __tileLayer = null;
 var __tileIdx = 0;
