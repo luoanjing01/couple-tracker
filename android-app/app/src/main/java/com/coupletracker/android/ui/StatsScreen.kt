@@ -44,14 +44,28 @@ fun StatsScreen() {
 
     LaunchedEffect(myCode, myId) {
         partnerId = null; partnerName = ""; partnerLoaded = false
-        if (myCode.isBlank()) { partnerLoaded = true; return@LaunchedEffect }
-        withContext(Dispatchers.IO) {
-            runCatching {
-                NetworkModule.restService.getProfile(coupleCode = myCode)
-            }.getOrNull()?.body()?.filter { it.id != myId }?.firstOrNull()?.let { p ->
-                partnerId = p.id
-                partnerName = p.nickname.ifBlank { p.username }
+        val myPartnerId = user?.partnerId
+        if (myPartnerId?.isNotBlank() == true) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    NetworkModule.restService.getProfile(id = myPartnerId)
+                }.getOrNull()?.body()?.firstOrNull()?.let { p ->
+                    partnerId = p.id
+                    partnerName = p.nickname.ifBlank { p.username }
+                }
+                partnerLoaded = true
             }
+        } else if (myCode.isNotBlank()) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    NetworkModule.restService.getProfile(coupleCode = myCode)
+                }.getOrNull()?.body()?.filter { it.id != myId }?.firstOrNull()?.let { p ->
+                    partnerId = p.id
+                    partnerName = p.nickname.ifBlank { p.username }
+                }
+                partnerLoaded = true
+            }
+        } else {
             partnerLoaded = true
         }
     }

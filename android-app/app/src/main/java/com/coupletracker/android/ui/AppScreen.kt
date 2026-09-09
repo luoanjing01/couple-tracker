@@ -75,16 +75,32 @@ fun AppScreen() {
     var reloadKey by remember { mutableStateOf(0) }
 
     // ---- 查配对对方 ----
+    // ✅ 优先用 partner_id 查（配对码不再共享，每个人有独立码）
+    //    兼容旧数据：没 partner_id 的用 couple_code 查
     LaunchedEffect(myCode, myId) {
         partnerId = null; partnerName = ""; partnerLoaded = false
-        if (myCode.isBlank()) { partnerLoaded = true; return@LaunchedEffect }
-        withContext(Dispatchers.IO) {
-            runCatching {
-                NetworkModule.restService.getProfile(coupleCode = myCode)
-            }.getOrNull()?.body()?.filter { it.id != myId }?.firstOrNull()?.let { p ->
-                partnerId = p.id
-                partnerName = p.nickname.ifBlank { p.username }
+        val myPartnerId = user?.partnerId
+        if (myPartnerId?.isNotBlank() == true) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    NetworkModule.restService.getProfile(id = myPartnerId)
+                }.getOrNull()?.body()?.firstOrNull()?.let { p ->
+                    partnerId = p.id
+                    partnerName = p.nickname.ifBlank { p.username }
+                }
+                partnerLoaded = true
             }
+        } else if (myCode.isNotBlank()) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    NetworkModule.restService.getProfile(coupleCode = myCode)
+                }.getOrNull()?.body()?.filter { it.id != myId }?.firstOrNull()?.let { p ->
+                    partnerId = p.id
+                    partnerName = p.nickname.ifBlank { p.username }
+                }
+                partnerLoaded = true
+            }
+        } else {
             partnerLoaded = true
         }
     }
@@ -261,8 +277,15 @@ private fun CurrentAppCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(Modifier.padding(20.dp)) {
+            // ✅ 30分钟无活动 → 标题显示"正在休息"
+            val now = System.currentTimeMillis()
+            val isIdle30min = if (subjectIsMe) {
+                !screenOn || fgPkg.isEmpty()
+            } else {
+                remoteUpdateAt == 0L || (now - remoteUpdateAt) > 30 * 60 * 1000
+            }
             Text(
-                if (subjectIsMe) "正在玩" else "$subjectName 正在玩",
+                if (isIdle30min) (if (subjectIsMe) "正在休息" else "$subjectName 正在休息") else (if (subjectIsMe) "正在玩" else "$subjectName 正在玩"),
                 fontSize = 12.sp, color = Color(0xFF718096)
             )
             Spacer(Modifier.height(12.dp))
@@ -283,6 +306,13 @@ private fun CurrentAppCard(
                     Text("${subjectName} 熄屏中", fontSize = 15.sp, color = Color(0xFF805AD5), fontWeight = FontWeight.SemiBold)
                 }
             } else if (subjectIsMe && fgPkg.isEmpty()) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Text("💤", fontSize = 36.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("${subjectName} 正在休息", fontSize = 15.sp, color = Color(0xFF718096), fontWeight = FontWeight.SemiBold)
+                }
+            } else if (!subjectIsMe && isIdle30min) {
+                // TA 30分钟无活动 → 正在休息
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("💤", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))

@@ -373,6 +373,7 @@ class LoginActivity : ComponentActivity() {
                 val pGender     = str("gender", "f5")
                 val pCoupleCode = str("couple_code", "f6")
                 val pCoupleId   = strN("couple_id", "f7")
+                val pPartnerId  = strN("partner_id", "f8")
 
                 // ✅ RLS 全放开，anon key 就能读写所有表，根本不需要 JWT token！
                 // 这里千万不能存假 token → NetworkModule 拦截器会带上 Authorization: Bearer 头，
@@ -393,7 +394,8 @@ class LoginActivity : ComponentActivity() {
                         nickname = finalNickname,
                         gender = finalGender,
                         avatar = finalAvatar,
-                        coupleCode = finalCoupleCode
+                        coupleCode = finalCoupleCode,
+                        partnerId = pPartnerId
                     )
                 )
 
@@ -670,12 +672,12 @@ class LoginActivity : ComponentActivity() {
                                 val ex = resp.exceptionOrNull()
 
                                 if (resp.getOrNull()?.isSuccessful == true && body?.ok == true) {
-                                    // 配对成功！把自己本地的 coupleCode 更新为 TA 的码
-                                    val newCode = body.couple_code ?: theirCode
+                                    // ✅ 配对成功：存 partner_id（不再改 couple_code，每个人保留独立码）
+                                    val theirId = body.their_id
                                     UserRepository.get().setUser(
-                                        me!!.copy(coupleCode = newCode)
+                                        me!!.copy(partnerId = theirId)
                                     )
-                                    pairCode = newCode
+                                    pairCode = me!!.coupleCode ?: ""
                                     paired = true
                                     pairedWithNick = body.their_nickname?.takeIf { it.isNotBlank() } ?: "TA"
                                     withContext(Dispatchers.Main) {

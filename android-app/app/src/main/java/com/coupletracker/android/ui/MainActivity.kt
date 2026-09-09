@@ -134,6 +134,7 @@ class MainActivity : ComponentActivity() {
             put("avatar", it.avatar ?: "")
             put("gender", it.gender ?: "")
             put("coupleCode", it.coupleCode ?: "")
+            put("partnerId", it.partnerId ?: "")
         }.toString() } ?: "null"
         val tokenJs = if (token.isNullOrBlank()) "null" else "\"${token.replace("\"","\\\"")}\""
         return """
@@ -464,27 +465,38 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.height(20.dp))
 
             val code = (user?.coupleCode ?: "").uppercase()
+            val myPartnerId = user?.partnerId
             var pairInput by rememberSaveable { mutableStateOf("") }
             var pairMsg by rememberSaveable { mutableStateOf("") }
             var pairLoading by rememberSaveable { mutableStateOf(false) }
             var copyTip by remember { mutableStateOf("") }
-            // 是否已配对：同 couple_code 存在其他 profile。每次显示/切到「我的」时查一次
+            // 是否已配对：优先用 partner_id 查（不依赖共享 couple_code）
             var hasPartner by remember { mutableStateOf<Boolean?>(null) }
             var partnerName by remember { mutableStateOf("") }
-            LaunchedEffect(code) {
+            LaunchedEffect(code, myPartnerId) {
                 hasPartner = null
                 partnerName = ""
-                if (code.isBlank()) return@LaunchedEffect
+                val myId = user?.id ?: ""
                 withContext(Dispatchers.IO) {
-                    val myId = user?.id ?: ""
-                    runCatching {
-                        NetworkModule.restService.getProfile(
-                            coupleCode = code
-                        )
-                    }.getOrNull()?.body()?.filter { it.id != myId }?.firstOrNull()?.let { partner ->
-                        hasPartner = true
-                        partnerName = partner.nickname.ifBlank { partner.username }
-                    } ?: run { hasPartner = false }
+                    if (!myPartnerId.isNullOrBlank()) {
+                        // 用 partner_id 直接查
+                        runCatching {
+                            NetworkModule.restService.getProfile(id = myPartnerId)
+                        }.getOrNull()?.body()?.firstOrNull()?.let { partner ->
+                            hasPartner = true
+                            partnerName = partner.nickname.ifBlank { partner.username }
+                        } ?: run { hasPartner = false }
+                    } else if (code.isNotBlank()) {
+                        // 兼容旧数据：用 couple_code 查
+                        runCatching {
+                            NetworkModule.restService.getProfile(coupleCode = code)
+                        }.getOrNull()?.body()?.filter { it.id != myId }?.firstOrNull()?.let { partner ->
+                            hasPartner = true
+                            partnerName = partner.nickname.ifBlank { partner.username }
+                        } ?: run { hasPartner = false }
+                    } else {
+                        hasPartner = false
+                    }
                 }
             }
 
@@ -643,8 +655,11 @@ class MainActivity : ComponentActivity() {
                                         pairLoading = false
                                         when {
                                             resp.getOrNull()?.isSuccessful == true && body?.ok == true -> {
-                                                val newCode = body.couple_code ?: pairInput.trim().uppercase()
-                                                UserRepository.get().setUser(me.copy(coupleCode = newCode))
+                                                // ✅ 配对成功：存 partner_id（不再改 couple_code，每个人保留独立码）
+                                                val theirId = body.their_id
+                                                UserRepository.get().setUser(me.copy(
+                                                    partnerId = theirId
+                                                ))
                                                 hasPartner = true
                                                 partnerName = body.their_nickname?.takeIf { it.isNotBlank() } ?: "TA"
                                                 pairMsg = "✅ 配对成功！已和 $partnerName 绑定"

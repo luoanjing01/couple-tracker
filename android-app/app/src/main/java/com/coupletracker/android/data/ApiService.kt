@@ -243,6 +243,7 @@ data class Profile(
     val gender: String = "unknown",
     val couple_code: String = "",
     val couple_id: String? = null,
+    @SerializedName("partner_id") val partner_id: String? = null,
     val created_at: String? = null
 )
 
