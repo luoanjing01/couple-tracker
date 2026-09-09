@@ -103,7 +103,24 @@ class UserRepository private constructor(private val context: Context) {
         sanitizeToken()
         return getUser() != null
     }
-    suspend fun logout() { setToken(null); setUser(null) }
+    suspend fun logout() {
+        // ✅ 清除所有本地数据，避免旧账号数据残留
+        context.store.edit { it.clear() }
+        // 清除 WebView 缓存（localStorage 里存的用户信息、token 等）
+        runCatching {
+            android.webkit.WebView(context).apply {
+                clearCache(true)
+                clearHistory()
+                clearFormData()
+                // 清除所有 WebView 存储（localStorage/sessionStorage/indexedDB）
+                context.getSharedPreferences("WebViewChromiumPrefs", 0).edit().clear().apply()
+            }
+        }
+        // 清除应用缓存目录
+        runCatching {
+            context.cacheDir.deleteRecursively()
+        }
+    }
 
     // ---- 采集频率（可在设置页动态调整，Service 监听 Flow 自动重启） ----
     val locationIntervalSecFlow: Flow<Int> = context.store.data.map {

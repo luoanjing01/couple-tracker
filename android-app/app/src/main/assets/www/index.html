@@ -43,6 +43,22 @@
   .leaflet-control-zoom a{border-radius:14px!important;width:40px!important;height:40px!important;line-height:40px!important;font-size:20px!important;color:#2d3748!important;background:rgba(255,255,255,0.97)!important;border:none!important;}
   .leaflet-control-zoom a:hover{background:#fff0f3!important;}
   .leaflet-bar{border:none!important;}
+  /* ===== 底部抽屉（运动轨迹）===== */
+  .drawer{position:absolute;bottom:0;left:0;right:0;z-index:600;background:#fff;border-radius:20px 20px 0 0;box-shadow:0 -4px 24px rgba(0,0,0,0.15);transition:transform .3s ease;transform:translateY(calc(100% - 44px));max-height:70%;display:flex;flex-direction:column;}
+  .drawer.open{transform:translateY(0);}
+  .drawer-handle{width:100%;height:44px;display:flex;align-items:center;justify-content:center;cursor:grab;flex-shrink:0;}
+  .drawer-handle:active{cursor:grabbing;}
+  .drawer-handle::after{content:'';width:40px;height:5px;background:#cbd5e0;border-radius:3px;}
+  .drawer-title{position:absolute;left:16px;font-size:13px;font-weight:600;color:#4a5568;}
+  .drawer-body{padding:0 16px 20px;overflow-y:auto;flex:1;}
+  .track-summary{display:flex;gap:12px;margin-bottom:12px;}
+  .track-card{flex:1;background:#f7fafc;border-radius:12px;padding:10px;text-align:center;}
+  .track-card .val{font-size:18px;font-weight:700;color:#e75480;}
+  .track-card .lbl{font-size:11px;color:#718096;margin-top:2px;}
+  .track-btn{display:block;width:100%;padding:10px;border:none;border-radius:12px;background:#e75480;color:#fff;font-size:14px;font-weight:600;cursor:pointer;margin-top:8px;}
+  .track-btn:active{transform:scale(0.98);}
+  .track-btn.secondary{background:#edf2f7;color:#4a5568;}
+  .track-empty{text-align:center;color:#a0aec0;font-size:13px;padding:20px 0;}
 </style>
 </head>
 <body>
@@ -64,6 +80,23 @@
 <div class="loading" id="loading">
   <div id="loadingMain">正在加载地图 🗺️...</div>
   <div class="sub" id="loadingSub">本地加载只需 1-2 秒，请稍候</div>
+</div>
+
+<!-- ===== 底部抽屉：运动轨迹 ===== -->
+<div class="drawer" id="trackDrawer">
+  <div class="drawer-handle" id="drawerHandle">
+    <span class="drawer-title">📍 今日运动轨迹</span>
+  </div>
+  <div class="drawer-body" id="drawerBody">
+    <div class="track-empty" id="trackEmpty">点击下方按钮查看今天走过的路线 🏃</div>
+    <div class="track-summary" id="trackSummary" style="display:none;">
+      <div class="track-card"><div class="val" id="trackDist">0</div><div class="lbl">公里</div></div>
+      <div class="track-card"><div class="val" id="trackPts">0</div><div class="lbl">定位点</div></div>
+      <div class="track-card"><div class="val" id="trackTime">0</div><div class="lbl">分钟</div></div>
+    </div>
+    <button class="track-btn" id="btnShowTrack">查看今天的轨迹</button>
+    <button class="track-btn secondary" id="btnClearTrack" style="display:none;">清除轨迹</button>
+  </div>
 </div>
 <!-- 🔴 调试面板：默认隐藏（display:none），开发时手动改 display:block -->
 <div id="debugBox" style="position:absolute;bottom:70px;left:10px;z-index:9998;background:rgba(255,255,255,0.96);border:1px solid #e75480;border-radius:10px;padding:8px 10px;font-family:monospace;font-size:11px;line-height:1.6;color:#2d3748;box-shadow:0 4px 16px rgba(0,0,0,0.1);max-width:90%;display:none;"></div>
@@ -386,6 +419,9 @@ function initMap() {
       updateLayerBtn();
     } catch(e){}
 
+    // ===== 底部抽屉：运动轨迹 =====
+    initDrawer();
+
     // ✅ WebView 经典修复：容器尺寸在 load 时往往还是 0，导致 Leaflet 以为没有可视区 → 瓦片 0 张 → 全空白
     //    常见现象：整个地图只有 body 粉色背景，什么都不渲染，但没有报错。必须多次调用 invalidateSize() 踢醒
     // ① 前 3 秒密集踢（Compose 动画 / WebView 第一次 / 第二次 / 第三次布局）
@@ -568,6 +604,132 @@ function fit() {
   if (pts.length === 1) map.setView(pts[0], 15, {animate:true});
   else {
     map.fitBounds(L.latLngBounds(pts), {padding:[100,60], maxZoom:15, animate:true});
+  }
+}
+
+// ===== 底部抽屉 + 运动轨迹 =====
+var __trackPolyline = null;
+var __trackStartMarker = null;
+var __trackEndMarker = null;
+
+function initDrawer() {
+  var drawer = document.getElementById('trackDrawer');
+  var handle = document.getElementById('drawerHandle');
+  if (!drawer || !handle) return;
+
+  // 点击/拖拽展开收起
+  var startY = 0, startTranslate = 0, dragging = false;
+  handle.addEventListener('touchstart', function(e){
+    dragging = true;
+    startY = e.touches[0].clientY;
+    startTranslate = drawer.classList.contains('open') ? 0 : drawer.offsetHeight - 44;
+  });
+  handle.addEventListener('touchmove', function(e){
+    if (!dragging) return;
+    e.preventDefault();
+    var dy = e.touches[0].clientY - startY;
+    var h = drawer.offsetHeight;
+    var t = Math.max(0, Math.min(h - 44, startTranslate + dy));
+    drawer.style.transform = 'translateY(' + t + 'px)';
+    drawer.style.transition = 'none';
+  });
+  handle.addEventListener('touchend', function(){
+    if (!dragging) return;
+    dragging = false;
+    drawer.style.transition = '';
+    var t = drawer.style.transform;
+    var match = t.match(/translateY\((\d+)/);
+    var cur = match ? parseInt(match[1]) : 0;
+    var h = drawer.offsetHeight;
+    if (cur < h / 2) {
+      drawer.classList.add('open');
+      drawer.style.transform = '';
+    } else {
+      drawer.classList.remove('open');
+      drawer.style.transform = '';
+    }
+  });
+  // 点击 handle 切换
+  handle.addEventListener('click', function(e){
+    if (dragging) return;
+    drawer.classList.toggle('open');
+  });
+
+  // 轨迹按钮
+  document.getElementById('btnShowTrack').addEventListener('click', loadTodayTrack);
+  document.getElementById('btnClearTrack').addEventListener('click', clearTrack);
+}
+
+function loadTodayTrack() {
+  if (!me || !me.id) { showFlash('请先登录'); return; }
+  var uid = me.id;
+  var headers = makeHeaders();
+  // 今天 00:00 的 ISO 时间
+  var now = new Date();
+  var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+
+  fetch(SUPABASE_URL + '/rest/v1/locations?select=latitude,longitude,created_at&user_id=eq.'+encodeURIComponent(uid)+'&created_at=gte.'+encodeURIComponent(startOfDay)+'&order=created_at.asc&limit=500', { headers: headers })
+    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(rows){
+      if (!Array.isArray(rows) || rows.length < 2) {
+        document.getElementById('trackEmpty').textContent = '今天还没有足够的定位点 🏃';
+        document.getElementById('trackSummary').style.display = 'none';
+        document.getElementById('btnClearTrack').style.display = 'none';
+        return;
+      }
+      // 坐标转换（GCJ-02）
+      var src = __tileSources[__tileIdx];
+      var pts = rows.map(function(r){
+        var ll = (src && src.gcj02) ? wgs2gcj(r.latitude, r.longitude) : [r.latitude, r.longitude];
+        return ll;
+      });
+
+      // 清除旧轨迹
+      clearTrack(false);
+
+      // 绘制折线
+      __trackPolyline = L.polyline(pts, { color: '#e75480', weight: 5, opacity: 0.8 }).addTo(map);
+
+      // 起点和终点标记
+      __trackStartMarker = L.circleMarker(pts[0], { radius: 8, color: '#48bb78', fillColor: '#48bb78', fillOpacity: 1 }).addTo(map);
+      __trackEndMarker = L.circleMarker(pts[pts.length-1], { radius: 8, color: '#e53e3e', fillColor: '#e53e3e', fillOpacity: 1 }).addTo(map);
+
+      // 计算距离（米）
+      var dist = 0;
+      for (var i = 1; i < pts.length; i++) {
+        dist += map.distance(pts[i-1], pts[i]);
+      }
+
+      // 计算时长（分钟）
+      var firstT = new Date(rows[0].created_at).getTime();
+      var lastT = new Date(rows[rows.length-1].created_at).getTime();
+      var minutes = Math.round((lastT - firstT) / 60000);
+
+      // 显示统计
+      document.getElementById('trackEmpty').style.display = 'none';
+      document.getElementById('trackSummary').style.display = 'flex';
+      document.getElementById('trackDist').textContent = (dist / 1000).toFixed(2);
+      document.getElementById('trackPts').textContent = rows.length;
+      document.getElementById('trackTime').textContent = minutes;
+      document.getElementById('btnClearTrack').style.display = 'block';
+
+      // 缩放到轨迹范围
+      map.fitBounds(__trackPolyline.getBounds(), { padding: [50, 50], maxZoom: 16 });
+    })
+    .catch(function(e){
+      showFlash('加载轨迹失败: ' + (e && e.message ? e.message : '网络错误'));
+    });
+}
+
+function clearTrack(updateUI) {
+  if (__trackPolyline) { try { map.removeLayer(__trackPolyline); } catch(e){} __trackPolyline = null; }
+  if (__trackStartMarker) { try { map.removeLayer(__trackStartMarker); } catch(e){} __trackStartMarker = null; }
+  if (__trackEndMarker) { try { map.removeLayer(__trackEndMarker); } catch(e){} __trackEndMarker = null; }
+  if (updateUI !== false) {
+    document.getElementById('trackEmpty').style.display = 'block';
+    document.getElementById('trackEmpty').textContent = '点击下方按钮查看今天走过的路线 🏃';
+    document.getElementById('trackSummary').style.display = 'none';
+    document.getElementById('btnClearTrack').style.display = 'none';
   }
 }
 
