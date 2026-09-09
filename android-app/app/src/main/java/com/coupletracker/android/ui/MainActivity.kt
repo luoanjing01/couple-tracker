@@ -470,22 +470,22 @@ class MainActivity : ComponentActivity() {
             var hasPartner by remember { mutableStateOf<Boolean?>(null) }
             var partnerName by remember { mutableStateOf("") }
             LaunchedEffect(code, myPartnerId) {
-                // 配对成功后已有 partnerName，不重置避免闪烁配对码
-                if (partnerName.isBlank()) {
-                    hasPartner = null
-                }
                 val myId = user?.id ?: ""
                 withContext(Dispatchers.IO) {
                     if (!myPartnerId.isNullOrBlank()) {
-                        // 用 partner_id 直接查
-                        runCatching {
-                            NetworkModule.restService.getProfile(id = myPartnerId)
-                        }.getOrNull()?.body()?.firstOrNull()?.let { partner ->
-                            hasPartner = true
-                            partnerName = partner.nickname.ifBlank { partner.username }
-                        } ?: run { hasPartner = false }
+                        // ✅ partner_id 不为空 = 已配对，直接标记 true
+                        hasPartner = true
+                        // 只在 partnerName 为空时才查（避免覆盖已有名字）
+                        if (partnerName.isBlank()) {
+                            runCatching {
+                                NetworkModule.restService.getProfile(id = myPartnerId)
+                            }.getOrNull()?.body()?.firstOrNull()?.let { partner ->
+                                partnerName = partner.nickname.ifBlank { partner.username }
+                            }
+                        }
                     } else if (code.isNotBlank()) {
                         // 兼容旧数据：用 couple_code 查
+                        hasPartner = null
                         runCatching {
                             NetworkModule.restService.getProfile(coupleCode = code)
                         }.getOrNull()?.body()?.filter { it.id != myId }?.firstOrNull()?.let { partner ->
@@ -508,35 +508,37 @@ class MainActivity : ComponentActivity() {
                 lifecycleScope.launch { delay(1500); copyTip = "" }
             }
 
-            // 🎯 已配对状态 → 配对码 + 配对按钮 全部消失，只显示"已与 TA 绑定"状态卡
-            //    （完全按用户要求：「配对上之后配对码和配对按钮才消失」）
-            if (hasPartner == true && partnerName.isNotBlank()) {
+            // 🎯 已配对状态 → 配对码 + 配对按钮 全部消失，只显示配对详情
+            if (hasPartner == true) {
                 Card(
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FFF4))
                 ) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("❤️", fontSize = 28.sp)
-                        Spacer(Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                "💞 已与 $partnerName 绑定",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 18.sp,
-                                color = Color(0xFF2F855A)
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                "去地图页查看彼此的实时位置吧 💕",
-                                fontSize = 12.sp,
-                                color = Color(0xFF38A169)
-                            )
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("❤️", fontSize = 28.sp)
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    "💞 已与 ${partnerName.ifBlank { "TA" }} 绑定",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 18.sp,
+                                    color = Color(0xFF2F855A)
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "配对人：${partnerName.ifBlank { "加载中..." }}",
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF38A169)
+                                )
+                            }
                         }
+                        Spacer(Modifier.height(10.dp))
+                        Divider(color = Color(0xFFC6F6D5))
+                        Spacer(Modifier.height(10.dp))
+                        Text("💡 去地图页查看彼此实时位置", fontSize = 12.sp, color = Color(0xFF38A169))
+                        Text("💡 去应用/统计页查看TA的动态", fontSize = 12.sp, color = Color(0xFF38A169))
+                        Text("💡 地图抽屉可查看TA的运动轨迹", fontSize = 12.sp, color = Color(0xFF38A169))
                     }
                 }
             } else {
@@ -853,25 +855,64 @@ class MainActivity : ComponentActivity() {
             }
 
             Spacer(Modifier.height(16.dp))
-            OutlinedButton(
-                onClick = {
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        UserRepository.get().logout()
-                        TrackerService.stop(this@MainActivity)
-                        withContext(Dispatchers.Main) { finish() }
+
+            // ====== 账号管理 ======
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("👤 账号管理", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+                    Spacer(Modifier.height(8.dp))
+                    Divider(color = Color(0xFFEDF2F7))
+                    Spacer(Modifier.height(12.dp))
+
+                    // 账号信息
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("账号", color = Color(0xFF718096), fontSize = 13.sp, modifier = Modifier.width(60.dp))
+                        Text(user?.username ?: "-", color = Color(0xFF2D3748), fontSize = 13.sp)
                     }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(26.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = Color(0xFFE53E3E)
-                ),
-                border = ButtonDefaults.outlinedButtonBorder.copy(
-                    brush = SolidColor(Color(0xFFE53E3E))
-                )
-            ) { Text("退出登录") }
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("昵称", color = Color(0xFF718096), fontSize = 13.sp, modifier = Modifier.width(60.dp))
+                        Text(user?.displayName ?: "-", color = Color(0xFF2D3748), fontSize = 13.sp)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("配对", color = Color(0xFF718096), fontSize = 13.sp, modifier = Modifier.width(60.dp))
+                        Text(
+                            if (hasPartner == true) "已与 ${partnerName.ifBlank { "TA" }} 绑定" else "未配对",
+                            color = if (hasPartner == true) Color(0xFF38A169) else Color(0xFF718096),
+                            fontSize = 13.sp
+                        )
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                    Divider(color = Color(0xFFEDF2F7))
+                    Spacer(Modifier.height(14.dp))
+
+                    // 退出登录
+                    OutlinedButton(
+                        onClick = {
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                UserRepository.get().logout()
+                                TrackerService.stop(this@MainActivity)
+                                withContext(Dispatchers.Main) { finish() }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(24.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = Color(0xFFE53E3E)
+                        ),
+                        border = ButtonDefaults.outlinedButtonBorder.copy(
+                            brush = SolidColor(Color(0xFFE53E3E))
+                        )
+                    ) { Text("退出登录", fontSize = 14.sp) }
+                }
+            }
 
             Spacer(Modifier.height(20.dp))
             Text(

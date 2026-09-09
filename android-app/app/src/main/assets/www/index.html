@@ -608,6 +608,7 @@ function fit() {
 
 // ===== 底部抽屉 + 运动轨迹 =====
 var __trackPolyline = null;
+var __trackYesterdayLine = null;
 var __trackStartMarker = null;
 var __trackEndMarker = null;
 
@@ -705,14 +706,14 @@ function loadTrack(uid, isPartner) {
       var allBounds = [];
       var lineColor = isPartner ? '#667eea' : '#e75480';  // TA用蓝色，我用粉色
       if (yesterdayPts.length >= 2) {
-        var yLine = L.polyline(yesterdayPts, { color: '#a78bfa', weight: 4, opacity: 0.6, dashArray: '8,6' }).addTo(map);
+        __trackYesterdayLine = L.polyline(yesterdayPts, { color: '#a78bfa', weight: 4, opacity: 0.6, dashArray: '8,6' }).addTo(map);
         allBounds = allBounds.concat(yesterdayPts);
       }
       if (todayPts.length >= 2) {
         __trackPolyline = L.polyline(todayPts, { color: lineColor, weight: 5, opacity: 0.85 }).addTo(map);
         allBounds = allBounds.concat(todayPts);
       } else if (yesterdayPts.length >= 2) {
-        __trackPolyline = yLine;
+        __trackPolyline = __trackYesterdayLine;
       }
 
       // 起点和终点（整体范围）
@@ -746,6 +747,7 @@ function loadTrack(uid, isPartner) {
 
 function clearTrack(updateUI) {
   if (__trackPolyline) { try { map.removeLayer(__trackPolyline); } catch(e){} __trackPolyline = null; }
+  if (__trackYesterdayLine) { try { map.removeLayer(__trackYesterdayLine); } catch(e){} __trackYesterdayLine = null; }
   if (__trackStartMarker) { try { map.removeLayer(__trackStartMarker); } catch(e){} __trackStartMarker = null; }
   if (__trackEndMarker) { try { map.removeLayer(__trackEndMarker); } catch(e){} __trackEndMarker = null; }
   if (updateUI !== false) {
