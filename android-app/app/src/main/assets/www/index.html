@@ -310,6 +310,8 @@ function switchTileLayer() {
   var next = (__tileIdx + 1) % __tileSources.length;
   loadTileLayer(next, true);
   // ✅ 切换图层后重新 poll()，让标记用新图层的坐标系重新定位
+  //    并把 fitDone 设为 false，让 poll 中重新 fit() 居中到标记
+  fitDone = false;
   setTimeout(function(){ if (typeof poll === 'function') poll(); }, 300);
 }
 function updateLayerBtn() {
@@ -706,13 +708,26 @@ function fetchPartnerUid(cb) {
   var now = Date.now();
   if (__partnerUid.v && (now - __partnerUid.at) < 15000) { cb(__partnerUid.v, null); return; }
   var uid = me && me.id ? me.id : null;
-  // ✅ 优先用 partner_id 查找配对方（配对码不再共享，每个人有独立码）
   var partnerId = me && me.partnerId ? me.partnerId : null;
   var code = me && me.coupleCode ? me.coupleCode : null;
   var headers = makeHeaders();
 
+  function queryByCode() {
+    if (!code) { cb(null, null); return; }
+    // 兼容旧数据：用 couple_code 查（neq = not equal，排除自己）
+    fetch(SUPABASE_URL + '/rest/v1/profiles?select=id&couple_code=eq.'+encodeURIComponent(String(code).toUpperCase())+(uid ? '&id=neq.'+encodeURIComponent(uid) : '')+'&limit=1', { headers: headers })
+      .then(function(r){
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        return r.json();
+      }).then(function(rows){
+        var pu = (Array.isArray(rows) && rows[0]) ? rows[0].id : null;
+        __partnerUid = {v:pu, at: now};
+        cb(pu, null);
+      }).catch(function(e){ cb(null, 'TA查询('+(e&&e.message?e.message:'网络失败')+')'); });
+  }
+
   if (partnerId) {
-    // 直接用 partner_id 查
+    // 优先用 partner_id 查
     fetch(SUPABASE_URL + '/rest/v1/profiles?select=id&id=eq.'+encodeURIComponent(partnerId)+'&limit=1', { headers: headers })
       .then(function(r){
         if (!r.ok) throw new Error('HTTP '+r.status);
@@ -721,20 +736,13 @@ function fetchPartnerUid(cb) {
         var pu = (Array.isArray(rows) && rows[0]) ? rows[0].id : null;
         __partnerUid = {v:pu, at: now};
         cb(pu, null);
-      }).catch(function(e){ cb(null, 'TA查询('+(e&&e.message?e.message:'网络失败')+')'); });
-  } else if (code) {
-    // 兼容旧数据：还没 partner_id 的用 couple_code 查（共享码模式）
-    fetch(SUPABASE_URL + '/rest/v1/profiles?select=id&couple_code=eq.'+encodeURIComponent(String(code).toUpperCase())+'&id=not.eq.'+encodeURIComponent(uid)+'&limit=1', { headers: headers })
-      .then(function(r){
-        if (!r.ok) throw new Error('HTTP '+r.status);
-        return r.json();
-      }).then(function(rows){
-        var pu = (Array.isArray(rows) && rows[0]) ? rows[0].id : null;
-        __partnerUid = {v:pu, at: now};
-        cb(pu, null);
-      }).catch(function(e){ cb(null, 'TA查询('+(e&&e.message?e.message:'网络失败')+')'); });
+      }).catch(function(e){
+        // partner_id 查询失败 → 回退到 couple_code 查询
+        console.warn('[CT] partner_id 查询失败，回退到 couple_code:', e&&e.message);
+        queryByCode();
+      });
   } else {
-    cb(null, null);
+    queryByCode();
   }
 }
 
