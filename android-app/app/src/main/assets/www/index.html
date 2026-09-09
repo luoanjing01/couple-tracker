@@ -85,16 +85,14 @@
 <!-- ===== 底部抽屉：运动轨迹 ===== -->
 <div class="drawer" id="trackDrawer">
   <div class="drawer-handle" id="drawerHandle">
-    <span class="drawer-title">📍 今日运动轨迹</span>
+    <span class="drawer-title">📍 最近2天运动轨迹</span>
   </div>
   <div class="drawer-body" id="drawerBody">
     <div class="track-empty" id="trackEmpty">点击下方按钮查看今天走过的路线 🏃</div>
     <div class="track-summary" id="trackSummary" style="display:none;">
       <div class="track-card"><div class="val" id="trackDist">0</div><div class="lbl">公里</div></div>
-      <div class="track-card"><div class="val" id="trackPts">0</div><div class="lbl">定位点</div></div>
-      <div class="track-card"><div class="val" id="trackTime">0</div><div class="lbl">分钟</div></div>
     </div>
-    <button class="track-btn" id="btnShowTrack">查看今天的轨迹</button>
+    <button class="track-btn" id="btnShowTrack">查看最近2天轨迹</button>
     <button class="track-btn secondary" id="btnClearTrack" style="display:none;">清除轨迹</button>
   </div>
 </div>
@@ -664,15 +662,15 @@ function loadTodayTrack() {
   if (!me || !me.id) { showFlash('请先登录'); return; }
   var uid = me.id;
   var headers = makeHeaders();
-  // 今天 00:00 的 ISO 时间
+  // 最近2天：昨天 00:00 到现在
   var now = new Date();
-  var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  var yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).toISOString();
 
-  fetch(SUPABASE_URL + '/rest/v1/locations?select=latitude,longitude,created_at&user_id=eq.'+encodeURIComponent(uid)+'&created_at=gte.'+encodeURIComponent(startOfDay)+'&order=created_at.asc&limit=500', { headers: headers })
+  fetch(SUPABASE_URL + '/rest/v1/locations?select=latitude,longitude,created_at&user_id=eq.'+encodeURIComponent(uid)+'&created_at=gte.'+encodeURIComponent(yesterdayStart)+'&order=created_at.asc&limit=1000', { headers: headers })
     .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(function(rows){
       if (!Array.isArray(rows) || rows.length < 2) {
-        document.getElementById('trackEmpty').textContent = '今天还没有足够的定位点 🏃';
+        document.getElementById('trackEmpty').textContent = '最近2天还没有足够的定位点 🏃';
         document.getElementById('trackSummary').style.display = 'none';
         document.getElementById('btnClearTrack').style.display = 'none';
         return;
@@ -687,12 +685,32 @@ function loadTodayTrack() {
       // 清除旧轨迹
       clearTrack(false);
 
-      // 绘制折线
-      __trackPolyline = L.polyline(pts, { color: '#e75480', weight: 5, opacity: 0.8 }).addTo(map);
+      // 按天分组绘制（今天粉色，昨天浅紫）
+      var todayStr = new Date().toDateString();
+      var todayPts = [], yesterdayPts = [];
+      rows.forEach(function(r, i){
+        var d = new Date(r.created_at).toDateString();
+        if (d === todayStr) todayPts.push(pts[i]);
+        else yesterdayPts.push(pts[i]);
+      });
 
-      // 起点和终点标记
-      __trackStartMarker = L.circleMarker(pts[0], { radius: 8, color: '#48bb78', fillColor: '#48bb78', fillOpacity: 1 }).addTo(map);
-      __trackEndMarker = L.circleMarker(pts[pts.length-1], { radius: 8, color: '#e53e3e', fillColor: '#e53e3e', fillOpacity: 1 }).addTo(map);
+      var allBounds = [];
+      if (yesterdayPts.length >= 2) {
+        var yLine = L.polyline(yesterdayPts, { color: '#a78bfa', weight: 4, opacity: 0.6, dashArray: '8,6' }).addTo(map);
+        allBounds = allBounds.concat(yesterdayPts);
+      }
+      if (todayPts.length >= 2) {
+        __trackPolyline = L.polyline(todayPts, { color: '#e75480', weight: 5, opacity: 0.85 }).addTo(map);
+        allBounds = allBounds.concat(todayPts);
+      } else if (yesterdayPts.length >= 2) {
+        __trackPolyline = yLine;
+      }
+
+      // 起点和终点（整体范围）
+      if (allBounds.length >= 2) {
+        __trackStartMarker = L.circleMarker(allBounds[0], { radius: 8, color: '#48bb78', fillColor: '#48bb78', fillOpacity: 1 }).addTo(map);
+        __trackEndMarker = L.circleMarker(allBounds[allBounds.length-1], { radius: 8, color: '#e53e3e', fillColor: '#e53e3e', fillOpacity: 1 }).addTo(map);
+      }
 
       // 计算距离（米）
       var dist = 0;
@@ -700,21 +718,17 @@ function loadTodayTrack() {
         dist += map.distance(pts[i-1], pts[i]);
       }
 
-      // 计算时长（分钟）
-      var firstT = new Date(rows[0].created_at).getTime();
-      var lastT = new Date(rows[rows.length-1].created_at).getTime();
-      var minutes = Math.round((lastT - firstT) / 60000);
-
-      // 显示统计
+      // 显示统计（只保留公里）
       document.getElementById('trackEmpty').style.display = 'none';
       document.getElementById('trackSummary').style.display = 'flex';
       document.getElementById('trackDist').textContent = (dist / 1000).toFixed(2);
-      document.getElementById('trackPts').textContent = rows.length;
-      document.getElementById('trackTime').textContent = minutes;
       document.getElementById('btnClearTrack').style.display = 'block';
 
       // 缩放到轨迹范围
-      map.fitBounds(__trackPolyline.getBounds(), { padding: [50, 50], maxZoom: 16 });
+      if (allBounds.length >= 2) {
+        var bounds = L.latLngBounds(allBounds);
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+      }
     })
     .catch(function(e){
       showFlash('加载轨迹失败: ' + (e && e.message ? e.message : '网络错误'));

@@ -307,24 +307,7 @@ class MainActivity : ComponentActivity() {
                         runCatching { wv.evaluateJavascript(js, null) }
                     }
                 )
-                // 左下角悬浮卡片：显示采集频率（移到左边避免遮挡右下角图层切换按钮）
-                Column(
-                    Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(start = 14.dp, bottom = 18.dp)
-                ) {
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.96f))
-                    ) {
-                        Column(Modifier.padding(10.dp)) {
-                            Text("采集频率", fontSize = 10.sp, color = Color(0xFF718096), fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.height(2.dp))
-                            Text("📍 位置 每${locSec}秒", fontSize = 11.sp, color = Color(0xFF2D3748))
-                            Text("📱 APP 每${appSec}秒", fontSize = 11.sp, color = Color(0xFF2D3748))
-                        }
-                    }
-                }
+                // 采集频率卡片已移除（会遮挡底部抽屉）
             }
             return
         }
