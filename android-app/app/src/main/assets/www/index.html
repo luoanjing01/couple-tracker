@@ -278,7 +278,8 @@ function loadTileLayer(idx, manual) {
     __tileLayer = L.tileLayer(src.url, {
       subdomains: src.sub || 'a',
       attribution: src.attrs,
-      maxZoom: 19, minZoom: 1,
+      maxZoom: 19, minZoom: 3,
+      maxNativeZoom: 18,   // 高德瓦片最高18级，超过后自动放大瓦片避免白屏
       crossOrigin: true
     }).addTo(map);
     var _thisIdx = idx;
@@ -365,7 +366,7 @@ function initMap() {
   try {
     console.log('[CT] initMap start, L=', typeof L, ', #map el=', !!document.getElementById('map'));
     // ✅ zoomControl:true 让 Leaflet 默认的 +/- 缩放按钮显示出来
-    map = L.map('map', { zoomControl: true, preferCanvas: true, minZoom: 1, maxZoom: 19, worldCopyJump: true }).setView([39.9042, 116.4074], 5);
+    map = L.map('map', { zoomControl: true, preferCanvas: true, minZoom: 3, maxZoom: 19, worldCopyJump: true }).setView([39.9042, 116.4074], 5);
     var _sz0 = map.getSize();
     console.log('[CT] map after L.map(): size=', _sz0, ', container w/h=', document.getElementById('map').offsetWidth, document.getElementById('map').offsetHeight);
 
