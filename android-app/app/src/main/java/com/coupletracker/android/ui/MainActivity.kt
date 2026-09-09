@@ -470,8 +470,10 @@ class MainActivity : ComponentActivity() {
             var hasPartner by remember { mutableStateOf<Boolean?>(null) }
             var partnerName by remember { mutableStateOf("") }
             LaunchedEffect(code, myPartnerId) {
-                hasPartner = null
-                partnerName = ""
+                // 配对成功后已有 partnerName，不重置避免闪烁配对码
+                if (partnerName.isBlank()) {
+                    hasPartner = null
+                }
                 val myId = user?.id ?: ""
                 withContext(Dispatchers.IO) {
                     if (!myPartnerId.isNullOrBlank()) {

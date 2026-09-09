@@ -188,23 +188,25 @@ fun StatsScreen() {
         if (partnerId != null) {
             Row(
                 Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 FilterChip(
                     selected = !showPartner,
                     onClick = { showPartner = false },
-                    label = { Text("我", fontSize = 13.sp) },
+                    label = { Text("👤 我", fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.height(44.dp),
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = pink.copy(alpha = 0.15f),
+                        selectedContainerColor = pink.copy(alpha = 0.2f),
                         selectedLabelColor = pink
                     )
                 )
                 FilterChip(
                     selected = showPartner,
                     onClick = { showPartner = true },
-                    label = { Text("TA · " + partnerName, fontSize = 13.sp) },
+                    label = { Text("💕 TA · " + partnerName, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.height(44.dp),
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = blue.copy(alpha = 0.15f),
+                        selectedContainerColor = blue.copy(alpha = 0.2f),
                         selectedLabelColor = blue
                     )
                 )

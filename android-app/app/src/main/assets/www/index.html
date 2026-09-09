@@ -88,11 +88,12 @@
     <span class="drawer-title">📍 最近2天运动轨迹</span>
   </div>
   <div class="drawer-body" id="drawerBody">
-    <div class="track-empty" id="trackEmpty">点击下方按钮查看今天走过的路线 🏃</div>
+    <div class="track-empty" id="trackEmpty">点击下方按钮查看走过的路线 🏃</div>
     <div class="track-summary" id="trackSummary" style="display:none;">
       <div class="track-card"><div class="val" id="trackDist">0</div><div class="lbl">公里</div></div>
     </div>
-    <button class="track-btn" id="btnShowTrack">查看最近2天轨迹</button>
+    <button class="track-btn" id="btnShowTrack">查看我的轨迹</button>
+    <button class="track-btn secondary" id="btnShowPartnerTrack" style="display:none;">查看TA的轨迹</button>
     <button class="track-btn secondary" id="btnClearTrack" style="display:none;">清除轨迹</button>
   </div>
 </div>
@@ -654,14 +655,21 @@ function initDrawer() {
   });
 
   // 轨迹按钮
-  document.getElementById('btnShowTrack').addEventListener('click', loadTodayTrack);
+  document.getElementById('btnShowTrack').addEventListener('click', function(){ loadTrack(me && me.id, false); });
+  document.getElementById('btnShowPartnerTrack').addEventListener('click', function(){ loadTrack(__partnerUid.v, true); });
   document.getElementById('btnClearTrack').addEventListener('click', clearTrack);
 }
 
-function loadTodayTrack() {
-  if (!me || !me.id) { showFlash('请先登录'); return; }
-  var uid = me.id;
+// 根据是否有配对方显示"查看TA的轨迹"按钮
+function updatePartnerTrackBtn() {
+  var btn = document.getElementById('btnShowPartnerTrack');
+  if (btn) btn.style.display = (__partnerUid.v) ? 'block' : 'none';
+}
+
+function loadTrack(uid, isPartner) {
+  if (!uid) { showFlash(isPartner ? '还没有配对哦' : '请先登录'); return; }
   var headers = makeHeaders();
+  var who = isPartner ? 'TA' : '我';
   // 最近2天：昨天 00:00 到现在
   var now = new Date();
   var yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).toISOString();
@@ -670,7 +678,7 @@ function loadTodayTrack() {
     .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(function(rows){
       if (!Array.isArray(rows) || rows.length < 2) {
-        document.getElementById('trackEmpty').textContent = '最近2天还没有足够的定位点 🏃';
+        document.getElementById('trackEmpty').textContent = who + '最近2天还没有足够的定位点 🏃';
         document.getElementById('trackSummary').style.display = 'none';
         document.getElementById('btnClearTrack').style.display = 'none';
         return;
@@ -695,12 +703,13 @@ function loadTodayTrack() {
       });
 
       var allBounds = [];
+      var lineColor = isPartner ? '#667eea' : '#e75480';  // TA用蓝色，我用粉色
       if (yesterdayPts.length >= 2) {
         var yLine = L.polyline(yesterdayPts, { color: '#a78bfa', weight: 4, opacity: 0.6, dashArray: '8,6' }).addTo(map);
         allBounds = allBounds.concat(yesterdayPts);
       }
       if (todayPts.length >= 2) {
-        __trackPolyline = L.polyline(todayPts, { color: '#e75480', weight: 5, opacity: 0.85 }).addTo(map);
+        __trackPolyline = L.polyline(todayPts, { color: lineColor, weight: 5, opacity: 0.85 }).addTo(map);
         allBounds = allBounds.concat(todayPts);
       } else if (yesterdayPts.length >= 2) {
         __trackPolyline = yLine;
@@ -849,6 +858,7 @@ function poll() {
 
   fetchPartnerUid(function(partnerUid, err){
     if (err) { partnerErr = err; }
+    updatePartnerTrackBtn();  // 有配对方则显示"查看TA的轨迹"按钮
     if (!partnerUid) { done(); return; }
     fetch(SUPABASE_URL + '/rest/v1/locations?select=*&user_id=eq.'+encodeURIComponent(partnerUid)+'&order=created_at.desc&limit=1', { headers: headers })
       .then(function(r){
