@@ -5,8 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,7 +28,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.material.ExperimentalMaterialApi::class)
 @Composable
 fun StatsScreen() {
     val user by UserRepository.get().userFlow.collectAsState(initial = null)
@@ -47,11 +48,20 @@ fun StatsScreen() {
     var reloadKey by remember { mutableStateOf(0) }
 
     // ---- 下拉刷新 ----
-    var pullOffset by remember { mutableStateOf(0f) }
     var isRefreshing by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
-    val refreshTrigger = 80f
     val refreshScope = rememberCoroutineScope()
+    val pullRefreshState = rememberPullRefreshState(
+        refreshing = isRefreshing,
+        onRefresh = {
+            isRefreshing = true
+            reloadKey++
+            refreshScope.launch {
+                delay(1500)
+                isRefreshing = false
+            }
+        }
+    )
 
     LaunchedEffect(myCode, myId) {
         partnerId = null; partnerName = ""; partnerLoaded = false
@@ -153,40 +163,14 @@ fun StatsScreen() {
         Modifier
             .fillMaxSize()
             .background(bg)
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onDragEnd = {
-                        if (pullOffset >= refreshTrigger && !isRefreshing) {
-                            isRefreshing = true
-                            pullOffset = 40f
-                            reloadKey++
-                            refreshScope.launch {
-                                delay(1500)
-                                isRefreshing = false
-                                pullOffset = 0f
-                            }
-                        } else {
-                            pullOffset = 0f
-                        }
-                    }
-                ) { _, dragAmount ->
-                    if (scrollState.value == 0 && dragAmount > 0 && !isRefreshing) {
-                        pullOffset = (pullOffset + dragAmount).coerceAtMost(120f)
-                    } else if (dragAmount < 0 && pullOffset > 0) {
-                        pullOffset = (pullOffset + dragAmount).coerceAtLeast(0f)
-                    }
-                }
-            }
+            .pullRefresh(pullRefreshState)
     ) {
-        if (pullOffset > 0 || isRefreshing) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = (pullOffset / 2 - 12).dp),
-                color = mainColor,
-                strokeWidth = 2.5.dp
-            )
-        }
+        PullRefreshIndicator(
+            refreshing = isRefreshing,
+            state = pullRefreshState,
+            modifier = Modifier.align(Alignment.TopCenter),
+            contentColor = mainColor
+        )
 
         Column(
             Modifier

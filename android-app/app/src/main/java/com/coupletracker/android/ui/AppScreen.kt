@@ -23,8 +23,9 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material.icons.Icons
 
 import androidx.compose.material3.*
@@ -62,7 +63,7 @@ import java.time.format.DateTimeFormatter
  *   - 看自己：UsageStatsManager + BatteryManager + ConnectivityManager 本地实时
  *   - 看 TA：Supabase app_usage + locations 表（有 1-2 分钟延迟，正常）
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.material.ExperimentalMaterialApi::class)
 @Composable
 fun AppScreen() {
     val ctx = LocalContext.current
@@ -77,11 +78,20 @@ fun AppScreen() {
     var reloadKey by remember { mutableStateOf(0) }
 
     // ---- 下拉刷新 ----
-    var pullOffset by remember { mutableStateOf(0f) }
     var isRefreshing by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
-    val refreshTrigger = 80f  // 下拉超过80px触发刷新
     val refreshScope = rememberCoroutineScope()
+    val pullRefreshState = rememberPullRefreshState(
+        refreshing = isRefreshing,
+        onRefresh = {
+            isRefreshing = true
+            reloadKey++
+            refreshScope.launch {
+                delay(1500)
+                isRefreshing = false
+            }
+        }
+    )
 
     // ---- 查配对对方 ----
     // ✅ 优先用 partner_id 查（配对码不再共享，每个人有独立码）
@@ -113,42 +123,14 @@ fun AppScreen() {
         Modifier
             .fillMaxSize()
             .background(Color(0xFFFDF2F8))
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onDragEnd = {
-                        if (pullOffset >= refreshTrigger && !isRefreshing) {
-                            isRefreshing = true
-                            pullOffset = 40f  // 保持显示刷新圈
-                            reloadKey++  // 触发数据重新加载
-                            refreshScope.launch {
-                                delay(1500)
-                                isRefreshing = false
-                                pullOffset = 0f
-                            }
-                        } else {
-                            pullOffset = 0f
-                        }
-                    }
-                ) { _, dragAmount ->
-                    // 只在滚动到顶部时才允许下拉刷新
-                    if (scrollState.value == 0 && dragAmount > 0 && !isRefreshing) {
-                        pullOffset = (pullOffset + dragAmount).coerceAtMost(120f)
-                    } else if (dragAmount < 0 && pullOffset > 0) {
-                        pullOffset = (pullOffset + dragAmount).coerceAtLeast(0f)
-                    }
-                }
-            }
+            .pullRefresh(pullRefreshState)
     ) {
-        // 刷新圈
-        if (pullOffset > 0 || isRefreshing) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = (pullOffset / 2 - 12).dp),
-                color = Color(0xFFE75480),
-                strokeWidth = 2.5.dp
-            )
-        }
+        PullRefreshIndicator(
+            refreshing = isRefreshing,
+            state = pullRefreshState,
+            modifier = Modifier.align(Alignment.TopCenter),
+            contentColor = Color(0xFFE75480)
+        )
 
         Column(
             Modifier
