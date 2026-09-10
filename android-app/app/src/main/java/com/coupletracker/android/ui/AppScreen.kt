@@ -81,6 +81,7 @@ fun AppScreen() {
     var isRefreshing by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
     val refreshTrigger = 80f  // 下拉超过80px触发刷新
+    val refreshScope = rememberCoroutineScope()
 
     // ---- 查配对对方 ----
     // ✅ 优先用 partner_id 查（配对码不再共享，每个人有独立码）
@@ -119,9 +120,8 @@ fun AppScreen() {
                             isRefreshing = true
                             pullOffset = 40f  // 保持显示刷新圈
                             reloadKey++  // 触发数据重新加载
-                            // 模拟刷新耗时（等数据加载完后重置）
-                            kotlinx.coroutines.GlobalScope.launch {
-                                kotlinx.coroutines.delay(1500)
+                            refreshScope.launch {
+                                delay(1500)
                                 isRefreshing = false
                                 pullOffset = 0f
                             }
@@ -722,8 +722,9 @@ private fun HistoryOpenList(
                 }
             }
         }
-        }  // closes Column
-    }      // closes Box
+        }      // closes when
+        }      // closes Column
+    }          // closes Box
 }
 
 @Composable

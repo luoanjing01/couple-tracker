@@ -20,6 +20,8 @@ import com.coupletracker.android.data.AppUsageRow
 import com.coupletracker.android.data.NetworkModule
 import com.coupletracker.android.data.UserRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.ZoneId
@@ -49,6 +51,7 @@ fun StatsScreen() {
     var isRefreshing by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
     val refreshTrigger = 80f
+    val refreshScope = rememberCoroutineScope()
 
     LaunchedEffect(myCode, myId) {
         partnerId = null; partnerName = ""; partnerLoaded = false
@@ -157,8 +160,8 @@ fun StatsScreen() {
                             isRefreshing = true
                             pullOffset = 40f
                             reloadKey++
-                            kotlinx.coroutines.GlobalScope.launch {
-                                kotlinx.coroutines.delay(1500)
+                            refreshScope.launch {
+                                delay(1500)
                                 isRefreshing = false
                                 pullOffset = 0f
                             }
