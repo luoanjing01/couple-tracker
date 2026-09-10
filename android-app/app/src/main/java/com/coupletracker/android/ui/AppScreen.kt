@@ -203,8 +203,9 @@ fun AppScreen() {
             subjectName = subjectName,
             reloadKey = reloadKey
         )
-    }
-}
+        }  // closes Column
+    }      // closes Box
+}          // closes AppScreen
 
 // =====================================================================
 // ① 🎯 当前正在使用 —— 大卡片
@@ -704,9 +705,7 @@ private fun HistoryOpenList(
                 }
             }
         }
-        }      // closes when
-        }      // closes Column
-    }          // closes Box
+    }
 }
 
 @Composable
