@@ -336,6 +336,27 @@ function loadTileLayer(idx, manual) {
   updateLayerBtn();
 }
 
+// 确保图层按钮始终存在（即使 initMap 还没执行完）
+function ensureLayerBtn() {
+  if (document.getElementById('layerBtn')) { updateLayerBtn(); return; }
+  try {
+    var btn = document.createElement('div');
+    btn.id = 'layerBtn';
+    btn.className = 'layer-btn';
+    btn.textContent = '切换为卫星图';
+    btn.onclick = function() {
+      // 如果地图还没初始化好，提示
+      if (typeof map === 'undefined' || !map) {
+        showFlash('地图加载中，请稍候...', 2000);
+        return;
+      }
+      switchTileLayer();
+    };
+    (document.body || document.documentElement).appendChild(btn);
+    updateLayerBtn();
+  } catch(e) { console.warn('layerBtn create fail:', e); }
+}
+
 function switchTileLayer() {
   if (!map) return;
   __tileFailCount = 0;
@@ -407,16 +428,8 @@ function initMap() {
     //    loadTileLayer 已移到全局作用域（修复 switchTileLayer 作用域崩溃问题）
     loadTileLayer(__tileIdx, false);
 
-    // ===== 添加图层切换按钮 =====
-    try {
-      var layerBtn = document.createElement('div');
-      layerBtn.id = 'layerBtn';
-      layerBtn.className = 'layer-btn';
-      layerBtn.textContent = '切换为卫星图';
-      layerBtn.onclick = switchTileLayer;
-      (document.body||document.documentElement).appendChild(layerBtn);
-      updateLayerBtn();
-    } catch(e){}
+    // ===== 添加图层切换按钮 =====（确保始终创建，即使地图初始化失败）
+    ensureLayerBtn();
 
     // ===== 底部抽屉：运动轨迹 =====
     initDrawer();
@@ -923,12 +936,15 @@ function fetchPartnerUid(cb) {
 
 // DOM Ready 后如果 Leaflet 已经加载完成就立刻初始化
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
+  ensureLayerBtn();  // 立即创建按钮，不等待地图
   if (typeof L !== 'undefined') { tryInitMap(); }
 } else {
   window.addEventListener('DOMContentLoaded', function(){
+    ensureLayerBtn();
     if (typeof L !== 'undefined') { tryInitMap(); }
   });
   window.addEventListener('load', function(){
+    ensureLayerBtn();
     if (typeof L !== 'undefined') { tryInitMap(); }
   });
 }

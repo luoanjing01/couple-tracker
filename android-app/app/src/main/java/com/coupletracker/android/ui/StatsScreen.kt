@@ -146,7 +146,7 @@ fun StatsScreen() {
             .padding(horizontal = 16.dp, vertical = 18.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("每日统计", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+            Text("每日统计", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
             Spacer(Modifier.weight(1f))
             if (partnerId != null) {
                 Button(

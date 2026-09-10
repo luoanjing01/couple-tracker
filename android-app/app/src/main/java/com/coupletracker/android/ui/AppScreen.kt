@@ -109,7 +109,7 @@ fun AppScreen() {
     ) {
         // ---- 顶部标题 + 切换按钮 ----
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("应用动态", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+            Text("应用动态", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
             Spacer(Modifier.weight(1f))
             if (partnerId != null) {
                 Button(
