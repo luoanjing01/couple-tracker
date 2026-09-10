@@ -141,7 +141,7 @@ BEGIN
     END IF;
 
     SELECT id, couple_code, partner_id INTO v_their_row
-      FROM public.profiles WHERE couple_code = v_their_code LIMIT 1;
+      FROM public.profiles WHERE lower(couple_code) = lower(v_their_code) LIMIT 1;
 
     IF v_their_row IS NULL OR v_their_row.id IS NULL THEN
         RETURN jsonb_build_object('ok', false, 'reason', 'CODE_NOT_FOUND');

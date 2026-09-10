@@ -55,16 +55,6 @@ fun StatsScreen() {
                 }
                 partnerLoaded = true
             }
-        } else if (myCode.isNotBlank()) {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    NetworkModule.restService.getProfile(coupleCode = myCode)
-                }.getOrNull()?.body()?.filter { it.id != myId }?.firstOrNull()?.let { p ->
-                    partnerId = p.id
-                    partnerName = p.nickname.ifBlank { p.username }
-                }
-                partnerLoaded = true
-            }
         } else {
             partnerLoaded = true
         }
@@ -157,8 +147,21 @@ fun StatsScreen() {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("每日统计", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = { reloadKey++ }) {
-                Text("🔄 刷新", color = blue, fontSize = 13.sp)
+            if (partnerId != null) {
+                Button(
+                    onClick = { showPartner = !showPartner; reloadKey++ },
+                    shape = RoundedCornerShape(20.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (showPartner) blue else pink
+                    ),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        if (showPartner) "👤 我" else "💕 TA",
+                        fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
             }
         }
 
@@ -186,32 +189,7 @@ fun StatsScreen() {
         Spacer(Modifier.height(8.dp))
 
         if (partnerId != null) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                FilterChip(
-                    selected = !showPartner,
-                    onClick = { showPartner = false },
-                    label = { Text("👤 我", fontSize = 15.sp, fontWeight = FontWeight.Bold) },
-                    modifier = Modifier.height(44.dp),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = pink.copy(alpha = 0.2f),
-                        selectedLabelColor = pink
-                    )
-                )
-                FilterChip(
-                    selected = showPartner,
-                    onClick = { showPartner = true },
-                    label = { Text("💕 TA · " + partnerName, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
-                    modifier = Modifier.height(44.dp),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = blue.copy(alpha = 0.2f),
-                        selectedLabelColor = blue
-                    )
-                )
-            }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(4.dp))
         }
 
         val subjectName = if (showPartner) (partnerName.ifBlank { "TA" }) else (user?.displayName ?: "我")

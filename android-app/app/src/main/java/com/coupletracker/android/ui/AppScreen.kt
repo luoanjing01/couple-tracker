@@ -24,7 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
+
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -90,16 +90,6 @@ fun AppScreen() {
                 }
                 partnerLoaded = true
             }
-        } else if (myCode.isNotBlank()) {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    NetworkModule.restService.getProfile(coupleCode = myCode)
-                }.getOrNull()?.body()?.filter { it.id != myId }?.firstOrNull()?.let { p ->
-                    partnerId = p.id
-                    partnerName = p.nickname.ifBlank { p.username }
-                }
-                partnerLoaded = true
-            }
         } else {
             partnerLoaded = true
         }
@@ -116,45 +106,32 @@ fun AppScreen() {
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 18.dp)
     ) {
-        // ---- 顶部标题 + 切换 ----
+        // ---- 顶部标题 + 切换按钮 ----
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("应用动态", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { reloadKey++ }) {
-                Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = Color(0xFF667EEA))
+            if (partnerId != null) {
+                Button(
+                    onClick = { showPartner = !showPartner; reloadKey++ },
+                    shape = RoundedCornerShape(20.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (showPartner) Color(0xFF667EEA) else Color(0xFFE75480)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        if (showPartner) "👤 我" else "💕 TA",
+                        fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
             }
         }
 
         Spacer(Modifier.height(10.dp))
 
-        // 只有配对了才有"看 TA"选项
         if (partnerId != null) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                FilterChip(
-                    selected = !showPartner,
-                    onClick = { showPartner = false },
-                    label = { Text("👤 我", fontSize = 15.sp, fontWeight = FontWeight.Bold) },
-                    modifier = Modifier.height(44.dp),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFFE75480).copy(alpha = 0.2f),
-                        selectedLabelColor = Color(0xFFE75480)
-                    )
-                )
-                FilterChip(
-                    selected = showPartner,
-                    onClick = { showPartner = true },
-                    label = { Text("💕 TA · " + partnerName, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
-                    modifier = Modifier.height(44.dp),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFF667EEA).copy(alpha = 0.2f),
-                        selectedLabelColor = Color(0xFF667EEA)
-                    )
-                )
-            }
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(4.dp))
         }
 
         // ============= ① 当前正在使用 =============

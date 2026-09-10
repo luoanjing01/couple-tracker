@@ -895,43 +895,28 @@ var __partnerUid = {v:null, at:0};
 function fetchPartnerUid(cb) {
   var now = Date.now();
   if (__partnerUid.v && (now - __partnerUid.at) < 15000) { cb(__partnerUid.v, null); return; }
-  var uid = me && me.id ? me.id : null;
   var partnerId = me && me.partnerId ? me.partnerId : null;
-  var code = me && me.coupleCode ? me.coupleCode : null;
   var headers = makeHeaders();
 
-  function queryByCode() {
-    if (!code) { cb(null, null); return; }
-    // 兼容旧数据：用 couple_code 查（neq = not equal，排除自己）
-    fetch(SUPABASE_URL + '/rest/v1/profiles?select=id&couple_code=eq.'+encodeURIComponent(String(code).toUpperCase())+(uid ? '&id=neq.'+encodeURIComponent(uid) : '')+'&limit=1', { headers: headers })
-      .then(function(r){
-        if (!r.ok) throw new Error('HTTP '+r.status);
-        return r.json();
-      }).then(function(rows){
-        var pu = (Array.isArray(rows) && rows[0]) ? rows[0].id : null;
-        __partnerUid = {v:pu, at: now};
-        cb(pu, null);
-      }).catch(function(e){ cb(null, 'TA查询('+(e&&e.message?e.message:'网络失败')+')'); });
+  if (!partnerId) {
+    // 没有 partner_id = 未配对，不查
+    __partnerUid = {v:null, at: now};
+    cb(null, null);
+    return;
   }
 
-  if (partnerId) {
-    // 优先用 partner_id 查
-    fetch(SUPABASE_URL + '/rest/v1/profiles?select=id&id=eq.'+encodeURIComponent(partnerId)+'&limit=1', { headers: headers })
-      .then(function(r){
-        if (!r.ok) throw new Error('HTTP '+r.status);
-        return r.json();
-      }).then(function(rows){
-        var pu = (Array.isArray(rows) && rows[0]) ? rows[0].id : null;
-        __partnerUid = {v:pu, at: now};
-        cb(pu, null);
-      }).catch(function(e){
-        // partner_id 查询失败 → 回退到 couple_code 查询
-        console.warn('[CT] partner_id 查询失败，回退到 couple_code:', e&&e.message);
-        queryByCode();
-      });
-  } else {
-    queryByCode();
-  }
+  // 用 partner_id 查
+  fetch(SUPABASE_URL + '/rest/v1/profiles?select=id&id=eq.'+encodeURIComponent(partnerId)+'&limit=1', { headers: headers })
+    .then(function(r){
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    }).then(function(rows){
+      var pu = (Array.isArray(rows) && rows[0]) ? rows[0].id : null;
+      __partnerUid = {v:pu, at: now};
+      cb(pu, null);
+    }).catch(function(e){
+      cb(null, 'TA查询('+(e&&e.message?e.message:'网络失败')+')');
+    });
 }
 
 // DOM Ready 后如果 Leaflet 已经加载完成就立刻初始化

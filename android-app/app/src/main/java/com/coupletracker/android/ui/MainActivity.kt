@@ -470,12 +470,10 @@ class MainActivity : ComponentActivity() {
             var hasPartner by remember { mutableStateOf<Boolean?>(null) }
             var partnerName by remember { mutableStateOf("") }
             LaunchedEffect(code, myPartnerId) {
-                val myId = user?.id ?: ""
                 withContext(Dispatchers.IO) {
                     if (!myPartnerId.isNullOrBlank()) {
-                        // ✅ partner_id 不为空 = 已配对，直接标记 true
+                        // ✅ partner_id 不为空 = 已配对
                         hasPartner = true
-                        // 只在 partnerName 为空时才查（避免覆盖已有名字）
                         if (partnerName.isBlank()) {
                             runCatching {
                                 NetworkModule.restService.getProfile(id = myPartnerId)
@@ -483,17 +481,10 @@ class MainActivity : ComponentActivity() {
                                 partnerName = partner.nickname.ifBlank { partner.username }
                             }
                         }
-                    } else if (code.isNotBlank()) {
-                        // 兼容旧数据：用 couple_code 查
-                        hasPartner = null
-                        runCatching {
-                            NetworkModule.restService.getProfile(coupleCode = code)
-                        }.getOrNull()?.body()?.filter { it.id != myId }?.firstOrNull()?.let { partner ->
-                            hasPartner = true
-                            partnerName = partner.nickname.ifBlank { partner.username }
-                        } ?: run { hasPartner = false }
                     } else {
+                        // ❌ 没有 partner_id = 未配对（不再用 couple_code 兜底）
                         hasPartner = false
+                        partnerName = ""
                     }
                 }
             }
