@@ -127,6 +127,54 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION public.register_user(text, text, text, text) TO postgres, anon, authenticated;
 
+-- ④b verify_login：验证密码并返回 profile（命名字段，含 partner_id / pending_pair）
+DROP FUNCTION IF EXISTS public.verify_login(text, text);
+CREATE OR REPLACE FUNCTION public.verify_login(
+    p_username text,
+    p_password text
+) RETURNS jsonb AS $$
+DECLARE
+    v_user_id uuid;
+    v_email   text;
+    v_profile jsonb;
+BEGIN
+    v_email := p_username || '@coupletracker.local';
+
+    SELECT u.id INTO v_user_id
+    FROM auth.users u
+    WHERE u.email = v_email
+      AND u.encrypted_password = crypt(p_password, u.encrypted_password);
+
+    IF v_user_id IS NULL THEN
+        RAISE EXCEPTION 'INVALID_CREDENTIALS';
+    END IF;
+
+    SELECT jsonb_build_object(
+        'id', p.id,
+        'username', p.username,
+        'nickname', p.nickname,
+        'avatar', p.avatar,
+        'gender', p.gender,
+        'couple_code', p.couple_code,
+        'couple_id', NULL,
+        'partner_id', p.partner_id,
+        'pending_pair', p.pending_pair,
+        'created_at', p.created_at
+    ) INTO v_profile
+    FROM public.profiles p WHERE p.id = v_user_id;
+
+    IF v_profile IS NULL THEN
+        RAISE EXCEPTION 'PROFILE_NOT_FOUND';
+    END IF;
+
+    RETURN jsonb_build_object(
+        'user_id', v_user_id,
+        'profile', v_profile
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION public.verify_login(text, text) TO postgres, anon, authenticated;
+
 -- ⑤ 双向配对逻辑：
 --    A 输入 B 的码 → A.pending_pair = B.id
 --    B 输入 A 的码 → B.pending_pair = A.id → 检查 A.pending_pair == B → 双向确认！

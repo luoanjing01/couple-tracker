@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,6 +43,12 @@ fun StatsScreen() {
     var loading by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableStateOf(0) }
+
+    // ---- 下拉刷新 ----
+    var pullOffset by remember { mutableStateOf(0f) }
+    var isRefreshing by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
+    val refreshTrigger = 80f
 
     LaunchedEffect(myCode, myId) {
         partnerId = null; partnerName = ""; partnerLoaded = false
@@ -138,13 +146,51 @@ fun StatsScreen() {
     val bg = Color(0xFFFDF2F8)
     val mainColor = if (showPartner) blue else pink
 
-    Column(
+    Box(
         Modifier
             .fillMaxSize()
             .background(bg)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 18.dp)
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragEnd = {
+                        if (pullOffset >= refreshTrigger && !isRefreshing) {
+                            isRefreshing = true
+                            pullOffset = 40f
+                            reloadKey++
+                            kotlinx.coroutines.GlobalScope.launch {
+                                kotlinx.coroutines.delay(1500)
+                                isRefreshing = false
+                                pullOffset = 0f
+                            }
+                        } else {
+                            pullOffset = 0f
+                        }
+                    }
+                ) { _, dragAmount ->
+                    if (scrollState.value == 0 && dragAmount > 0 && !isRefreshing) {
+                        pullOffset = (pullOffset + dragAmount).coerceAtMost(120f)
+                    } else if (dragAmount < 0 && pullOffset > 0) {
+                        pullOffset = (pullOffset + dragAmount).coerceAtLeast(0f)
+                    }
+                }
+            }
     ) {
+        if (pullOffset > 0 || isRefreshing) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = (pullOffset / 2 - 12).dp),
+                color = mainColor,
+                strokeWidth = 2.5.dp
+            )
+        }
+
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 16.dp, vertical = 18.dp)
+        ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("每日统计", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
             Spacer(Modifier.weight(1f))
@@ -306,7 +352,8 @@ fun StatsScreen() {
         }
 
         Spacer(Modifier.height(20.dp))
-    }
+        }  // closes Column
+    }      // closes Box
 }
 
 // ============================================================================

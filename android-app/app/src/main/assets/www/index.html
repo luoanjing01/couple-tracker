@@ -677,6 +677,48 @@ function updatePartnerTrackBtn() {
   if (btn) btn.style.display = (__partnerUid.v) ? 'block' : 'none';
 }
 
+// 轨迹点过滤：去毛刺，让路径更平滑
+// 1. 最小距离过滤：距离上一个点 < 5米 的点丢弃（GPS抖动）
+// 2. Ramer-Douglas-Peucker 简化：epsilon=8米，去掉偏离直线<8米的中间点
+function simplifyTrack(pts, epsilon) {
+  if (pts.length < 3) return pts.slice();
+
+  // Step 1: 最小距离过滤
+  var filtered = [pts[0]];
+  for (var i = 1; i < pts.length; i++) {
+    var d = map.distance(filtered[filtered.length - 1], pts[i]);
+    if (d >= 5) filtered.push(pts[i]);  // 至少5米才保留
+  }
+  if (filtered.length < 3) return filtered;
+
+  // Step 2: RDP 简化
+  function perpDist(p, a, b) {
+    var dx = b[0] - a[0], dy = b[1] - a[1];
+    var len2 = dx * dx + dy * dy;
+    if (len2 === 0) return map.distance(p, a);
+    var t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    var proj = [a[0] + t * dx, a[1] + t * dy];
+    return map.distance(p, proj);
+  }
+  function rdp(arr, eps) {
+    if (arr.length < 3) return arr;
+    var first = arr[0], last = arr[arr.length - 1];
+    var maxDist = 0, maxIdx = 0;
+    for (var i = 1; i < arr.length - 1; i++) {
+      var d = perpDist(arr[i], first, last);
+      if (d > maxDist) { maxDist = d; maxIdx = i; }
+    }
+    if (maxDist > eps) {
+      var left = rdp(arr.slice(0, maxIdx + 1), eps);
+      var right = rdp(arr.slice(maxIdx), eps);
+      return left.slice(0, -1).concat(right);
+    }
+    return [first, last];
+  }
+  return rdp(filtered, epsilon || 8);
+}
+
 function loadTrack(uid, isPartner) {
   if (!uid) { showFlash(isPartner ? '还没有配对哦' : '请先登录'); return; }
   var headers = makeHeaders();
@@ -713,6 +755,10 @@ function loadTrack(uid, isPartner) {
         else yesterdayPts.push(pts[i]);
       });
 
+      // ✅ 轨迹平滑过滤（去毛刺）
+      todayPts = simplifyTrack(todayPts, 8);
+      yesterdayPts = simplifyTrack(yesterdayPts, 8);
+
       var allBounds = [];
       var lineColor = isPartner ? '#667eea' : '#e75480';  // TA用蓝色，我用粉色
       if (yesterdayPts.length >= 2) {
@@ -732,10 +778,11 @@ function loadTrack(uid, isPartner) {
         __trackEndMarker = L.circleMarker(allBounds[allBounds.length-1], { radius: 8, color: '#e53e3e', fillColor: '#e53e3e', fillOpacity: 1 }).addTo(map);
       }
 
-      // 计算距离（米）
+      // 计算距离（米）—— 用过滤后的点
+      var allPts = yesterdayPts.concat(todayPts);
       var dist = 0;
-      for (var i = 1; i < pts.length; i++) {
-        dist += map.distance(pts[i-1], pts[i]);
+      for (var i = 1; i < allPts.length; i++) {
+        dist += map.distance(allPts[i-1], allPts[i]);
       }
 
       // 显示统计（只保留公里）

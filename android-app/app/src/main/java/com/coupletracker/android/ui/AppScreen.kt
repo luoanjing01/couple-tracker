@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 
 import androidx.compose.material3.*
@@ -74,6 +76,12 @@ fun AppScreen() {
     var partnerLoaded by remember { mutableStateOf(false) }
     var reloadKey by remember { mutableStateOf(0) }
 
+    // ---- 下拉刷新 ----
+    var pullOffset by remember { mutableStateOf(0f) }
+    var isRefreshing by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
+    val refreshTrigger = 80f  // 下拉超过80px触发刷新
+
     // ---- 查配对对方 ----
     // ✅ 优先用 partner_id 查（配对码不再共享，每个人有独立码）
     //    兼容旧数据：没 partner_id 的用 couple_code 查
@@ -100,13 +108,54 @@ fun AppScreen() {
     val subjectName = if (showPartner) partnerName.ifBlank { "TA" } else (user?.displayName ?: "我")
     val subjectIsMe = !showPartner
 
-    Column(
+    Box(
         Modifier
             .fillMaxSize()
             .background(Color(0xFFFDF2F8))
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 18.dp)
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragEnd = {
+                        if (pullOffset >= refreshTrigger && !isRefreshing) {
+                            isRefreshing = true
+                            pullOffset = 40f  // 保持显示刷新圈
+                            reloadKey++  // 触发数据重新加载
+                            // 模拟刷新耗时（等数据加载完后重置）
+                            kotlinx.coroutines.GlobalScope.launch {
+                                kotlinx.coroutines.delay(1500)
+                                isRefreshing = false
+                                pullOffset = 0f
+                            }
+                        } else {
+                            pullOffset = 0f
+                        }
+                    }
+                ) { _, dragAmount ->
+                    // 只在滚动到顶部时才允许下拉刷新
+                    if (scrollState.value == 0 && dragAmount > 0 && !isRefreshing) {
+                        pullOffset = (pullOffset + dragAmount).coerceAtMost(120f)
+                    } else if (dragAmount < 0 && pullOffset > 0) {
+                        pullOffset = (pullOffset + dragAmount).coerceAtLeast(0f)
+                    }
+                }
+            }
     ) {
+        // 刷新圈
+        if (pullOffset > 0 || isRefreshing) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = (pullOffset / 2 - 12).dp),
+                color = Color(0xFFE75480),
+                strokeWidth = 2.5.dp
+            )
+        }
+
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 16.dp, vertical = 18.dp)
+        ) {
         // ---- 顶部标题 + 切换按钮 ----
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("应用动态", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
@@ -673,7 +722,8 @@ private fun HistoryOpenList(
                 }
             }
         }
-    }
+        }  // closes Column
+    }      // closes Box
 }
 
 @Composable
