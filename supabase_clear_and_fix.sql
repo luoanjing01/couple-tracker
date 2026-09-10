@@ -3,12 +3,14 @@
 --  ⚠️ 会删除所有用户、位置、使用记录！请确认后再执行！
 -- ============================================================
 
--- ① 清除所有业务数据（按外键依赖顺序）
-DELETE FROM public.app_usage;
-DELETE FROM public.locations;
-DELETE FROM public.profiles;
+-- ① 清除所有业务数据（按外键依赖顺序）+ 重置序列
+TRUNCATE TABLE public.app_usage CASCADE;
+TRUNCATE TABLE public.locations CASCADE;
+TRUNCATE TABLE public.profiles CASCADE;
 DELETE FROM auth.identities;
 DELETE FROM auth.users;
+DELETE FROM auth.refresh_tokens;
+DELETE FROM auth.sessions;
 
 -- ② 确保 partner_id 和 pending_pair 列存在
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS partner_id uuid;

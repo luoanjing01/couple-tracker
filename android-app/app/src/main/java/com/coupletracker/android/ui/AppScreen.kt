@@ -80,7 +80,8 @@ fun AppScreen() {
     LaunchedEffect(myCode, myId) {
         partnerId = null; partnerName = ""; partnerLoaded = false
         val myPartnerId = user?.partnerId
-        if (myPartnerId?.isNotBlank() == true) {
+        val uuidRe = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOption.IGNORE_CASE)
+        if (!myPartnerId.isNullOrBlank() && uuidRe.matches(myPartnerId)) {
             withContext(Dispatchers.IO) {
                 runCatching {
                     NetworkModule.restService.getProfile(id = myPartnerId)

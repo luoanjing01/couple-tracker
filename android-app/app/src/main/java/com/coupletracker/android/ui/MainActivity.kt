@@ -478,8 +478,10 @@ class MainActivity : ComponentActivity() {
             var partnerName by remember { mutableStateOf("") }
             LaunchedEffect(code, myPartnerId) {
                 withContext(Dispatchers.IO) {
-                    if (!myPartnerId.isNullOrBlank()) {
-                        // ✅ partner_id 不为空 = 已配对
+                    // UUID 格式校验
+                    val uuidPattern = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOption.IGNORE_CASE)
+                    if (!myPartnerId.isNullOrBlank() && uuidPattern.matches(myPartnerId)) {
+                        // ✅ partner_id 是合法 UUID = 已配对
                         hasPartner = true
                         if (partnerName.isBlank()) {
                             runCatching {
@@ -489,7 +491,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     } else {
-                        // ❌ 没有 partner_id = 未配对（不再用 couple_code 兜底）
+                        // ❌ 没有 partner_id 或格式非法 = 未配对
                         hasPartner = false
                         partnerName = ""
                     }

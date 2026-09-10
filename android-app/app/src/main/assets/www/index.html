@@ -898,8 +898,10 @@ function fetchPartnerUid(cb) {
   var partnerId = me && me.partnerId ? me.partnerId : null;
   var headers = makeHeaders();
 
-  if (!partnerId) {
-    // 没有 partner_id = 未配对，不查
+  // UUID 格式校验（避免非法值导致 HTTP 400）
+  var uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!partnerId || !uuidRe.test(partnerId)) {
+    // 没有 partner_id 或格式非法 = 未配对，不查
     __partnerUid = {v:null, at: now};
     cb(null, null);
     return;
