@@ -216,8 +216,6 @@ class MainActivity : ComponentActivity() {
                             settings.blockNetworkImage = false
                             settings.loadsImagesAutomatically = true
                             settings.cacheMode = WebSettings.LOAD_NO_CACHE  // 平板内存有限，不缓存瓦片
-                            // ✅ 平板内存优化：限制 WebView 缓存大小
-                            settings.setAppCacheEnabled(false)
                             // 正确的 User-Agent，避免被 OSM/ArcGIS 瓦片服务器限流
                             settings.userAgentString = settings.userAgentString + " CoupleTracker/1.0"
                             webViewClient = object : WebViewClient() {
