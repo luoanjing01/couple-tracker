@@ -195,8 +195,9 @@ class MainActivity : ComponentActivity() {
                             setBackgroundColor(0x00000000) // 透明背景，避免 WebView 默认白色闪烁
                             overScrollMode = android.view.View.OVER_SCROLL_NEVER
                             isScrollContainer = false
-                            // ✅ 平板闪退修复：硬件加速渲染 + 渲染进程崩溃保护
-                            setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+                            // ✅ 平板闪退修复：软件渲染兜底（骁龙685等低端GPU上硬件加速WebView容易崩）
+                            //    先用软件渲染，稳定性优先
+                            setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
 
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
@@ -214,7 +215,9 @@ class MainActivity : ComponentActivity() {
                             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                             settings.blockNetworkImage = false
                             settings.loadsImagesAutomatically = true
-                            settings.cacheMode = WebSettings.LOAD_DEFAULT
+                            settings.cacheMode = WebSettings.LOAD_NO_CACHE  // 平板内存有限，不缓存瓦片
+                            // ✅ 平板内存优化：限制 WebView 缓存大小
+                            settings.setAppCacheEnabled(false)
                             // 正确的 User-Agent，避免被 OSM/ArcGIS 瓦片服务器限流
                             settings.userAgentString = settings.userAgentString + " CoupleTracker/1.0"
                             webViewClient = object : WebViewClient() {
@@ -241,16 +244,22 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
 
-                                // ✅ 平板闪退修复：WebView 渲染进程崩溃时不杀 App，返回 true 让系统处理
+                                // ✅ 平板闪退修复：WebView 渲染进程崩溃时不杀 App
                                 override fun onRenderProcessGone(
                                     view: WebView?,
                                     detail: android.webkit.RenderProcessGoneDetail?
                                 ): Boolean {
                                     android.util.Log.e("CT-WebView", "渲染进程崩溃 didCrash=${detail?.didCrash()}")
-                                    // 返回 true 表示我们自己处理，避免 App 跟着崩溃
-                                    // 清除缓存的 WebView，下次进入地图时重建
+                                    // 销毁崩溃的 WebView
+                                    view?.let { w ->
+                                        runCatching {
+                                            (w.parent as? android.view.ViewGroup)?.removeView(w)
+                                            w.destroy()
+                                        }
+                                    }
+                                    // 清除缓存，下次进入地图时自动重建
                                     this@MainActivity.webView = null
-                                    return true
+                                    return true  // 返回 true = 自己处理，App 不崩溃
                                 }
                             }
                             val webViewRef = this
@@ -646,15 +655,29 @@ class MainActivity : ComponentActivity() {
                                         pairLoading = false
                                         when {
                                             resp.getOrNull()?.isSuccessful == true && body?.ok == true -> {
-                                                // ✅ 配对成功：存 partner_id（不再改 couple_code，每个人保留独立码）
                                                 val theirId = body.their_id
-                                                UserRepository.get().setUser(me.copy(
-                                                    partnerId = theirId
-                                                ))
-                                                hasPartner = true
-                                                partnerName = body.their_nickname?.takeIf { it.isNotBlank() } ?: "TA"
-                                                pairMsg = "✅ 配对成功！已和 $partnerName 绑定"
-                                                pairInput = ""
+                                                val theirNick = body.their_nickname?.takeIf { it.isNotBlank() } ?: "TA"
+                                                when {
+                                                    body.paired == true || body.already_paired == true -> {
+                                                        // ✅ 双向配对成功
+                                                        UserRepository.get().setUser(me.copy(
+                                                            partnerId = theirId
+                                                        ))
+                                                        hasPartner = true
+                                                        partnerName = theirNick
+                                                        pairMsg = "✅ 配对成功！已和 $theirNick 绑定"
+                                                        pairInput = ""
+                                                    }
+                                                    body.waiting == true -> {
+                                                        // ⏳ 等待对方也输入我的码
+                                                        pairMsg = body.msg ?: "⏳ 已发起配对请求，等待TA也输入你的配对码"
+                                                        pairInput = ""
+                                                    }
+                                                    else -> {
+                                                        pairMsg = body.msg ?: "配对请求已发送"
+                                                        pairInput = ""
+                                                    }
+                                                }
                                             }
                                             body?.reason == "CODE_NOT_FOUND" ->
                                                 pairMsg = "❌ 配对码不存在：让TA打开「我的」页确认TA的码"

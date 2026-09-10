@@ -117,11 +117,15 @@ data class PairByCodeReq(
 
 /** pair_by_code RPC 返回体 */
 data class PairByCodeResp(
-    val ok: Boolean = false,
-    val reason: String? = null,
-    val couple_code: String? = null,
-    val their_id: String? = null,
-    val their_nickname: String? = null
+    @SerializedName("ok") val ok: Boolean = false,
+    @SerializedName("reason") val reason: String? = null,
+    @SerializedName("couple_code") val couple_code: String? = null,
+    @SerializedName("their_id") val their_id: String? = null,
+    @SerializedName("their_nickname") val their_nickname: String? = null,
+    @SerializedName("paired") val paired: Boolean? = null,
+    @SerializedName("waiting") val waiting: Boolean? = null,
+    @SerializedName("already_paired") val already_paired: Boolean? = null,
+    @SerializedName("msg") val msg: String? = null
 )
 
 /** PostgREST RPC 错误格式（HTTP 4xx / 5xx） */
