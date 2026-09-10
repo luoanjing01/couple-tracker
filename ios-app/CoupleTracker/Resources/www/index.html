@@ -1,0 +1,950 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>小世界 · 地图</title>
+
+<!-- ============================================================
+     ✅ Leaflet CSS：本地文件！彻底消除 CDN 被墙风险
+     （之前 bootcdn/staticfile/baomitu/unpkg 在用户手机各种被拦导致地图全粉空白）
+     ============================================================ -->
+<link rel="stylesheet" href="./leaflet.min.css">
+
+<style>
+  html,body{margin:0;padding:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:#fdf2f8;}
+  #map{width:100%;height:100%;background:#dae1e7;position:relative;}
+  /* WebView 背景色（瓦片加载前显示浅灰底色，避免全白闪烁）*/
+  .topbar{position:absolute;top:10px;left:10px;right:10px;z-index:500;background:rgba(255,255,255,0.96);border-radius:14px;padding:10px 14px;box-shadow:0 4px 18px rgba(0,0,0,0.08);}
+  .topbar .row{display:flex;justify-content:space-between;align-items:center;gap:10px;}
+  .nick{font-weight:700;color:#2d3748;font-size:14px;}
+  .meta{font-size:11px;color:#718096;margin-top:2px;}
+  .meta.err{color:#e53e3e;font-weight:600;}
+  .status{font-size:12px;}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#48bb78;margin-right:4px;vertical-align:middle;}
+  .distance{font-size:13px;color:#e75480;font-weight:700;}
+  .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:999;background:rgba(253,242,248,0.88);color:#e75480;font-weight:700;flex-direction:column;gap:8px;}
+  .loading .sub{color:#718096;font-size:12px;font-weight:500;}
+  .popup{text-align:center;}
+  .popup .avatar{font-size:26px;}
+  .popup .name{font-weight:700;font-size:14px;margin:2px 0;}
+  .popup .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;margin-top:4px;}
+  .badge-move{background:#fff4db;color:#b7791f;}
+  .badge-stop{background:#def7ec;color:#22543d;}
+  .popup .sub{font-size:11px;color:#718096;margin-top:4px;}
+  .warn-card{position:absolute;top:72px;left:10px;right:10px;z-index:499;border-radius:10px;padding:8px 10px;font-size:11px;line-height:1.4;}
+  .warn-red{background:rgba(254,215,215,0.95);color:#742a2a;}
+  .warn-yellow{background:rgba(254,235,200,0.95);color:#744210;}
+  /* 图层切换按钮：右下角（原生采集频率卡片已移到左下角，不再遮挡） */
+  .layer-btn{position:absolute;bottom:130px;right:14px;z-index:500;background:rgba(255,255,255,0.97);border-radius:22px;padding:9px 16px;box-shadow:0 4px 16px rgba(0,0,0,0.2);font-size:13px;font-weight:600;color:#2d3748;cursor:pointer;user-select:none;border:2px solid #e75480;}
+  .layer-btn:active{transform:scale(0.95);background:#fff0f3;}
+  /* 缩放按钮：下移+更圆 */
+  .leaflet-control-zoom{margin-top:80px!important;margin-left:14px!important;border-radius:16px!important;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.15)!important;border:none!important;}
+  .leaflet-control-zoom a{border-radius:14px!important;width:40px!important;height:40px!important;line-height:40px!important;font-size:20px!important;color:#2d3748!important;background:rgba(255,255,255,0.97)!important;border:none!important;}
+  .leaflet-control-zoom a:hover{background:#fff0f3!important;}
+  .leaflet-bar{border:none!important;}
+  /* ===== 底部抽屉（运动轨迹）===== */
+  .drawer{position:absolute;bottom:0;left:0;right:0;z-index:600;background:#fff;border-radius:20px 20px 0 0;box-shadow:0 -4px 24px rgba(0,0,0,0.15);transition:transform .3s ease;transform:translateY(calc(100% - 44px));max-height:70%;display:flex;flex-direction:column;}
+  .drawer.open{transform:translateY(0);}
+  .drawer-handle{width:100%;height:44px;display:flex;align-items:center;justify-content:center;cursor:grab;flex-shrink:0;}
+  .drawer-handle:active{cursor:grabbing;}
+  .drawer-handle::after{content:'';width:40px;height:5px;background:#cbd5e0;border-radius:3px;}
+  .drawer-title{position:absolute;left:16px;font-size:13px;font-weight:600;color:#4a5568;}
+  .drawer-body{padding:0 16px 20px;overflow-y:auto;flex:1;}
+  .track-summary{display:flex;gap:12px;margin-bottom:12px;}
+  .track-card{flex:1;background:#f7fafc;border-radius:12px;padding:10px;text-align:center;}
+  .track-card .val{font-size:18px;font-weight:700;color:#e75480;}
+  .track-card .lbl{font-size:11px;color:#718096;margin-top:2px;}
+  .track-btn{display:block;width:100%;padding:10px;border:none;border-radius:12px;background:#e75480;color:#fff;font-size:14px;font-weight:600;cursor:pointer;margin-top:8px;}
+  .track-btn:active{transform:scale(0.98);}
+  .track-btn.secondary{background:#edf2f7;color:#4a5568;}
+  .track-empty{text-align:center;color:#a0aec0;font-size:13px;padding:20px 0;}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="topbar">
+  <div class="row">
+    <div>
+      <div class="nick" id="nickRow">小世界 · 地图</div>
+      <div class="meta" id="metaRow">正在初始化...</div>
+    </div>
+    <div>
+      <div class="status"><span class="dot"></span><span id="statusText">连接中</span></div>
+      <div class="distance" id="distRow">—</div>
+    </div>
+  </div>
+</div>
+
+<div class="loading" id="loading">
+  <div id="loadingMain">正在加载地图 🗺️...</div>
+  <div class="sub" id="loadingSub">本地加载只需 1-2 秒，请稍候</div>
+</div>
+
+<!-- ===== 底部抽屉：运动轨迹 ===== -->
+<div class="drawer" id="trackDrawer">
+  <div class="drawer-handle" id="drawerHandle">
+    <span class="drawer-title">📍 最近2天运动轨迹</span>
+  </div>
+  <div class="drawer-body" id="drawerBody">
+    <div class="track-empty" id="trackEmpty">点击下方按钮查看走过的路线 🏃</div>
+    <div class="track-summary" id="trackSummary" style="display:none;">
+      <div class="track-card"><div class="val" id="trackDist">0</div><div class="lbl">公里</div></div>
+    </div>
+    <button class="track-btn" id="btnShowTrack">查看我的轨迹</button>
+    <button class="track-btn secondary" id="btnShowPartnerTrack" style="display:none;">查看TA的轨迹</button>
+    <button class="track-btn secondary" id="btnClearTrack" style="display:none;">清除轨迹</button>
+  </div>
+</div>
+<!-- 🔴 调试面板：默认隐藏（display:none），开发时手动改 display:block -->
+<div id="debugBox" style="position:absolute;bottom:70px;left:10px;z-index:9998;background:rgba(255,255,255,0.96);border:1px solid #e75480;border-radius:10px;padding:8px 10px;font-family:monospace;font-size:11px;line-height:1.6;color:#2d3748;box-shadow:0 4px 16px rgba(0,0,0,0.1);max-width:90%;display:none;"></div>
+
+<!-- ============================================================
+     ✅ Leaflet JS：本地文件！绝对不请求外部 CDN
+     ============================================================ -->
+<script src="./leaflet.min.js"></script>
+
+<script>
+/* 全局错误捕获 — 直接显示在页面上，WebView 没有控制台可看 */
+window.onerror = function(msg, url, line, col, err) {
+  var box = document.getElementById("debugBox");
+  if (box) box.innerHTML += "❌ ERROR: " + msg + (line ? " (L"+line+")" : "") + "<br>";
+  console.error("[CT]", msg, url, line, col, err);
+};
+window.addEventListener("unhandledrejection", function(e){
+  var box = document.getElementById("debugBox");
+  if (box) box.innerHTML += "⚠️ REJECT: " + (e.reason && e.reason.message || String(e.reason)) + "<br>";
+});
+</script>
+
+<script>
+/* ============================================================
+   地图主逻辑（Leaflet 本地加载完成 → 直接执行 initMap）
+   ============================================================ */
+var me = null, partner = null;
+var __userTries = 0;
+var __userReadyCb = null;   // 安卓端回调通知入口
+var __userInjected = false;
+
+// 把 localStorage 里的 user 读出来（如果之前有历史就先用着，等安卓端再注入最新值）
+function readLsUser(){
+  try{
+    var s = localStorage && localStorage.getItem('user');
+    if (s){ try{ return JSON.parse(s); }catch(e){} }
+  }catch(e){}
+  return null;
+}
+// 保存到 localStorage（方便下次进入时，即使注入还没生效，也有历史可用）
+function saveLs(){
+  try {
+    // ✅ 只存合法 JWT，清掉之前可能残留的假 token（如 "rpc_auth_xxx"）
+    //    RLS 全放开，anon key 就能读写，根本不需要 JWT
+    if (isValidJWT(window.__AUTH_TOKEN__)) localStorage.setItem('token', window.__AUTH_TOKEN__);
+    else localStorage.removeItem('token');
+
+    if (window.__CURRENT_USER__) localStorage.setItem('user', typeof window.__CURRENT_USER__ === 'string' ? window.__CURRENT_USER__ : JSON.stringify(window.__CURRENT_USER__));
+    if (window.__SUPABASE_URL__) localStorage.setItem('sb_url', window.__SUPABASE_URL__);
+    if (window.__SUPABASE_ANON_KEY__) localStorage.setItem('sb_anon', window.__SUPABASE_ANON_KEY__);
+  } catch(e){}
+}
+// 主入口：尝试读取当前用户
+function tryReadUser(){
+  // 优先级：1) 安卓注入的 window.__CURRENT_USER__  2) localStorage 历史
+  var got = null;
+  try {
+    if (window.__CURRENT_USER__) {
+      got = typeof window.__CURRENT_USER__ === 'string' ? JSON.parse(window.__CURRENT_USER__) : window.__CURRENT_USER__;
+      if (got && got.id) { me = got; __userInjected = true; saveLs(); return true; }
+    }
+  } catch(e){}
+  if (!me) {
+    var ls = readLsUser();
+    if (ls && ls.id) { me = ls; }
+  }
+  return !!(me && me.id);
+}
+// 轮询：前 15 秒每 500ms 尝试一次
+(function pollUser(){
+  __userTries++;
+  var ok = tryReadUser();
+  if (ok) { return; }
+  if (__userTries < 30) { setTimeout(pollUser, 500); return; }
+  // 🚨 超过 15 秒还没拿到 → 顶栏红字 + 中央超大红卡片覆盖地图
+  var mEl = document.getElementById('metaRow');
+  if (mEl && !__userInjected) {
+    mEl.innerHTML = '⚠️ 账号未注入';
+    mEl.classList.add('err');
+  }
+  // 中央卡片（比顶栏大10倍字体，用户无法忽视）
+  if (!__userInjected) {
+    var block = document.createElement('div');
+    block.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:9999;background:rgba(254,215,215,0.96);padding:24px 20px;';
+    block.innerHTML = '<div style="max-width:420px;text-align:center;">'
+      + '<div style="font-size:56px;margin-bottom:10px;">🤔</div>'
+      + '<div style="font-size:22px;font-weight:800;color:#c53030;margin-bottom:8px;">地图加载失败</div>'
+      + '<div style="font-size:13px;color:#742a2a;line-height:1.9;text-align:left;">'
+      + '无法读取登录账号信息（安卓端用户注入失败），<b>所以看不到自己也看不到TA。</b><br><br>'
+      + '<b>✅ 解决步骤（按顺序试）：</b><br>'
+      + '① 从手机最近任务里把 CoupleTracker 划掉 → 重新打开 → 再等 10 秒<br>'
+      + '② 打开「我的」→ 确认能看到自己的头像/用户名/配对码（如果看不到=没登录成功）<br>'
+      + '③ 如果还是看不到：退出登录 → 重新输入用户名密码登录一次<br>'
+      + '④ 如果以上都不行 → 卸载APP → 安装最新版APK再重新登录'
+      + '</div></div>';
+    (document.body||document.documentElement).appendChild(block);
+  }
+})();
+
+// 安卓端 evaluateJavascript 注入完成后会主动调用这个函数（onPageStarted / onPageFinished 各踢一次）
+window.__applyAndroidInjection = function(){
+  var ok = tryReadUser();
+  if (ok) {
+    var mEl = document.getElementById('metaRow');
+    if (mEl) mEl.classList.remove('err');
+    // ✅ 用户注入成功 → 移除"账号未注入"的大红覆盖卡片（如果存在）
+    try {
+      var blocks = document.querySelectorAll('div[style*="inset:0"][style*="z-index:9999"]');
+      for (var i=0; i<blocks.length; i++) blocks[i].parentNode && blocks[i].parentNode.removeChild(blocks[i]);
+    } catch(e){}
+    try { updateTopbar(); } catch(e){}
+    try { poll(); } catch(e){}
+  }
+};
+
+var SUPABASE_URL = (window.__SUPABASE_URL__ || (localStorage && localStorage.getItem('sb_url')) || 'https://gvytqbgangyjjurekyid.supabase.co').replace(/\/$/, '');
+var ANON_KEY    = window.__SUPABASE_ANON_KEY__ || (localStorage && localStorage.getItem('sb_anon')) || 'sb_publishable_TmlnyTou7Z7JGt3vNP3TTw_3-KkCiCM';
+
+/* ============================================================
+   ✅ Token 安全校验：只有合法 JWT 才带 Authorization 头
+      JWT 格式 = base64url.header.payload.signature（三段，点号分隔）
+      假 token 如 "rpc_auth_xxx" 或 anon key 都会被过滤掉
+      👉 RLS 已全放开，只用 apikey(anon) 就能读写所有表，根本不需要 JWT！
+   ============================================================ */
+function isValidJWT(t){ return typeof t === 'string' && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(t.trim()); }
+var __rawToken = window.__AUTH_TOKEN__ || (localStorage && localStorage.getItem('token'));
+var TOKEN = isValidJWT(__rawToken) ? __rawToken : null;  // 只有合法 JWT 才保留，否则=null（不写 Authorization 头）
+
+// ✅ 统一构造安全 headers：只有 TOKEN 是合法 JWT 才加 Authorization
+//    RLS 全放开，anon key 就能读写，绝大多数场景不需要 Authorization 头
+function makeHeaders() {
+  var h = { 'apikey': ANON_KEY };
+  if (TOKEN) h.Authorization = 'Bearer ' + TOKEN;
+  return h;
+}
+
+var meMarker = null, partnerMarker = null, meAcc = null, partnerAcc = null, fitDone = false;
+var lastMeAt = 0, lastPartnerAt = 0;
+var map;
+var lastFetchHint = '';
+var lastRestCount = 0;
+
+// ===== WGS-84 → GCJ-02 坐标转换 =====
+// GPS 上报的是 WGS-84，高德瓦片用 GCJ-02（火星坐标系）
+// 不转换的话标记会偏移 50~500 米（ArcGIS 用 WGS-84 所以不需要转）
+var __PI = 3.14159265358979324;
+var __a = 6378245.0;
+var __ee = 0.00669342162296594323;
+function __outOfChina(lat, lng) {
+  if (lng < 72.004 || lng > 137.8347) return true;
+  if (lat < 0.8293 || lat > 55.8271) return true;
+  return false;
+}
+function __transformLat(x, y) {
+  var ret = -100.0 + 2.0*x + 3.0*y + 0.1142*y*y + 2.0*x*y + 3.0*Math.sqrt(Math.abs(y));
+  ret += (20.0*Math.sin(6.0*x*__PI) + 20.0*Math.sin(2.0*x*__PI)) * 2.0/3.0;
+  ret += (20.0*Math.sin(y*__PI) + 40.0*Math.sin(y/3.0*__PI)) * 2.0/3.0;
+  ret += (160.0*Math.sin(y/12.0*__PI) + 320*Math.sin(y*__PI/30.0)) * 2.0/3.0;
+  return ret;
+}
+function __transformLng(x, y) {
+  var ret = 300.0 + x + 2.0*y + 0.1*x*x + 0.1*x*y + 0.1*Math.sqrt(Math.abs(x));
+  ret += (20.0*Math.sin(6.0*x*__PI) + 20.0*Math.sin(2.0*x*__PI)) * 2.0/3.0;
+  ret += (20.0*Math.sin(x*__PI) + 40.0*Math.sin(x/3.0*__PI)) * 2.0/3.0;
+  ret += (150.0*Math.sin(x/12.0*__PI) + 150.0*Math.sin(x/30.0*__PI)) * 4.0/3.0;
+  return ret;
+}
+// WGS-84 → GCJ-02（国内高德/谷歌中国用）
+function wgs2gcj(lat, lng) {
+  if (__outOfChina(lat, lng)) return [lat, lng];  // 国外不偏移
+  var dLat = __transformLat(lng - 105.0, lat - 35.0);
+  var dLng = __transformLng(lng - 105.0, lat - 35.0);
+  var radLat = lat / 180.0 * __PI;
+  var magic = Math.sin(radLat) * __ee;
+  magic = 1 - magic * magic;
+  var sqrtMagic = Math.sqrt(magic);
+  dLat = (dLat * 180.0) / ((__a * (1 - __ee)) / (magic * sqrtMagic) * __PI);
+  dLng = (dLng * 180.0) / (__a / sqrtMagic * Math.cos(radLat) * __PI);
+  return [lat + dLat, lng + dLng];
+}
+// GCJ-02 → WGS-84（反向，用于从高德坐标还原）
+function gcj2wgs(lat, lng) {
+  var g = wgs2gcj(lat, lng);
+  return [lat - (g[0] - lat), lng - (g[1] - lng)];
+}
+
+// ===== 图层切换全局变量 =====
+// gcj02: true=该图源使用GCJ-02坐标系(需转换), false=WGS-84(不需要转)
+var __tileSources = [
+  { name: '街道图', url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图', gcj02: true },
+  { name: '卫星图', url: 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图', gcj02: true }
+];
+var __tileLayer = null;
+var __tileIdx = 0;
+var __tileFailCount = 0;
+
+// ✅ loadTileLayer 必须放全局！之前定义在 initMap 内部，
+//    switchTileLayer(全局) 调用时报 ReferenceError → 页面崩溃
+function loadTileLayer(idx, manual) {
+  if (!map) return;
+  // 先移除旧图层
+  if (__tileLayer) { try { map.removeLayer(__tileLayer); } catch(e){} __tileLayer = null; }
+  // 索引越界 → 全部失败，降级为无瓦片模式
+  if (idx < 0 || idx >= __tileSources.length) {
+    console.warn('[CT] ⚠️ 所有图源都失败，降级为纯标记模式');
+    return;
+  }
+  var src = __tileSources[idx];
+  __tileIdx = idx;
+  console.log('[CT] 🔄 加载图源 #' + idx + ': ' + src.name);
+  try {
+    __tileLayer = L.tileLayer(src.url, {
+      subdomains: src.sub || 'a',
+      attribution: src.attrs,
+      maxZoom: 19, minZoom: 3,
+      maxNativeZoom: 18,   // 高德瓦片最高18级，超过后自动放大瓦片避免白屏
+      crossOrigin: true
+    }).addTo(map);
+    var _thisIdx = idx;
+    __tileLayer.on('tileerror', function(){
+      if (manual) return;   // 手动选的图源失败不自动切
+      __tileFailCount++;
+      if (__tileFailCount >= 5) {
+        __tileFailCount = 0;
+        var next = (_thisIdx + 1) % __tileSources.length;
+        console.warn('[CT] 🔀 图源' + src.name + '多次失败，切换到 ' + __tileSources[next].name);
+        setTimeout(function(){ loadTileLayer(next, false); }, 300);
+      }
+    });
+    __tileLayer.on('tileload', function(){ __tileFailCount = 0; });
+  } catch(e) {
+    console.error('[CT] ❌ 创建图层异常:', e);
+    if (!manual) {
+      var next = (idx + 1) % __tileSources.length;
+      setTimeout(function(){ loadTileLayer(next, false); }, 200);
+    }
+  }
+  updateLayerBtn();
+}
+
+// 确保图层按钮始终存在（即使 initMap 还没执行完）
+function ensureLayerBtn() {
+  if (document.getElementById('layerBtn')) { updateLayerBtn(); return; }
+  try {
+    var btn = document.createElement('div');
+    btn.id = 'layerBtn';
+    btn.className = 'layer-btn';
+    btn.textContent = '切换为卫星图';
+    btn.onclick = function() {
+      // 如果地图还没初始化好，提示
+      if (typeof map === 'undefined' || !map) {
+        showFlash('地图加载中，请稍候...', 2000);
+        return;
+      }
+      switchTileLayer();
+    };
+    (document.body || document.documentElement).appendChild(btn);
+    updateLayerBtn();
+  } catch(e) { console.warn('layerBtn create fail:', e); }
+}
+
+function switchTileLayer() {
+  if (!map) return;
+  __tileFailCount = 0;
+  var next = (__tileIdx + 1) % __tileSources.length;
+  loadTileLayer(next, true);
+  // ✅ 切换图层后重新 poll()，让标记用新图层的坐标系重新定位
+  //    并把 fitDone 设为 false，让 poll 中重新 fit() 居中到标记
+  fitDone = false;
+  setTimeout(function(){ if (typeof poll === 'function') poll(); }, 300);
+}
+function updateLayerBtn() {
+  var btn = document.getElementById('layerBtn');
+  if (btn) {
+    var nextIdx = (__tileIdx + 1) % __tileSources.length;
+    btn.textContent = '切换为' + __tileSources[nextIdx].name;
+  }
+}
+
+/* ✅ 纯离线模式：不加载任何底图瓦片，用 CSS 渐变+网格做背景 */
+
+/* ---- 小工具：短暂闪提示 ---- */
+var _flashTimer = null;
+function showFlash(txt, ms){
+  try{
+    var old = document.getElementById('__flash_card');
+    if (old) old.remove();
+    var el = document.createElement('div');
+    el.id = '__flash_card';
+    el.className = 'warn-card warn-yellow';
+    el.textContent = txt;
+    (document.body||document.documentElement).appendChild(el);
+    if (_flashTimer) clearTimeout(_flashTimer);
+    _flashTimer = setTimeout(function(){ el.remove(); }, ms||1500);
+  }catch(e){}
+}
+
+/* ---- 初始化地图（Leaflet loaded + body ready）---- */
+var _initRetries = 0;
+function tryInitMap(){
+  if (typeof L === 'undefined') {
+    // 本地 leaflet.min.js 加载失败（APK 打包时漏了文件）→ 直接红色报错
+    var loading = document.getElementById('loading');
+    if (loading) {
+      document.getElementById('loadingMain').textContent = '❌ 地图资源缺失';
+      document.getElementById('loadingSub').innerHTML = '本地 Leaflet 文件未打包，请安装最新版 APK';
+      loading.style.background='rgba(254,215,215,0.95)';
+    }
+    return;
+  }
+  if (!document || !document.getElementById || !document.getElementById('map')) {
+    if (_initRetries++ < 20) { setTimeout(tryInitMap, 100); return; }
+  }
+  initMap();
+}
+
+
+/* ---- WebView 尺寸踢醒（全局可见，initMap + setOrUpdate 都会调）---- */
+function kickSize() { try { if (map) { var _b = map.invalidateSize(true); console.log('[CT] kickSize done, mapSize=', map.getSize()); } } catch(e){ console.log('[CT] kickSize err', e && e.message); } }
+function initMap() {
+  try {
+    console.log('[CT] initMap start, L=', typeof L, ', #map el=', !!document.getElementById('map'));
+    // ✅ zoomControl:true 让 Leaflet 默认的 +/- 缩放按钮显示出来
+    map = L.map('map', { zoomControl: true, preferCanvas: true, minZoom: 3, maxZoom: 19, worldCopyJump: true }).setView([39.9042, 116.4074], 5);
+    var _sz0 = map.getSize();
+    console.log('[CT] map after L.map(): size=', _sz0, ', container w/h=', document.getElementById('map').offsetWidth, document.getElementById('map').offsetHeight);
+
+    // ✅ 真实地图瓦片：多图源自动切换（全部 HTTPS，国内可用）
+    //    默认用高德街道图（能看到路名店名），可点击按钮切卫星图
+    //    loadTileLayer 已移到全局作用域（修复 switchTileLayer 作用域崩溃问题）
+    loadTileLayer(__tileIdx, false);
+
+    // ===== 添加图层切换按钮 =====（确保始终创建，即使地图初始化失败）
+    ensureLayerBtn();
+
+    // ===== 底部抽屉：运动轨迹 =====
+    initDrawer();
+
+    // ✅ WebView 经典修复：容器尺寸在 load 时往往还是 0，导致 Leaflet 以为没有可视区 → 瓦片 0 张 → 全空白
+    //    常见现象：整个地图只有 body 粉色背景，什么都不渲染，但没有报错。必须多次调用 invalidateSize() 踢醒
+    // ① 前 3 秒密集踢（Compose 动画 / WebView 第一次 / 第二次 / 第三次布局）
+    setTimeout(kickSize, 200);
+    setTimeout(kickSize, 600);
+    setTimeout(kickSize, 1200);
+    // ② 前 5 秒每秒踢一次（减少次数避免卡顿）
+    (function loopKick(i){ if (i>=5) return; kickSize(); setTimeout(function(){loopKick(i+1);}, 1000); })(0);
+    // ③ 如果 map 尺寸仍是 0 → 继续踢直到 >0（最极端兜底）
+    (function waitSize(){ try {
+      if (!map) return setTimeout(waitSize, 200);
+      var s = map.getSize();
+      var mEl = document.getElementById('map');
+      console.log('[CT] waitSize: mapSize=', s, ', #map offset=', mEl ? {w:mEl.offsetWidth,h:mEl.offsetHeight} : 'N/A', ', clientW/H=', mEl ? {w:mEl.clientWidth,h:mEl.clientHeight} : 'N/A', ', bodyW/H=', document.body ? {w:document.body.offsetWidth,h:document.body.offsetHeight} : 'N/A');
+      if (s && (s.x===0 || s.y===0)) { kickSize(); setTimeout(waitSize, 500); }
+    } catch(e){ setTimeout(waitSize,500); } })();
+    window.addEventListener('resize', kickSize);
+    try { // 页面从后台切回前台时也踢一下
+      document.addEventListener('visibilitychange', function(){ if (!document.hidden) setTimeout(kickSize, 150); });
+    } catch(e){}
+
+    // ✅ 已切换为在线地图模式
+
+    // 关闭 loading：等瓦片加载完 or 至少 1.5 秒（给地图一个缓冲时间）
+    var _loadingDismissed = false;
+    function dismissLoading(){
+      if (_loadingDismissed) return;
+      _loadingDismissed = true;
+      var l = document.getElementById('loading');
+      if (l) l.style.display='none';
+    }
+    setTimeout(dismissLoading, 1500);  // 兜底 1.5s 后强制关闭
+    // 如果瓦片提前加载完 → 提前关闭
+    try { if (__tileLayer) __tileLayer.on('load', function(){ setTimeout(dismissLoading, 200); }); } catch(e){}
+
+    updateTopbar();
+    poll();
+    setInterval(poll, 5000);  // 每 5 秒刷新位置（3秒太频繁导致卡顿）
+
+    // ✅ 15秒还没有任何位置数据 → 显示醒目红色排查卡片（之前只有"等待位置"四个字，用户完全不知道怎么办）
+    setTimeout(function(){
+      if (!me || !me.id) return;  // 账号注入还没搞定，之前的红警已经提示过了
+      if (lastMeAt > 0) return;   // 已经拿到过我的位置，OK
+      var warn = document.createElement('div');
+      warn.className = 'warn-card warn-red';
+      warn.style.top = '72px';
+      warn.innerHTML = '<b>🛰️ 还没拿到位置数据</b>（已等待15秒）<br>' +
+        '排查步骤：<br>' +
+        '① 打开「我的」→ 拉到底，看「位置上报」是成功还是失败<br>' +
+        '② 如果失败：系统设置 → 应用 → CoupleTracker → 权限 → 定位 → 选择【始终允许】<br>' +
+        '③ 把APP从后台划掉重新打开，再等30秒<br>' +
+        '④ 确认手机通知栏能看到「💕 已登录」的常驻通知（没看到=后台服务没启动）';
+      (document.body||document.documentElement).appendChild(warn);
+    }, 15000);
+
+    // 如果安卓先注入成功，现在就立刻踢一次 refresh
+    try { if (window.__applyAndroidInjection) window.__applyAndroidInjection(); } catch(e){}
+
+    // === 调试循环：每秒把 mapSize / tileCount 写到页面上 ===
+    (function debugLoop(){
+      var box = document.getElementById('debugBox');
+      if (box) {
+        var ms = map.getSize();
+        var mEl = document.getElementById('map');
+        var hh = document.body ? document.body.scrollHeight : 0;
+        // 真实瓦片状态：统计 tileLayer 的已加载瓦片数
+        var tileCount = 0;
+        var currentZoom = 0;
+        var curCenter = '—';
+        try {
+          if (__tileLayer) {
+            var container = __tileLayer.getContainer();
+            if (container) tileCount = container.querySelectorAll('img.leaflet-tile-loaded').length;
+          }
+          currentZoom = map.getZoom();
+          var c = map.getCenter();
+          curCenter = c ? c.lat.toFixed(2)+','+c.lng.toFixed(2) : '—';
+        } catch(e){}
+        var markerCount = 0;
+        if (map) map.eachLayer(function(l){ if (l instanceof L.Marker) markerCount++; });
+        box.innerHTML =
+          '📐 mapSize: ' + ms.x + '×' + ms.y + '<br>' +
+          '🔍 zoom: ' + currentZoom + '<br>' +
+          '📍 center: ' + curCenter + '<br>' +
+          '🗺️ 瓦片已加载: ' + tileCount + '<br>' +
+          '📍 标记数: ' + markerCount + '<br>' +
+          '👤 me.id: ' + (me && me.id ? me.id.substr(0,8)+'...' : 'null') + '<br>' +
+          '🟢 lastMeAt: ' + (lastMeAt ? new Date(lastMeAt).toLocaleTimeString() : 'null');
+      }
+      setTimeout(debugLoop, 1000);
+    })();
+  } catch(e) {
+    var loading = document.getElementById('loading');
+    if (loading) {
+      loading.innerHTML = '<div style="color:#e53e3e">❌ 地图初始化异常</div>'
+        + '<div class="sub">错误：' + String(e&&e.message?e.message:e).slice(0,80) + '</div>';
+      loading.style.background='rgba(254,215,215,0.95)';
+    }
+  }
+}
+
+function createIcon(emoji, color, pulse) {
+  return L.divIcon({
+    className: 'custom-marker',
+    html: (pulse ?
+      '<div style="position:absolute;width:48px;height:48px;border-radius:50%;background:'+color+';opacity:.3;top:-6px;left:-6px;animation:pulse 1.5s ease-out infinite;"></div>' : '') +
+      '<div style="position:relative;width:36px;height:36px;border-radius:50%;background:'+color+';border:3px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;font-size:18px;z-index:2;">' + (emoji || '👤') + '</div>' +
+      '<div style="position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #fff;"></div>' +
+      '<style>@keyframes pulse{0%{transform:scale(1);opacity:.4}100%{transform:scale(2);opacity:0}}</style>',
+    iconSize: [36,36], iconAnchor: [18,36], popupAnchor: [0,-32]
+  });
+}
+
+function haversine(a, b) {
+  if (!a || !b) return null;
+  var R = 6371000;
+  var toRad = function(x){return x*Math.PI/180;};
+  var dLat = toRad(b[0]-a[0]);
+  var dLon = toRad(b[1]-a[1]);
+  var la1 = toRad(a[0]), la2 = toRad(b[0]);
+  var h = Math.sin(dLat/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+function fmtDist(m){
+  if (m == null) return '—';
+  if (m < 1000) return '相距 ' + Math.round(m) + ' 米';
+  return '相距 ' + (m/1000).toFixed(2) + ' 公里';
+}
+function fmtTime(iso){
+  if (!iso) return '';
+  try {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) d = new Date(String(iso).replace(' ','T'));
+    var p = function(n){return (n<10?'0':'')+n;};
+    return p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
+  } catch(e){return '';}
+}
+
+function setOrUpdate(markerRef, lat, lng, emoji, color, pulse, row, isMe) {
+  // ✅ 坐标系转换：GPS 上报 WGS-84，高德瓦片用 GCJ-02
+  //    如果当前图源是高德(GCJ-02)，需要转换坐标才不会偏移
+  //    ArcGIS 用 WGS-84，不需要转
+  var src = __tileSources[__tileIdx];
+  var ll = (src && src.gcj02) ? wgs2gcj(lat, lng) : [lat, lng];
+  if (!markerRef.value) {
+    markerRef.value = L.marker(ll, { icon: createIcon(emoji, color, pulse) }).addTo(map);
+  } else {
+    markerRef.value.setLatLng(ll);
+    markerRef.value.setIcon(createIcon(emoji, color, pulse));
+  }
+  if (isMe) meMarker = markerRef.value;
+  else partnerMarker = markerRef.value;
+  var accCircle = (isMe ? meAcc : partnerAcc);
+  if (accCircle) { accCircle.setLatLng(ll); accCircle.setRadius(Math.max(30, row.accuracy||20)); }
+  else {
+    var c = L.circle(ll, { radius: Math.max(30, row.accuracy||20), color: color, fillColor: color, fillOpacity: 0.12, weight: 1 }).addTo(map);
+    if (isMe) meAcc = c; else partnerAcc = c;
+  }
+  var badgeClass = row.is_moving ? 'badge-move' : 'badge-stop';
+  var badgeText = row.is_moving ? '🏃 移动中' : '🧎 静止';
+  var bat = row.battery_level != null ? '🔋 '+row.battery_level+'%  ' : '';
+  var speed = row.speed != null ? '🚶 ' + (typeof row.speed === 'number' ? row.speed.toFixed(1) : row.speed) + ' m/s' : '';
+  var html = '<div class="popup"><div class="avatar">'+(emoji||'👤')+'</div>'+
+    '<div class="name">'+row.nickname+(isMe?' (我)':' (TA)')+'</div>'+
+    '<span class="badge '+badgeClass+'">'+badgeText+'</span>'+
+    '<div class="sub">'+bat+speed+'</div>'+
+    '<div class="sub">更新于 '+fmtTime(row.timestamp || row.created_at)+'</div></div>';
+  markerRef.value.bindPopup(html);
+}
+
+function fit() {
+  if (!map) return;
+  var pts = [];
+  if (meMarker) pts.push(meMarker.getLatLng());
+  if (partnerMarker) pts.push(partnerMarker.getLatLng());
+  if (pts.length === 0) return;
+  if (pts.length === 1) map.setView(pts[0], 15, {animate:true});
+  else {
+    map.fitBounds(L.latLngBounds(pts), {padding:[100,60], maxZoom:15, animate:true});
+  }
+}
+
+// ===== 底部抽屉 + 运动轨迹 =====
+var __trackPolyline = null;
+var __trackYesterdayLine = null;
+var __trackStartMarker = null;
+var __trackEndMarker = null;
+
+function initDrawer() {
+  var drawer = document.getElementById('trackDrawer');
+  var handle = document.getElementById('drawerHandle');
+  if (!drawer || !handle) return;
+
+  // 点击/拖拽展开收起
+  var startY = 0, startTranslate = 0, dragging = false;
+  handle.addEventListener('touchstart', function(e){
+    dragging = true;
+    startY = e.touches[0].clientY;
+    startTranslate = drawer.classList.contains('open') ? 0 : drawer.offsetHeight - 44;
+  });
+  handle.addEventListener('touchmove', function(e){
+    if (!dragging) return;
+    e.preventDefault();
+    var dy = e.touches[0].clientY - startY;
+    var h = drawer.offsetHeight;
+    var t = Math.max(0, Math.min(h - 44, startTranslate + dy));
+    drawer.style.transform = 'translateY(' + t + 'px)';
+    drawer.style.transition = 'none';
+  });
+  handle.addEventListener('touchend', function(){
+    if (!dragging) return;
+    dragging = false;
+    drawer.style.transition = '';
+    var t = drawer.style.transform;
+    var match = t.match(/translateY\((\d+)/);
+    var cur = match ? parseInt(match[1]) : 0;
+    var h = drawer.offsetHeight;
+    if (cur < h / 2) {
+      drawer.classList.add('open');
+      drawer.style.transform = '';
+    } else {
+      drawer.classList.remove('open');
+      drawer.style.transform = '';
+    }
+  });
+  // 点击 handle 切换
+  handle.addEventListener('click', function(e){
+    if (dragging) return;
+    drawer.classList.toggle('open');
+  });
+
+  // 轨迹按钮
+  document.getElementById('btnShowTrack').addEventListener('click', function(){ loadTrack(me && me.id, false); });
+  document.getElementById('btnShowPartnerTrack').addEventListener('click', function(){ loadTrack(__partnerUid.v, true); });
+  document.getElementById('btnClearTrack').addEventListener('click', clearTrack);
+}
+
+// 根据是否有配对方显示"查看TA的轨迹"按钮
+function updatePartnerTrackBtn() {
+  var btn = document.getElementById('btnShowPartnerTrack');
+  if (btn) btn.style.display = (__partnerUid.v) ? 'block' : 'none';
+}
+
+function loadTrack(uid, isPartner) {
+  if (!uid) { showFlash(isPartner ? '还没有配对哦' : '请先登录'); return; }
+  var headers = makeHeaders();
+  var who = isPartner ? 'TA' : '我';
+  // 最近2天：昨天 00:00 到现在
+  var now = new Date();
+  var yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).toISOString();
+
+  fetch(SUPABASE_URL + '/rest/v1/locations?select=latitude,longitude,created_at&user_id=eq.'+encodeURIComponent(uid)+'&created_at=gte.'+encodeURIComponent(yesterdayStart)+'&order=created_at.asc&limit=1000', { headers: headers })
+    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(rows){
+      if (!Array.isArray(rows) || rows.length < 2) {
+        document.getElementById('trackEmpty').textContent = who + '最近2天还没有足够的定位点 🏃';
+        document.getElementById('trackSummary').style.display = 'none';
+        document.getElementById('btnClearTrack').style.display = 'none';
+        return;
+      }
+      // 坐标转换（GCJ-02）
+      var src = __tileSources[__tileIdx];
+      var pts = rows.map(function(r){
+        var ll = (src && src.gcj02) ? wgs2gcj(r.latitude, r.longitude) : [r.latitude, r.longitude];
+        return ll;
+      });
+
+      // 清除旧轨迹
+      clearTrack(false);
+
+      // 按天分组绘制（今天粉色，昨天浅紫）
+      var todayStr = new Date().toDateString();
+      var todayPts = [], yesterdayPts = [];
+      rows.forEach(function(r, i){
+        var d = new Date(r.created_at).toDateString();
+        if (d === todayStr) todayPts.push(pts[i]);
+        else yesterdayPts.push(pts[i]);
+      });
+
+      var allBounds = [];
+      var lineColor = isPartner ? '#667eea' : '#e75480';  // TA用蓝色，我用粉色
+      if (yesterdayPts.length >= 2) {
+        __trackYesterdayLine = L.polyline(yesterdayPts, { color: '#a78bfa', weight: 4, opacity: 0.6, dashArray: '8,6' }).addTo(map);
+        allBounds = allBounds.concat(yesterdayPts);
+      }
+      if (todayPts.length >= 2) {
+        __trackPolyline = L.polyline(todayPts, { color: lineColor, weight: 5, opacity: 0.85 }).addTo(map);
+        allBounds = allBounds.concat(todayPts);
+      } else if (yesterdayPts.length >= 2) {
+        __trackPolyline = __trackYesterdayLine;
+      }
+
+      // 起点和终点（整体范围）
+      if (allBounds.length >= 2) {
+        __trackStartMarker = L.circleMarker(allBounds[0], { radius: 8, color: '#48bb78', fillColor: '#48bb78', fillOpacity: 1 }).addTo(map);
+        __trackEndMarker = L.circleMarker(allBounds[allBounds.length-1], { radius: 8, color: '#e53e3e', fillColor: '#e53e3e', fillOpacity: 1 }).addTo(map);
+      }
+
+      // 计算距离（米）
+      var dist = 0;
+      for (var i = 1; i < pts.length; i++) {
+        dist += map.distance(pts[i-1], pts[i]);
+      }
+
+      // 显示统计（只保留公里）
+      document.getElementById('trackEmpty').style.display = 'none';
+      document.getElementById('trackSummary').style.display = 'flex';
+      document.getElementById('trackDist').textContent = (dist / 1000).toFixed(2);
+      document.getElementById('btnClearTrack').style.display = 'block';
+
+      // 缩放到轨迹范围
+      if (allBounds.length >= 2) {
+        var bounds = L.latLngBounds(allBounds);
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+      }
+    })
+    .catch(function(e){
+      showFlash('加载轨迹失败: ' + (e && e.message ? e.message : '网络错误'));
+    });
+}
+
+function clearTrack(updateUI) {
+  if (__trackPolyline) { try { map.removeLayer(__trackPolyline); } catch(e){} __trackPolyline = null; }
+  if (__trackYesterdayLine) { try { map.removeLayer(__trackYesterdayLine); } catch(e){} __trackYesterdayLine = null; }
+  if (__trackStartMarker) { try { map.removeLayer(__trackStartMarker); } catch(e){} __trackStartMarker = null; }
+  if (__trackEndMarker) { try { map.removeLayer(__trackEndMarker); } catch(e){} __trackEndMarker = null; }
+  if (updateUI !== false) {
+    document.getElementById('trackEmpty').style.display = 'block';
+    document.getElementById('trackEmpty').textContent = '点击下方按钮查看今天走过的路线 🏃';
+    document.getElementById('trackSummary').style.display = 'none';
+    document.getElementById('btnClearTrack').style.display = 'none';
+  }
+}
+
+function updateTopbar() {
+  var nickRow = '小世界 · 地图';
+  var metaRow = '';
+  if (me) {
+    nickRow = '@'+(me.username||'') + ' · ' + (me.nickname||'');
+    metaRow += '配对码：'+((me.coupleCode||'未绑定')+'').toUpperCase();
+  } else {
+    metaRow = __userInjected
+      ? '⚠️ 账号信息丢失，请退出APP重登录一次'
+      : '正在加载账号信息...';
+  }
+  var nEl = document.getElementById('nickRow');
+  var mEl = document.getElementById('metaRow');
+  if (nEl) nEl.textContent = nickRow;
+  if (mEl) {
+    mEl.textContent = metaRow;
+    if (me) mEl.classList.remove('err');
+    else if (!__userInjected && __userTries >= 30) mEl.classList.add('err');
+  }
+  var sEl = document.getElementById('statusText');
+  var dEl = document.getElementById('distRow');
+  var dotEl = document.querySelector('.dot');
+
+  var my = meMarker ? meMarker.getLatLng() : null;
+  var pt = partnerMarker ? partnerMarker.getLatLng() : null;
+  var dist = null;
+  if (my && pt) dist = haversine([my.lat,my.lng],[pt.lat,pt.lng]);
+  if (dEl) dEl.textContent = fmtDist(dist);
+
+  var age = Math.max(lastMeAt, lastPartnerAt);
+  var secs = age ? Math.round((Date.now()-age)/1000) : 0;
+  var t = '已连接';
+  var needWarn = false;
+  var isResting = false;
+  if (!age) {
+    if (!me) { t = __userInjected ? '未登录' : '加载中...'; needWarn = __userInjected; }
+    else if (lastRestCount >= 3) { t = '网络错误'; needWarn = true; }
+    else { t = '等待位置...'; }
+  }
+  else if (secs < 60) t = secs + ' 秒前更新';
+  else if (secs < 3600) t = Math.floor(secs/60) + ' 分钟前更新';
+  else { t = Math.floor(secs/3600) + ' 小时前更新'; needWarn = secs >= 3600; }
+  // ✅ 30分钟无更新 → 显示"正在休息"
+  if (age && secs >= 1800) {
+    t = '😴 正在休息 · ' + (secs >= 3600 ? Math.floor(secs/3600)+'小时' : Math.floor(secs/60)+'分钟') + '未更新';
+    isResting = true;
+  }
+  if (sEl) sEl.textContent = t;
+  if (dotEl) {
+    dotEl.style.background = isResting ? '#a0aec0' : (needWarn ? '#e53e3e' : (lastRestCount >= 3 ? '#ed8936' : '#48bb78'));
+  }
+
+  // 连续 REST 失败 >=3：显示红色提示条
+  var tipEl = document.getElementById('restTip');
+  if (lastRestCount >= 3 && lastFetchHint) {
+    if (!tipEl) {
+      tipEl = document.createElement('div');
+      tipEl.id = 'restTip';
+      tipEl.className = 'warn-card warn-red';
+      (document.body||document.documentElement).appendChild(tipEl);
+    }
+    tipEl.textContent = '⚠️ 位置查询失败（连续'+lastRestCount+'次）：'+lastFetchHint
+      +'。解决：打开「我的」→ 查看「上报状态」→ 检查定位权限 → 重进地图。';
+  } else if (tipEl) {
+    tipEl.remove();
+  }
+}
+
+function poll() {
+  var headers = makeHeaders();
+  var uid = me && me.id ? me.id : null;
+  var reqsDone = 0;
+  var myErr = '', partnerErr = '';
+  function done() {
+    reqsDone++;
+    if (reqsDone === 2) {
+      var anyErr = myErr || partnerErr;
+      if (anyErr) { lastRestCount++; lastFetchHint = anyErr; }
+      else { lastRestCount = 0; lastFetchHint = ''; }
+      // ✅ 只在首次有标记时 fit() 一次，之后轮询不再重置视角
+      //    用户放大/拖动后视角不会被刷新回去
+      if (!fitDone && (meMarker || partnerMarker)) { fit(); fitDone = true; }
+      updateTopbar();
+    }
+  }
+  if (uid) {
+    console.log('[CT] poll fetching my location, uid=', uid); fetch(SUPABASE_URL + '/rest/v1/locations?select=*&user_id=eq.'+encodeURIComponent(uid)+'&order=created_at.desc&limit=1', { headers: headers })
+      .then(function(r){
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        return r.json();
+      }).then(function(rows){
+        if (Array.isArray(rows) && rows.length) {
+          var row = rows[0];
+          lastMeAt = new Date(row.timestamp || row.created_at).getTime();
+          setOrUpdate({value: meMarker}, row.latitude, row.longitude, (me&&me.avatar)||'👤', '#ff6b9d', !!row.is_moving, Object.assign({}, row, {nickname: (me&&me.nickname)||'我'}), true);
+        }
+        done();
+      }).catch(function(e){ myErr = '我位置('+(e&&e.message?e.message:'网络失败')+')'; done(); });
+  } else done();
+
+  fetchPartnerUid(function(partnerUid, err){
+    if (err) { partnerErr = err; }
+    updatePartnerTrackBtn();  // 有配对方则显示"查看TA的轨迹"按钮
+    if (!partnerUid) { done(); return; }
+    fetch(SUPABASE_URL + '/rest/v1/locations?select=*&user_id=eq.'+encodeURIComponent(partnerUid)+'&order=created_at.desc&limit=1', { headers: headers })
+      .then(function(r){
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        return r.json();
+      }).then(function(rows){
+        if (Array.isArray(rows) && rows.length) {
+          var row = rows[0];
+          lastPartnerAt = new Date(row.timestamp || row.created_at).getTime();
+          fetchNickAvatar(partnerUid, function(pa){
+            setOrUpdate({value: partnerMarker}, row.latitude, row.longitude, (pa&&pa.avatar)||'💞', '#667eea', !!row.is_moving, Object.assign({}, row, {nickname: (pa&&pa.nickname)||'TA'}), false);
+          });
+        }
+        done();
+      }).catch(function(e){ partnerErr = 'TA位置('+(e&&e.message?e.message:'网络失败')+')'; done(); });
+  });
+}
+
+var __partnerNickCache = null;
+function fetchNickAvatar(uid, cb) {
+  if (__partnerNickCache && __partnerNickCache.id === uid) { cb(__partnerNickCache); return; }
+  fetch(SUPABASE_URL + '/rest/v1/profiles?select=id,nickname,avatar,couple_code&limit=1&id=eq.'+encodeURIComponent(uid), {
+    headers: makeHeaders()
+  }).then(function(r){return r.json();}).then(function(rows){
+    var p = (Array.isArray(rows) && rows[0]) ? rows[0] : {id:uid, nickname:'TA', avatar:'💞'};
+    __partnerNickCache = p;
+    cb(p);
+  }).catch(function(){cb(null);});
+}
+
+var __partnerUid = {v:null, at:0};
+function fetchPartnerUid(cb) {
+  var now = Date.now();
+  if (__partnerUid.v && (now - __partnerUid.at) < 15000) { cb(__partnerUid.v, null); return; }
+  var partnerId = me && me.partnerId ? me.partnerId : null;
+  var headers = makeHeaders();
+
+  // UUID 格式校验（避免非法值导致 HTTP 400）
+  var uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!partnerId || !uuidRe.test(partnerId)) {
+    // 没有 partner_id 或格式非法 = 未配对，不查
+    __partnerUid = {v:null, at: now};
+    cb(null, null);
+    return;
+  }
+
+  // 用 partner_id 查
+  fetch(SUPABASE_URL + '/rest/v1/profiles?select=id&id=eq.'+encodeURIComponent(partnerId)+'&limit=1', { headers: headers })
+    .then(function(r){
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    }).then(function(rows){
+      var pu = (Array.isArray(rows) && rows[0]) ? rows[0].id : null;
+      __partnerUid = {v:pu, at: now};
+      cb(pu, null);
+    }).catch(function(e){
+      cb(null, 'TA查询('+(e&&e.message?e.message:'网络失败')+')');
+    });
+}
+
+// DOM Ready 后如果 Leaflet 已经加载完成就立刻初始化
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+  ensureLayerBtn();  // 立即创建按钮，不等待地图
+  if (typeof L !== 'undefined') { tryInitMap(); }
+} else {
+  window.addEventListener('DOMContentLoaded', function(){
+    ensureLayerBtn();
+    if (typeof L !== 'undefined') { tryInitMap(); }
+  });
+  window.addEventListener('load', function(){
+    ensureLayerBtn();
+    if (typeof L !== 'undefined') { tryInitMap(); }
+  });
+}
+</script>
+</body>
+</html>
