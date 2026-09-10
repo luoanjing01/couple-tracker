@@ -148,21 +148,26 @@ fun StatsScreen() {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("每日统计", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
             Spacer(Modifier.weight(1f))
-            if (partnerId != null) {
-                Button(
-                    onClick = { showPartner = !showPartner; reloadKey++ },
-                    shape = RoundedCornerShape(20.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (showPartner) blue else pink
-                    ),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                ) {
-                    Text(
-                        if (showPartner) "👤 我" else "💕 TA",
-                        fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                }
+            // 切换按钮始终显示：有配对→切换查看对方，无配对→灰色提示
+            Button(
+                onClick = {
+                    if (partnerId != null) {
+                        showPartner = !showPartner; reloadKey++
+                    }
+                },
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (partnerId == null) Color(0xFFCBD5E0)
+                    else if (showPartner) blue else pink
+                ),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    if (partnerId == null) "💤 未配对"
+                    else if (showPartner) "👤 我" else "💕 TA",
+                    fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
             }
         }
 
