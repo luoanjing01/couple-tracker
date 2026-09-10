@@ -195,9 +195,9 @@ class MainActivity : ComponentActivity() {
                             setBackgroundColor(0x00000000) // 透明背景，避免 WebView 默认白色闪烁
                             overScrollMode = android.view.View.OVER_SCROLL_NEVER
                             isScrollContainer = false
-                            // ✅ 平板闪退修复：软件渲染兜底（骁龙685等低端GPU上硬件加速WebView容易崩）
-                            //    先用软件渲染，稳定性优先
-                            setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
+                            // ✅ 渲染策略：硬件加速（软件渲染会导致地图瓦片极度卡顿）
+                            //    闪退防护靠 onRenderProcessGone + largeHeap，不用软件渲染
+                            setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
 
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true

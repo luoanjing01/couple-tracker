@@ -440,10 +440,8 @@ function initMap() {
     setTimeout(kickSize, 200);
     setTimeout(kickSize, 600);
     setTimeout(kickSize, 1200);
-    setTimeout(kickSize, 2000);
-    setTimeout(kickSize, 3000);
-    // ② 前 15 秒每秒踢一次（防止手机布局动画慢/切tab回来后尺寸忘记）
-    (function loopKick(i){ if (i>=15) return; kickSize(); setTimeout(function(){loopKick(i+1);}, 1000); })(0);
+    // ② 前 5 秒每秒踢一次（减少次数避免卡顿）
+    (function loopKick(i){ if (i>=5) return; kickSize(); setTimeout(function(){loopKick(i+1);}, 1000); })(0);
     // ③ 如果 map 尺寸仍是 0 → 继续踢直到 >0（最极端兜底）
     (function waitSize(){ try {
       if (!map) return setTimeout(waitSize, 200);
@@ -473,7 +471,7 @@ function initMap() {
 
     updateTopbar();
     poll();
-    setInterval(poll, 3000);  // 每 3 秒刷新位置（之前5秒太慢）
+    setInterval(poll, 5000);  // 每 5 秒刷新位置（3秒太频繁导致卡顿）
 
     // ✅ 15秒还没有任何位置数据 → 显示醒目红色排查卡片（之前只有"等待位置"四个字，用户完全不知道怎么办）
     setTimeout(function(){
@@ -575,7 +573,6 @@ function fmtTime(iso){
 }
 
 function setOrUpdate(markerRef, lat, lng, emoji, color, pulse, row, isMe) {
-  kickSize();  // 每次有新位置，再次刷新 map 尺寸（切 tab 回来后 map 可能又忘了自己有多大）
   // ✅ 坐标系转换：GPS 上报 WGS-84，高德瓦片用 GCJ-02
   //    如果当前图源是高德(GCJ-02)，需要转换坐标才不会偏移
   //    ArcGIS 用 WGS-84，不需要转
