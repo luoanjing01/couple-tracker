@@ -580,12 +580,12 @@ class LoginActivity : ComponentActivity() {
                 confirmButton = {
                     Button(
                         onClick = {
-                            val me = UserRepository.get().getUser()
                             val requesterId = requester.requesterId ?: ""
                             lifecycleScope.launch(Dispatchers.IO) {
+                                val me = UserRepository.get().getUser() ?: return@launch
                                 val resp = runCatching {
                                     NetworkModule.rpcService.acceptPair(
-                                        AcceptPairReq(myId = me!!.id, theirId = requesterId)
+                                        AcceptPairReq(myId = me.id, theirId = requesterId)
                                     )
                                 }
                                 val body = resp.getOrNull()?.body()
