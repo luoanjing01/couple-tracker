@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -533,38 +534,46 @@ class LoginActivity : ComponentActivity() {
         // 轮询配对状态
         LaunchedEffect(Unit) {
             while (true) {
-                val me = UserRepository.get().getUser()
-                if (me?.id != null) {
-                    val resp = runCatching {
-                        NetworkModule.rpcService.checkPairStatus(
+                try {
+                    val me = UserRepository.get().getUser()
+                    if (me?.id != null) {
+                        val resp = NetworkModule.rpcService.checkPairStatus(
                             CheckPairStatusReq(myId = me.id)
                         )
-                    }
-                    val body = resp.getOrNull()?.body()
-                    if (body != null) {
-                        when (body.status) {
-                            "paired" -> {
-                                paired = true
-                                pairedWithNick = body.partnerNickname ?: "TA"
-                                incomingRequest = null
-                                waiting = false
-                                UserRepository.get().setUser(me.copy(partnerId = body.partnerId))
-                            }
-                            "incoming_request" -> {
-                                if (incomingRequest == null) {
-                                    incomingRequest = body
+                        val body = resp.body()
+                        val errBody = resp.errorBody()?.string()
+                        if (errBody != null && errBody.isNotBlank()) {
+                            Log.e("PairCard", "check_pair_status error: ${errBody.take(200)}")
+                        }
+                        if (body != null) {
+                            Log.d("PairCard", "check_pair_status: status=${body.status}")
+                            when (body.status) {
+                                "paired" -> {
+                                    paired = true
+                                    pairedWithNick = body.partnerNickname ?: "TA"
+                                    incomingRequest = null
+                                    waiting = false
+                                    UserRepository.get().setUser(me.copy(partnerId = body.partnerId))
                                 }
-                            }
-                            "waiting" -> {
-                                waiting = true
-                                incomingRequest = null
-                            }
-                            else -> {
-                                waiting = false
-                                incomingRequest = null
+                                "incoming_request" -> {
+                                    if (incomingRequest == null) {
+                                        Log.d("PairCard", "收到配对请求 from ${body.requesterNickname}")
+                                        incomingRequest = body
+                                    }
+                                }
+                                "waiting" -> {
+                                    waiting = true
+                                    incomingRequest = null
+                                }
+                                else -> {
+                                    waiting = false
+                                    incomingRequest = null
+                                }
                             }
                         }
                     }
+                } catch (e: Exception) {
+                    Log.e("PairCard", "轮询异常: ${e.message}")
                 }
                 kotlinx.coroutines.delay(3000)
             }
@@ -761,6 +770,8 @@ class LoginActivity : ComponentActivity() {
                                     resp.getOrNull()?.errorBody()?.string()
                                 }.getOrNull().orEmpty()
                                 val ex = resp.exceptionOrNull()
+
+                                Log.d("PairCard", "pair_by_code: ok=${body?.ok} reason=${body?.reason} err=${errBody.take(200)} ex=${ex?.message?.take(100)}")
 
                                 if (resp.getOrNull()?.isSuccessful == true && body?.ok == true) {
                                     lastSendTime = System.currentTimeMillis()
