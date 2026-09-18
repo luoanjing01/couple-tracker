@@ -72,12 +72,26 @@ interface RpcService {
     ): Response<VerifyLoginResp>
 
     /** @see public.pair_by_code(p_my_id uuid, p_their_code text) returns jsonb
-     *  把两个人的 profile.couple_code 改成同一个值，极简配对，无需操作 couples 表
-     *  返回：{ok: bool, reason?, couple_code?, their_id?, their_nickname?} */
+     *  A 输入 B 的配对码，发起配对请求，30秒防重复
+     *  返回：{ok, request_sent?, already_paired?, waiting?, their_id?, their_nickname?, msg?} */
     @POST("pair_by_code")
     suspend fun pairByCode(
         @Body body: PairByCodeReq
     ): Response<PairByCodeResp>
+
+    /** @see public.check_pair_status(p_my_id uuid) returns jsonb
+     *  轮询配对状态：idle / incoming_request / waiting / paired */
+    @POST("check_pair_status")
+    suspend fun checkPairStatus(
+        @Body body: CheckPairStatusReq
+    ): Response<CheckPairStatusResp>
+
+    /** @see public.accept_pair(p_my_id uuid, p_their_id uuid) returns jsonb
+     *  B 确认配对，双方同时配对成功 */
+    @POST("accept_pair")
+    suspend fun acceptPair(
+        @Body body: AcceptPairReq
+    ): Response<AcceptPairResp>
 }
 
 data class RegisterUserReq(
@@ -125,6 +139,46 @@ data class PairByCodeResp(
     @SerializedName("paired") val paired: Boolean? = null,
     @SerializedName("waiting") val waiting: Boolean? = null,
     @SerializedName("already_paired") val already_paired: Boolean? = null,
+    @SerializedName("request_sent") val request_sent: Boolean? = null,
+    @SerializedName("msg") val msg: String? = null
+)
+
+/** check_pair_status 请求体 */
+data class CheckPairStatusReq(
+    @SerializedName("p_my_id") val myId: String
+)
+
+/** check_pair_status 返回体 */
+data class CheckPairStatusResp(
+    @SerializedName("status") val status: String = "idle",
+    @SerializedName("partner_id") val partnerId: String? = null,
+    @SerializedName("partner_nickname") val partnerNickname: String? = null,
+    @SerializedName("partner_code") val partnerCode: String? = null,
+    @SerializedName("partner_gender") val partnerGender: String? = null,
+    @SerializedName("partner_avatar") val partnerAvatar: String? = null,
+    @SerializedName("requester_id") val requesterId: String? = null,
+    @SerializedName("requester_nickname") val requesterNickname: String? = null,
+    @SerializedName("requester_code") val requesterCode: String? = null,
+    @SerializedName("requester_gender") val requesterGender: String? = null,
+    @SerializedName("requester_avatar") val requesterAvatar: String? = null,
+    @SerializedName("their_id") val theirId: String? = null,
+    @SerializedName("their_nickname") val theirNickname: String? = null,
+    @SerializedName("reason") val reason: String? = null
+)
+
+/** accept_pair 请求体 */
+data class AcceptPairReq(
+    @SerializedName("p_my_id") val myId: String,
+    @SerializedName("p_their_id") val theirId: String
+)
+
+/** accept_pair 返回体 */
+data class AcceptPairResp(
+    @SerializedName("ok") val ok: Boolean = false,
+    @SerializedName("paired") val paired: Boolean? = null,
+    @SerializedName("partner_id") val partnerId: String? = null,
+    @SerializedName("partner_nickname") val partnerNickname: String? = null,
+    @SerializedName("reason") val reason: String? = null,
     @SerializedName("msg") val msg: String? = null
 )
 

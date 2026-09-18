@@ -35,6 +35,8 @@ import com.coupletracker.android.data.NetworkModule
 import com.coupletracker.android.data.RegisterUserReq
 import com.coupletracker.android.data.VerifyLoginReq
 import com.coupletracker.android.data.PairByCodeReq
+import com.coupletracker.android.data.CheckPairStatusReq
+import com.coupletracker.android.data.AcceptPairReq
 import com.coupletracker.android.data.UserRepository
 import com.coupletracker.android.data.model.*
 import com.coupletracker.android.service.TrackerService
@@ -522,14 +524,94 @@ class LoginActivity : ComponentActivity() {
         val user by UserRepository.get().userFlow.collectAsState(initial = null)
         LaunchedEffect(user) { pairCode = user?.coupleCode ?: pairCode }
 
-        /** 判断是否已配对：同一 couple_code 下存在 "另一个 profile" */
-        val isPaired = remember(user, pairCode) {
-            // 只在前端做宽松判断：若 user.coupleCode 非空 且 当前是 "两个不同 id 的码相同" 的场景则算已配对
-            // （此处不联网，仅用作 UI 切换；RPC 返回 ok=true 后也会立刻置为已配对）
-            false
-        }
-        var paired by remember { mutableStateOf(isPaired) }
+        var paired by remember { mutableStateOf(false) }
         var pairedWithNick by remember { mutableStateOf("") }
+        var waiting by remember { mutableStateOf(false) }
+        var incomingRequest by remember { mutableStateOf<com.coupletracker.android.data.CheckPairStatusResp?>(null) }
+        var lastSendTime by remember { mutableStateOf(0L) }
+
+        // 轮询配对状态
+        LaunchedEffect(Unit) {
+            while (true) {
+                val me = UserRepository.get().getUser()
+                if (me?.id != null) {
+                    val resp = runCatching {
+                        NetworkModule.rpcService.checkPairStatus(
+                            CheckPairStatusReq(myId = me.id)
+                        )
+                    }
+                    val body = resp.getOrNull()?.body()
+                    if (body != null) {
+                        when (body.status) {
+                            "paired" -> {
+                                paired = true
+                                pairedWithNick = body.partnerNickname ?: "TA"
+                                incomingRequest = null
+                                waiting = false
+                                UserRepository.get().setUser(me.copy(partnerId = body.partnerId))
+                            }
+                            "incoming_request" -> {
+                                if (incomingRequest == null) {
+                                    incomingRequest = body
+                                }
+                            }
+                            "waiting" -> {
+                                waiting = true
+                                incomingRequest = null
+                            }
+                            else -> {
+                                waiting = false
+                                incomingRequest = null
+                            }
+                        }
+                    }
+                }
+                kotlinx.coroutines.delay(3000)
+            }
+        }
+
+        // 收到配对请求时自动确认
+        if (incomingRequest != null) {
+            val requester = incomingRequest!!
+            AlertDialog(
+                onDismissRequest = { incomingRequest = null },
+                title = { Text("💑 配对请求") },
+                text = { Text("${requester.requesterNickname ?: "TA"} 想和你配对，是否接受？") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val me = UserRepository.get().getUser()
+                            val requesterId = requester.requesterId ?: ""
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                val resp = runCatching {
+                                    NetworkModule.rpcService.acceptPair(
+                                        AcceptPairReq(myId = me!!.id, theirId = requesterId)
+                                    )
+                                }
+                                val body = resp.getOrNull()?.body()
+                                if (body?.ok == true) {
+                                    UserRepository.get().setUser(
+                                        me.copy(partnerId = requesterId)
+                                    )
+                                    withContext(Dispatchers.Main) {
+                                        paired = true
+                                        pairedWithNick = body.partnerNickname ?: "TA"
+                                        incomingRequest = null
+                                        msg = "配对成功！💕"
+                                    }
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE75480))
+                    ) { Text("接受 💕") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { incomingRequest = null }) {
+                        Text("拒绝", color = Color.Gray)
+                    }
+                }
+            )
+        }
 
         fun copyCode(code: String) {
             if (code.isBlank()) return
@@ -599,7 +681,6 @@ class LoginActivity : ComponentActivity() {
                     }
                 }
 
-                // —— 若已配对：显示"已配对"绿底提示，不再出现输入框 ——
                 if (paired) {
                     Spacer(Modifier.height(18.dp))
                     Card(
@@ -612,6 +693,12 @@ class LoginActivity : ComponentActivity() {
                                 Spacer(Modifier.height(4.dp))
                                 Text("和 $pairedWithNick 绑定中 💕", fontSize = 13.sp, color = Color(0xFF2F855A))
                             }
+                            Spacer(Modifier.height(12.dp))
+                            Button(
+                                onClick = onPairOkOrSkip,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2F855A))
+                            ) { Text("进入小世界 💕", fontSize = 16.sp) }
                         }
                     }
                 } else {
@@ -626,7 +713,6 @@ class LoginActivity : ComponentActivity() {
                         leadingIcon = { Text("🔗", fontSize = 18.sp) },
                         trailingIcon = {
                             TextButton(onClick = {
-                                // 从剪贴板粘贴
                                 runCatching {
                                     val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     val clip = cm.primaryClip
@@ -646,6 +732,11 @@ class LoginActivity : ComponentActivity() {
                     Spacer(Modifier.height(16.dp))
                     Button(
                         onClick = {
+                            val now = System.currentTimeMillis()
+                            if (now - lastSendTime < 30000 && waiting) {
+                                msg = "⏳ 已发送配对请求，请等待对方确认（30秒内不可重复发送）"
+                                return@Button
+                            }
                             loading = true; msg = ""
                             lifecycleScope.launch(Dispatchers.IO) {
                                 val me = UserRepository.get().getUser()
@@ -672,31 +763,46 @@ class LoginActivity : ComponentActivity() {
                                 val ex = resp.exceptionOrNull()
 
                                 if (resp.getOrNull()?.isSuccessful == true && body?.ok == true) {
-                                    // ✅ 配对成功：存 partner_id（不再改 couple_code，每个人保留独立码）
-                                    val theirId = body.their_id
-                                    UserRepository.get().setUser(
-                                        me!!.copy(partnerId = theirId)
-                                    )
-                                    pairCode = me!!.coupleCode ?: ""
-                                    paired = true
-                                    pairedWithNick = body.their_nickname?.takeIf { it.isNotBlank() } ?: "TA"
-                                    withContext(Dispatchers.Main) {
-                                        loading = false
-                                        msg = "配对成功！已和 $pairedWithNick 绑定 💕 你们现在能在地图上看到彼此啦"
-                                        kotlinx.coroutines.delay(1800)
-                                        onPairOkOrSkip()
+                                    lastSendTime = System.currentTimeMillis()
+                                    if (body.already_paired == true) {
+                                        // 已经配对了
+                                        UserRepository.get().setUser(
+                                            me!!.copy(partnerId = body.their_id)
+                                        )
+                                        withContext(Dispatchers.Main) {
+                                            paired = true
+                                            pairedWithNick = body.their_nickname ?: "TA"
+                                            loading = false
+                                            msg = "已和 $pairedWithNick 配对 💕"
+                                        }
+                                    } else if (body.waiting == true) {
+                                        // 30秒内已发送过
+                                        withContext(Dispatchers.Main) {
+                                            loading = false
+                                            waiting = true
+                                            msg = body.msg ?: "已发送配对请求，等待对方确认中"
+                                        }
+                                    } else {
+                                        // 请求发送成功
+                                        withContext(Dispatchers.Main) {
+                                            loading = false
+                                            waiting = true
+                                            msg = body.msg ?: "配对请求已发送，等待对方确认"
+                                        }
                                     }
                                 } else {
                                     val reason = body?.reason
                                     val friendly = when {
                                         reason == "CODE_NOT_FOUND" ->
-                                            "配对码不存在：请让TA打开「我的」查看TA自己的配对码，确认和你输入的完全一致 💕"
+                                            "配对码不存在：请让TA查看TA自己的配对码 💕"
                                         reason == "CANNOT_PAIR_SELF" ->
-                                            "不能和自己配对哦 😅 这是发给TA输入的码"
+                                            "不能和自己配对哦 😅"
                                         reason == "ME_NOT_FOUND" ->
                                             "你的账号信息丢失了，请退出重新登录一次"
+                                        reason == "THEY_ALREADY_PAIRED" ->
+                                            "TA已经和别人配对了 😢"
                                         reason == "INVALID_ARGS" ->
-                                            "参数错误：请确认输入的是完整的 6 位字母+数字码"
+                                            "参数错误：请确认输入完整的6位码"
                                         ex != null ->
                                             "网络异常：${ex.message?.take(50).orEmpty()}"
                                         errBody.isNotBlank() ->
@@ -715,11 +821,14 @@ class LoginActivity : ComponentActivity() {
                             .fillMaxWidth()
                             .height(52.dp)
                             .clip(RoundedCornerShape(26.dp)),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF667EEA))
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (waiting) Color(0xFFA0AEC0) else Color(0xFF667EEA)
+                        )
                     ) {
                         if (loading) CircularProgressIndicator(
                             color = Color.White, modifier = Modifier.size(20.dp))
-                        else Text("立即配对 💕", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        else if (waiting) Text("⏳ 等待对方确认...", fontSize = 16.sp)
+                        else Text("发起配对 💕", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
 

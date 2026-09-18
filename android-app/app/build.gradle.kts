@@ -11,8 +11,8 @@ android {
         applicationId = "com.coupletracker.android"
         minSdk = 26
         targetSdk = 34
-        versionCode = 170
-        versionName = "0.170"
+        versionCode = 176
+        versionName = "0.176"
 
         // ====== Supabase 云端配置 ======
         val supabaseUrl = project.properties["SUPABASE_URL"] as? String
