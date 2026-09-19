@@ -55,6 +55,7 @@ import androidx.lifecycle.lifecycleScope       // 与 Lifecycle 绑定的协程�
 import com.coupletracker.android.BuildConfig                // 编译期生成的配置常量（如版本号、Supabase URL）
 import com.coupletracker.android.data.NetworkModule         // 网络模块：Retrofit、Supabase 配置
 import com.coupletracker.android.data.PairByCodeReq         // 配对请求的请求体数据类
+import com.coupletracker.android.data.CheckPairStatusReq    // 查询配对状态的请求体数据类
 import com.coupletracker.android.data.UserRepository         // 用户数据仓库：保存用户信息、Token 等
 import com.coupletracker.android.service.TrackerService     // 后台追踪服务（位置采集、APP 使用检测）
 
@@ -422,6 +423,45 @@ class MainActivity : ComponentActivity() {
         // 分支：如果启用了 WebView 地图模式，就走下面的加载逻辑
         // ============================================================================
         if (useMapWebView) {
+            // ============================================================================
+            // 配对状态轮询：当本地 partnerId 为空（未配对）时，前台轮询 check_pair_status
+            // ----------------------------------------------------------------------------
+            // 成熟方案（参考市面成熟软件的低频状态变更同步实践）：
+            //   ① 前台低频轮询（5s 一次）—— 比简单的「等待对方也输入码」文案更可靠
+            //   ② 状态变更后更新本地用户，触发 userFlow 发新值 -> UI 自动重组 + WebView 自动重新注入
+            //   ③ 已配对（partnerId 非空）则停止轮询，避免无谓耗电
+            // ----------------------------------------------------------------------------
+            // 关键链路：B 接受配对 -> SQL 写入双方 partner_id -> A 这里轮询发现 paired ->
+            //          setUser(me.copy(partnerId=...)) -> userFlow 发新值 ->
+            //          PlaceholderScreen 重组 -> AndroidView update 回调触发 ->
+            //          evaluateJavascript(buildInjectionJs()) 把新 partnerId 注入前端 ->
+            //          前端 __applyAndroidInjection() 拿到新值刷新地图
+            // ============================================================================
+            LaunchedEffect(user?.id, user?.partnerId) {
+                val me = user ?: return@LaunchedEffect
+                // 已配对则无需轮询（省电）
+                if (!me.partnerId.isNullOrBlank()) return@LaunchedEffect
+                while (true) {
+                    runCatching {
+                        val resp = withContext(Dispatchers.IO) {
+                            NetworkModule.rpcService.checkPairStatus(
+                                CheckPairStatusReq(myId = me.id)
+                            )
+                        }
+                        val body = resp.body()
+                        // ✅ 状态变为 paired 且有 partnerId：更新本地用户，触发 UI 重组 + WebView 重新注入
+                        if (body != null && body.status == "paired" && !body.partnerId.isNullOrBlank()) {
+                            withContext(Dispatchers.Main) {
+                                UserRepository.get().setUser(me.copy(
+                                    partnerId = body.partnerId
+                                ))
+                            }
+                            return@LaunchedEffect
+                        }
+                    }
+                    delay(5000L)
+                }
+            }
             // ----------------------------------------------------------------------------
             // Box：Compose 中可以叠放多个子元素的容器（类似 FrameLayout）
             // 这里让它占满整个屏幕尺寸
