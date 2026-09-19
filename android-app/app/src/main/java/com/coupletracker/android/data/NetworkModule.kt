@@ -38,6 +38,8 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 // GsonConverterFactory：把服务器返回的 JSON 自动转成 Kotlin 对象（以及反向转换）
 import retrofit2.converter.gson.GsonConverterFactory
+// GsonBuilder：用于构建自定义 Gson 实例（如 serializeNulls 保留 null 字段，PATCH 清空字段必须）
+import com.google.gson.GsonBuilder
 // TimeUnit：时间单位（秒、毫秒等），用于设置超时时间
 import java.util.concurrent.TimeUnit
 // MutableStateFlow：一个可读可写的数据流，能在数据变化时通知界面自动刷新
@@ -213,10 +215,14 @@ object NetworkModule {
             .build()
 
         // 数据接口的 Retrofit：根地址是 .../rest/v1/
+        // ⚠️ 用 serializeNulls() 的 Gson 实例：PATCH 清空字段需要 {"partner_id":null}，
+        //    默认 Gson 会跳过 null 值导致清空失败，所以 restService 必须保留 null
         restRetrofit = Retrofit.Builder()
             .baseUrl("$SUPABASE_URL/rest/v1/")    // 数据接口根地址
             .client(restClient)                   // 用数据专用客户端
-            .addConverterFactory(GsonConverterFactory.create()) // 启用 JSON 自动转换
+            .addConverterFactory(GsonConverterFactory.create(
+                GsonBuilder().serializeNulls().create()  // 保留 null 字段，支持 PATCH 清空
+            ))
             .build()
 
         // RPC 函数调用的 Retrofit：根地址是 .../rest/v1/rpc/

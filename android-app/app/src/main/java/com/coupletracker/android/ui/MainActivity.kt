@@ -58,8 +58,6 @@ import com.coupletracker.android.data.NetworkModule         // 网络模块：Re
 import com.coupletracker.android.data.PairByCodeReq         // 配对请求的请求体数据类
 import com.coupletracker.android.data.CheckPairStatusReq    // 查询配对状态的请求体数据类
 import com.coupletracker.android.data.AcceptPairReq          // 接受配对请求的请求体数据类
-import com.coupletracker.android.data.UnpairReq              // 取消配对的请求体数据类
-import com.coupletracker.android.data.RejectPairReq          // 拒绝配对请求的请求体数据类
 import com.coupletracker.android.data.UserRepository         // 用户数据仓库：保存用户信息、Token 等
 import com.coupletracker.android.service.TrackerService     // 后台追踪服务（位置采集、APP 使用检测）
 
@@ -294,11 +292,16 @@ class MainActivity : ComponentActivity() {
                                 }
                                 if (me == null || requesterId.isBlank()) return@TextButton
                                 lifecycleScope.launch(Dispatchers.IO) {
-                                    // 调 reject_pair RPC 清掉对方 pending_pair（成熟方案：拒绝 = 删 pending 记录）
-                                    // 这样对方下次轮询显示 idle，B 下次轮询也查不到 incoming_request
+                                    // 用 REST PATCH 清掉对方 pending_pair（成熟方案：拒绝 = 删 pending 记录）
+                                    // 直接 PATCH profiles 表，不依赖 reject_pair SQL 函数部署
+                                    // RLS 策略 profiles_all 允许所有读写，所以可以直接更新对方记录
                                     runCatching {
-                                        NetworkModule.rpcService.rejectPair(
-                                            RejectPairReq(myId = me.id, theirId = requesterId)
+                                        NetworkModule.restService.updateProfile(
+                                            requesterId,
+                                            mapOf(
+                                                "pending_pair" to null,
+                                                "pair_request_at" to null
+                                            )
                                         )
                                     }
                                 }
@@ -1738,6 +1741,8 @@ class MainActivity : ComponentActivity() {
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         // 取消配对按钮：仅在已配对时显示
+                        // 方案：直接用 REST PATCH 清双方 partner_id（RLS profiles_all 允许所有读写）
+                        //       不依赖 unpair SQL 函数部署，更稳定可靠
                         if (hasPartner == true) {
                             var unpairing by remember { mutableStateOf(false) }
                             OutlinedButton(
@@ -1747,31 +1752,50 @@ class MainActivity : ComponentActivity() {
                                         Toast.makeText(this@MainActivity, "用户信息加载中，请稍后重试", Toast.LENGTH_SHORT).show()
                                         return@OutlinedButton
                                     }
+                                    val myPartnerId = me.partnerId
+                                    if (myPartnerId.isNullOrBlank()) {
+                                        Toast.makeText(this@MainActivity, "当前未配对，无需取消", Toast.LENGTH_SHORT).show()
+                                        return@OutlinedButton
+                                    }
                                     if (unpairing) return@OutlinedButton  // 防抖：避免狂点导致多次请求
                                     unpairing = true
                                     Toast.makeText(this@MainActivity, "正在取消配对…", Toast.LENGTH_SHORT).show()
                                     lifecycleScope.launch(Dispatchers.IO) {
-                                        val resp = runCatching {
-                                            NetworkModule.rpcService.unpair(
-                                                UnpairReq(myId = me.id)
-                                            )
+                                        // 清空字段：partner_id + pending_pair + pair_request_at
+                                        val clearFields = mapOf<String, Any?>(
+                                            "partner_id" to null,
+                                            "pending_pair" to null,
+                                            "pair_request_at" to null
+                                        )
+                                        // ① 清自己
+                                        val selfResp = runCatching {
+                                            NetworkModule.restService.updateProfile(me.id, clearFields)
                                         }
-                                        val body = resp.getOrNull()?.body()
+                                        // ② 清对方（单方取消 -> 双方都解除）
+                                        val partnerResp = runCatching {
+                                            NetworkModule.restService.updateProfile(myPartnerId, clearFields)
+                                        }
+                                        val selfOk = selfResp.getOrNull()?.isSuccessful == true
+                                        val partnerOk = partnerResp.getOrNull()?.isSuccessful == true
                                         withContext(Dispatchers.Main) {
                                             unpairing = false
-                                            if (body?.ok == true) {
-                                                // ✅ 取消成功：清空本地 partnerId -> userFlow 发新值
+                                            if (selfOk) {
+                                                // ✅ 至少自己清成功：更新本地 -> userFlow 发新值
                                                 //   -> UI 自动切回未配对 + WebView 重新注入空 partnerId
+                                                //   -> AppScreen/StatsScreen 切换按钮显示「💤 未配对」
                                                 UserRepository.get().setUser(me.copy(partnerId = null))
                                                 hasPartner = false
                                                 partnerName = ""
-                                                Toast.makeText(this@MainActivity, "已取消配对", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                // ❌ 失败：提示用户。最常见原因是后端 unpair SQL 函数未部署（404）
-                                                val reason = body?.reason
                                                 Toast.makeText(
                                                     this@MainActivity,
-                                                    if (reason == "NOT_PAIRED") "当前未配对，无需取消" else "取消失败：请确认已在 Supabase 部署 supabase_unpair.sql",
+                                                    if (partnerOk) "已取消配对" else "已取消配对（对方数据稍后同步）",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            } else {
+                                                // ❌ 自己都没清成功（网络问题）
+                                                Toast.makeText(
+                                                    this@MainActivity,
+                                                    "取消失败：网络异常，请稍后重试",
                                                     Toast.LENGTH_LONG
                                                 ).show()
                                             }

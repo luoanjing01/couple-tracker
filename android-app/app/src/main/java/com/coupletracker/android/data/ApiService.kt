@@ -591,7 +591,7 @@ interface RestService {
     @PATCH("profiles")
     suspend fun updateProfile(
         @Query("id") id: String,
-        @Body body: Map<String, Any>
+        @Body body: Map<String, Any?>  // Any? 允许 null 值，配合 serializeNulls 的 Gson 可发 {"partner_id":null} 清空字段
     ): Response<Unit>
 
     // ========================================================================
