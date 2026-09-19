@@ -8,7 +8,7 @@ on:
       - '.github/workflows/build-apk.yml'
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
 
 env:
   GRADLE_USER_HOME: ~/.gradle
@@ -21,6 +21,8 @@ jobs:
     name: Build Android APK (Debug)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -44,7 +46,7 @@ jobs:
       - name: Setup Android SDK 34
         uses: android-actions/setup-android@v3
         with:
-          cmdline-tools-version: 11076708  # commandlinetools-win-12
+          cmdline-tools-version: 11076708
           packages: >
             platforms;android-34
             build-tools;34.0.0
@@ -62,7 +64,6 @@ jobs:
             echo "--- FULL BUILD LOG BEGIN ---" >&2
             cat "$LOG" >&2
             echo "--- FULL BUILD LOG END ---" >&2
-            # Preserve log for artifact
             cp "$LOG" build.log
             exit 1
           fi
@@ -78,14 +79,11 @@ jobs:
           find android-app -name "*.apk" -type f -printf "FOUND: %p (%s bytes)\n" 2>/dev/null || true
           echo "=== Listing debug/ dir ==="
           ls -lR android-app/app/build/outputs/apk/ 2>/dev/null || echo "(apk output dir missing or empty)"
-          echo "=== workspace dir ==="
-          ls -la "$GITHUB_WORKSPACE" | head -20
 
       - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: CoupleTracker-debug-apk
-          # glob 匹配：主路径 + 回退路径，找不到就明确 error
           path: |
             android-app/app/build/outputs/apk/debug/app-debug.apk
             android-app/**/app-debug.apk
@@ -94,17 +92,31 @@ jobs:
           compression-level: 6
           retention-days: 30
 
-      - name: Upload Build Reports (if any)
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release with APK
+        if: github.ref == 'refs/heads/main' && success()
+        uses: softprops/action-gh-release@v1
         with:
-          name: build-reports
-          path: |
-            android-app/app/build/reports/**/*.html
-            android-app/app/build/reports/**/*.xml
-            android-app/app/build/reports/**/*.txt
-          if-no-files-found: ignore
-          retention-days: 7
+          tag_name: v0.177
+          name: CoupleTracker v0.177
+          body: |
+            ## v0.177 更新内容
+
+            ### 取消配对功能修复
+            - 取消配对改用 REST API PATCH profiles 表（不依赖 SQL 函数部署）
+            - 拒绝配对改用 REST API PATCH 清对方 pending_pair
+            - NetworkModule serializeNulls 支持 PATCH 清空字段
+            - 取消配对按钮加 Toast 反馈 + 防抖
+
+            ### 应用/统计切换
+            - AppScreen 和 StatsScreen 已有完整「我/TA」切换按钮
+            - partnerId 同步后自动生效
+
+            ### 安装方式
+            下载下方 app-debug.apk，安装到手机即可
+          files: |
+            android-app/app/build/outputs/apk/debug/app-debug.apk
+          draft: false
+          prerelease: false
 
       - name: Upload Build Log (always)
         if: always()
