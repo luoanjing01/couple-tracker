@@ -254,8 +254,16 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
             // 从本地仓库获取当前登录用户（如果未登录则 userId 为 null，直接返回不上报）
             val user = UserRepository.get().getUser()
             val userId = user?.id ?: return@launch   // return@launch 表示从协程中返回（结束协程）
-            // ✅ couple_id 传 null：未配对用户也能写库（之前 FK 已删除）
-            //   —— 数据库表结构已修改，couple_id 字段允许 null
+
+            // —— 未配对时跳过位置上报 ——
+            // locations 表 couple_id 列是 NOT NULL，未配对时 couple_id 为 null
+            // 会导致 HTTP 400 (PostgreSQL 23502 not_null_violation)
+            // 部署 supabase_fix_locations.sql (ALTER COLUMN couple_id DROP NOT NULL) 后可恢复未配对上报
+            if (user.partnerId.isNullOrBlank()) {
+                NetworkModule.lastLocationReportStatus.value = "未配对，位置暂不上报（配对后自动恢复）"
+                return@launch
+            }
+            // ✅ 已配对：couple_id 传 null 或实际值（部署 SQL 后允许 null）
             val resp = runCatching {
                 // 调用后端 REST 接口上报位置
                 NetworkModule.restService.reportLocation(
