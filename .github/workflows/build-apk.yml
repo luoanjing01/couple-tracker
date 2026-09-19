@@ -28,6 +28,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Compute auto-increment version
+        id: version
+        run: |
+          # 基准值 176 + GitHub Run Number = 自动递增版本号
+          # Run Number 从 1 开始递增，每次 push 自动 +1
+          BASE=176
+          CODE=$((BASE + GITHUB_RUN_NUMBER))
+          NAME="0.${CODE}"
+          echo "versionCode=${CODE}" >> $GITHUB_OUTPUT
+          echo "versionName=${NAME}" >> $GITHUB_OUTPUT
+          echo "[INFO] GitHub Run Number: ${GITHUB_RUN_NUMBER}"
+          echo "[INFO] Computed versionCode=${CODE} versionName=${NAME}"
+
       - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
@@ -59,7 +72,10 @@ jobs:
           set -euo pipefail
           LOG=/tmp/build.log
           cp /dev/null "$LOG"
-          if ! ./gradlew :app:assembleDebug --stacktrace --console=plain --no-build-cache >"$LOG" 2>&1; then
+          if ! ./gradlew :app:assembleDebug --stacktrace --console=plain --no-build-cache \
+            -PversionCode=${{ steps.version.outputs.versionCode }} \
+            -PversionName=${{ steps.version.outputs.versionName }} \
+            >"$LOG" 2>&1; then
             echo "[ERROR] gradlew assembleDebug FAILED" >&2
             echo "--- FULL BUILD LOG BEGIN ---" >&2
             cat "$LOG" >&2
@@ -96,20 +112,10 @@ jobs:
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v0.177
-          name: CoupleTracker v0.177
+          tag_name: v${{ steps.version.outputs.versionName }}
+          name: CoupleTracker v${{ steps.version.outputs.versionName }}
           body: |
-            ## v0.177 更新内容
-
-            ### 取消配对功能修复
-            - 取消配对改用 REST API PATCH profiles 表（不依赖 SQL 函数部署）
-            - 拒绝配对改用 REST API PATCH 清对方 pending_pair
-            - NetworkModule serializeNulls 支持 PATCH 清空字段
-            - 取消配对按钮加 Toast 反馈 + 防抖
-
-            ### 应用/统计切换
-            - AppScreen 和 StatsScreen 已有完整「我/TA」切换按钮
-            - partnerId 同步后自动生效
+            ## v${{ steps.version.outputs.versionName }} 更新
 
             ### 安装方式
             下载下方 app-debug.apk，安装到手机即可
