@@ -17,6 +17,7 @@ import android.content.Context              // Android 上下文，访问系统�
 import android.graphics.Bitmap              // 位图，WebView 加载 favicon 时用到
 import android.os.Bundle                     // 用于保存 Activity 状态的容器
 import android.webkit.*                     // WebView 相关：WebView、WebSettings、WebViewClient 等
+import android.widget.Toast                 // Android 原生 Toast 提示（轻量级反馈）
 
 // Jetpack Activity 库
 import androidx.activity.ComponentActivity  // 基础 Activity 基类，比 AppCompatActivity 更轻量
@@ -58,6 +59,7 @@ import com.coupletracker.android.data.PairByCodeReq         // 配对请求的�
 import com.coupletracker.android.data.CheckPairStatusReq    // 查询配对状态的请求体数据类
 import com.coupletracker.android.data.AcceptPairReq          // 接受配对请求的请求体数据类
 import com.coupletracker.android.data.UnpairReq              // 取消配对的请求体数据类
+import com.coupletracker.android.data.RejectPairReq          // 拒绝配对请求的请求体数据类
 import com.coupletracker.android.data.UserRepository         // 用户数据仓库：保存用户信息、Token 等
 import com.coupletracker.android.service.TrackerService     // 后台追踪服务（位置采集、APP 使用检测）
 
@@ -214,6 +216,9 @@ class MainActivity : ComponentActivity() {
                 // ============================================================================
                 val pairUser by UserRepository.get().userFlow.collectAsState(initial = null)
                 var incomingRequest by remember { mutableStateOf<com.coupletracker.android.data.CheckPairStatusResp?>(null) }
+                // 已忽略的请求者 ID 集合（双保险）：拒绝后即使后端尚未清掉 pending_pair，
+                // 本地也不重复弹同一个请求。用户重启 App 后集合重置（合理，给对方重试机会）。
+                val dismissedRequesters = remember { mutableStateListOf<String>() }
                 LaunchedEffect(pairUser?.id, pairUser?.partnerId) {
                     val me = pairUser ?: return@LaunchedEffect
                     if (!me.partnerId.isNullOrBlank()) return@LaunchedEffect  // 已配对，停止轮询
@@ -234,9 +239,12 @@ class MainActivity : ComponentActivity() {
                                         }
                                         return@LaunchedEffect
                                     }
-                                    // 收到 A 发来的配对请求：赋值触发 AlertDialog（仅在未弹窗时赋值，避免重复弹窗）
-                                    "incoming_request" -> if (incomingRequest == null) {
-                                        withContext(Dispatchers.Main) { incomingRequest = body }
+                                    // 收到 A 发来的配对请求：弹窗（仅在未弹窗 + 未被本地忽略时）
+                                    "incoming_request" -> {
+                                        val rid = body.requesterId
+                                        if (incomingRequest == null && rid != null && rid !in dismissedRequesters) {
+                                            withContext(Dispatchers.Main) { incomingRequest = body }
+                                        }
                                     }
                                 }
                             }
@@ -244,7 +252,7 @@ class MainActivity : ComponentActivity() {
                         delay(5000L)
                     }
                 }
-                // 收到配对请求时显示弹窗（接受/拒绝，逻辑与 LoginActivity.PairCard 一致）
+                // 收到配对请求时显示弹窗（接受/拒绝）
                 incomingRequest?.let { req ->
                     AlertDialog(
                         onDismissRequest = { incomingRequest = null },
@@ -257,6 +265,8 @@ class MainActivity : ComponentActivity() {
                                     val me = pairUser
                                     incomingRequest = null
                                     if (me == null || requesterId.isBlank()) return@Button
+                                    // 立即加入忽略集合，避免网络往返期间重复弹窗
+                                    if (requesterId !in dismissedRequesters) dismissedRequesters.add(requesterId)
                                     lifecycleScope.launch(Dispatchers.IO) {
                                         val resp = runCatching {
                                             NetworkModule.rpcService.acceptPair(
@@ -274,7 +284,25 @@ class MainActivity : ComponentActivity() {
                             ) { Text("接受 💕") }
                         },
                         dismissButton = {
-                            TextButton(onClick = { incomingRequest = null }) {
+                            TextButton(onClick = {
+                                val requesterId = req.requesterId ?: ""
+                                val me = pairUser
+                                incomingRequest = null
+                                // 立即加入忽略集合，避免 5 秒后再次弹同一个请求
+                                if (requesterId.isNotBlank() && requesterId !in dismissedRequesters) {
+                                    dismissedRequesters.add(requesterId)
+                                }
+                                if (me == null || requesterId.isBlank()) return@TextButton
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    // 调 reject_pair RPC 清掉对方 pending_pair（成熟方案：拒绝 = 删 pending 记录）
+                                    // 这样对方下次轮询显示 idle，B 下次轮询也查不到 incoming_request
+                                    runCatching {
+                                        NetworkModule.rpcService.rejectPair(
+                                            RejectPairReq(myId = me.id, theirId = requesterId)
+                                        )
+                                    }
+                                }
+                            }) {
                                 Text("拒绝", color = Color.Gray)
                             }
                         }
@@ -1711,10 +1739,17 @@ class MainActivity : ComponentActivity() {
                     ) {
                         // 取消配对按钮：仅在已配对时显示
                         if (hasPartner == true) {
+                            var unpairing by remember { mutableStateOf(false) }
                             OutlinedButton(
                                 onClick = {
                                     val me = user
-                                    if (me == null) return@OutlinedButton
+                                    if (me == null) {
+                                        Toast.makeText(this@MainActivity, "用户信息加载中，请稍后重试", Toast.LENGTH_SHORT).show()
+                                        return@OutlinedButton
+                                    }
+                                    if (unpairing) return@OutlinedButton  // 防抖：避免狂点导致多次请求
+                                    unpairing = true
+                                    Toast.makeText(this@MainActivity, "正在取消配对…", Toast.LENGTH_SHORT).show()
                                     lifecycleScope.launch(Dispatchers.IO) {
                                         val resp = runCatching {
                                             NetworkModule.rpcService.unpair(
@@ -1723,12 +1758,22 @@ class MainActivity : ComponentActivity() {
                                         }
                                         val body = resp.getOrNull()?.body()
                                         withContext(Dispatchers.Main) {
+                                            unpairing = false
                                             if (body?.ok == true) {
                                                 // ✅ 取消成功：清空本地 partnerId -> userFlow 发新值
                                                 //   -> UI 自动切回未配对 + WebView 重新注入空 partnerId
                                                 UserRepository.get().setUser(me.copy(partnerId = null))
                                                 hasPartner = false
                                                 partnerName = ""
+                                                Toast.makeText(this@MainActivity, "已取消配对", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                // ❌ 失败：提示用户。最常见原因是后端 unpair SQL 函数未部署（404）
+                                                val reason = body?.reason
+                                                Toast.makeText(
+                                                    this@MainActivity,
+                                                    if (reason == "NOT_PAIRED") "当前未配对，无需取消" else "取消失败：请确认已在 Supabase 部署 supabase_unpair.sql",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
                                             }
                                         }
                                     }
@@ -1743,7 +1788,7 @@ class MainActivity : ComponentActivity() {
                                 border = ButtonDefaults.outlinedButtonBorder.copy(
                                     brush = SolidColor(Color(0xFFE53E3E))
                                 )
-                            ) { Text("取消配对", fontSize = 14.sp) }
+                            ) { Text(if (unpairing) "取消中…" else "取消配对", fontSize = 14.sp) }
                         }
                         // 退出登录按钮
                         OutlinedButton(

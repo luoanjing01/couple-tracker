@@ -255,6 +255,27 @@ interface RpcService {
     suspend fun unpair(
         @Body body: UnpairReq
     ): Response<UnpairResp>
+
+    /**
+     * 拒绝配对请求（清掉对方发起的 pending_pair）
+     *
+     * 业务场景：B 收到 A 的配对请求弹窗，点「拒绝」按钮。
+     * 服务器把 A 的 pending_pair / pair_request_at 清空，
+     * B 下次轮询 check_pair_status 第②步再也查不到 A 的请求，
+     * 不再重复弹窗。
+     *
+     * 成熟方案参考：腾讯 IM refuseFriendApplication、CSDN 微服务好友管理
+     * ——拒绝 = 删掉 pending 记录，否则下次拉列表又会拉到。
+     *
+     * @see public.reject_pair 服务器端 SQL 函数定义（参数：p_my_id, p_their_id）
+     *
+     * @param body 请求体（自己 ID + 对方 ID），见 RejectPairReq
+     * @return 拒绝结果，见 RejectPairResp
+     */
+    @POST("reject_pair")
+    suspend fun rejectPair(
+        @Body body: RejectPairReq
+    ): Response<RejectPairResp>
 }
 
 // ============================================================================
@@ -472,6 +493,30 @@ data class UnpairResp(
     @SerializedName("msg")        val msg: String? = null,
     @SerializedName("partner_id") val partnerId: String? = null,
     @SerializedName("reason")     val reason: String? = null
+)
+
+/**
+ * 拒绝配对请求体
+ *
+ * @param myId   自己的 user ID（被请求方 B）
+ * @param theirId 对方的 user ID（请求方 A）
+ */
+data class RejectPairReq(
+    @SerializedName("p_my_id")    val myId: String,
+    @SerializedName("p_their_id") val theirId: String
+)
+
+/**
+ * 拒绝配对响应体
+ *
+ * @param ok     请求是否成功
+ * @param msg    服务器返回的提示消息
+ * @param reason 失败原因（如 NO_PENDING_REQUEST 表示没待处理的请求）
+ */
+data class RejectPairResp(
+    @SerializedName("ok")     val ok: Boolean = false,
+    @SerializedName("msg")    val msg: String? = null,
+    @SerializedName("reason") val reason: String? = null
 )
 
 /**
