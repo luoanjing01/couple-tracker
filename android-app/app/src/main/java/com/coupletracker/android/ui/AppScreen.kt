@@ -1,57 +1,78 @@
+// =====================================================================
+// 文件：AppScreen.kt
+// 作用：情侣追踪 App 的「应用动态」主界面。
+//       这是用户看到的主页面，包含 3 个模块：
+//         ① 当前正在使用（大卡片，实时显示对方/自己正在玩的 App）
+//         ② 手机状态（电量/网络/在线状态/心情，网格小卡片）
+//         ③ 历史打开记录（按时间倒序展示最近打开过的 App）
+// 作者：coupletracker 团队
+// =====================================================================
+
+// package 声明：声明本文件所属的包路径，对应文件夹层级
 package com.coupletracker.android.ui
 
-import android.app.AppOpsManager
-import android.content.BroadcastReceiver
-import android.app.usage.UsageEvents
-import android.app.usage.UsageStatsManager
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.content.pm.ApplicationInfo
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
-import android.net.wifi.WifiManager
-import android.os.BatteryManager
-import android.os.Build
-import android.os.PowerManager
-import android.os.Process
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.pullrefresh.PullRefreshIndicator
-import androidx.compose.material.pullrefresh.pullRefresh
-import androidx.compose.material.pullrefresh.rememberPullRefreshState
-import androidx.compose.material.icons.Icons
+// ---- Android 系统服务相关 import（用于读取电量、网络、App 使用情况等系统信息）----
+import android.app.AppOpsManager              // 用于检查「使用情况访问权限」
+import android.content.BroadcastReceiver      // 广播接收器基类（监听电量变化、亮熄屏）
+import android.app.usage.UsageEvents           // App 使用事件（前台/后台切换）
+import android.app.usage.UsageStatsManager     // 查询 App 使用统计的核心 API
+import android.content.Context                // Android 上下文，访问系统服务的入口
+import android.content.Intent                 // 意图对象，用于注册广播
+import android.content.IntentFilter            // 广播过滤器，指定要监听哪些广播
+import android.content.pm.ApplicationInfo     // App 信息（包名、分类等）
+import android.net.ConnectivityManager        // 网络连接管理器
+import android.net.NetworkCapabilities        // 网络能力描述（WiFi/蜂窝等）
+import android.net.NetworkRequest             // 网络请求构建器
+import android.net.wifi.WifiManager           // WiFi 管理（读取 SSID）
+import android.os.BatteryManager              // 电池信息常量
+import android.os.Build                        // 系统版本信息（用于 API 兼容判断）
+import android.os.PowerManager                 // 电源管理（判断亮屏/熄屏）
+import android.os.Process                      // 进程信息（拿本应用 UID）
 
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.coupletracker.android.data.AppUsageRow
-import com.coupletracker.android.data.LocationRow
-import com.coupletracker.android.data.AppSessionTracker
-import com.coupletracker.android.data.NetworkModule
-import com.coupletracker.android.data.UserRepository
-import com.coupletracker.android.service.TrackerService
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.time.LocalDate
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
+// ---- Jetpack Compose UI 框架相关 import ----
+import androidx.compose.foundation.background               // 背景色修饰符
+import androidx.compose.foundation.clickable                // 可点击修饰符
+import androidx.compose.foundation.layout.*                 // 布局相关（Box/Column/Row/Spacer 等）
+import androidx.compose.foundation.layout.ExperimentalLayoutApi  // 实验性布局 API（FlowRow 需要）
+import androidx.compose.foundation.rememberScrollState      // 记住滚动位置
+import androidx.compose.foundation.shape.RoundedCornerShape // 圆角形状
+import androidx.compose.foundation.verticalScroll           // 纵向滚动修饰符
+import androidx.compose.material.pullrefresh.PullRefreshIndicator      // 下拉刷新指示器（旧 Material API）
+import androidx.compose.material.pullrefresh.pullRefresh               // 下拉刷新修饰符
+import androidx.compose.material.pullrefresh.rememberPullRefreshState  // 下拉刷新状态记忆
+
+import androidx.compose.material.icons.Icons                // 图标库（本文件未直接使用，保留以便扩展）
+
+import androidx.compose.material3.*                          // Material3 组件（Card/Button/Text 等）
+import androidx.compose.runtime.*                            // Compose 运行时（remember/mutableStateOf 等）
+import androidx.compose.runtime.saveable.rememberSaveable    // 可保存的状态（横屏旋转后保留）
+import androidx.compose.ui.Alignment                         // 对齐方式（居中、顶部等）
+import androidx.compose.ui.Modifier                          // 修饰符链（Compose 的核心装饰机制）
+import androidx.compose.ui.graphics.Color                    // 颜色定义
+import androidx.compose.ui.platform.LocalContext              // 获取当前 Android Context
+import androidx.compose.ui.text.font.FontWeight               // 字重（粗细）
+import androidx.compose.ui.unit.dp                            // 密度无关像素单位
+import androidx.compose.ui.unit.sp                            // 缩放像素单位（字体大小）
+
+// ---- 项目内部数据层 import ----
+import com.coupletracker.android.data.AppUsageRow       // App 使用记录数据类（对应云端 app_usage 表）
+import com.coupletracker.android.data.LocationRow       // 位置记录数据类（对应云端 locations 表）
+import com.coupletracker.android.data.AppSessionTracker // App 会话追踪单例（进程内累计时长、当前心情）
+import com.coupletracker.android.data.NetworkModule     // 网络模块（Retrofit/Supabase 客户端）
+import com.coupletracker.android.data.UserRepository    // 用户仓库（管理当前登录用户信息）
+import com.coupletracker.android.service.TrackerService // 后台追踪服务（上报位置/使用情况）
+
+// ---- Kotlin 协程相关 import ----
+import kotlinx.coroutines.Dispatchers     // 协程调度器（IO=后台线程，Main=主线程）
+import kotlinx.coroutines.delay            // 协程延迟（非阻塞式 sleep）
+import kotlinx.coroutines.isActive         // 判断协程是否仍在运行
+import kotlinx.coroutines.launch           // 启动协程
+import kotlinx.coroutines.withContext      // 切换协程上下文（线程切换）
+
+// ---- Java 时间相关 import ----
+import java.time.LocalDate               // 日期（年-月-日）
+import java.time.ZoneId                  // 时区 ID
+import java.time.format.DateTimeFormatter // 日期时间格式化器
 
 /**
  * 应用 Tab：3 个模块
@@ -62,103 +83,128 @@ import java.time.format.DateTimeFormatter
  * 数据源：
  *   - 看自己：UsageStatsManager + BatteryManager + ConnectivityManager 本地实时
  *   - 看 TA：Supabase app_usage + locations 表（有 1-2 分钟延迟，正常）
+ *
+ * 【初学者理解】
+ *   @Composable：标记这是一个 Compose 可组合函数，可以像组件一样使用。
+ *   @OptIn(...ExperimentalMaterial3Api...)：声明要使用 Material3 实验性 API（如下拉刷新）。
+ *   「AppScreen()」没有参数，因为它是页面级根组件，所需数据在内部自行收集。
+ *   Compose 函数的特点：状态变化会自动触发 UI 重绘，所以重点是管理「状态」。
  */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.material.ExperimentalMaterialApi::class)
 @Composable
 fun AppScreen() {
-    val ctx = LocalContext.current
-    val user by UserRepository.get().userFlow.collectAsState(initial = null)
-    val myId = user?.id.orEmpty()
-    val myCode = user?.coupleCode.orEmpty()
+    // ---- 1. 获取基础上下文和当前登录用户 ----
+    val ctx = LocalContext.current                                // 当前 Android Context，用于访问系统服务
+    val user by UserRepository.get().userFlow.collectAsState(initial = null) // 订阅登录用户流，初次为 null
+    val myId = user?.id.orEmpty()                                  // 当前用户 ID（可能为空字符串）
+    val myCode = user?.coupleCode.orEmpty()                        // 当前用户的配对码（旧机制）
 
-    var showPartner by remember { mutableStateOf(false) }
-    var partnerId by remember { mutableStateOf<String?>(null) }
-    var partnerName by remember { mutableStateOf("") }
-    var partnerLoaded by remember { mutableStateOf(false) }
-    var reloadKey by remember { mutableStateOf(0) }
+    // ---- 2. 定义 UI 状态变量（用 remember + mutableStateOf 保持 Compose 状态）----
+    // 说明：Compose 用「状态驱动 UI」，状态变化会自动重绘对应组件。
+    var showPartner by remember { mutableStateOf(false) }         // 是否正在查看对方（默认看自己）
+    var partnerId by remember { mutableStateOf<String?>(null) }  // 对方用户 ID（未配对时为 null）
+    var partnerName by remember { mutableStateOf("") }            // 对方昵称
+    var partnerLoaded by remember { mutableStateOf(false) }       // 对方信息是否加载完毕
+    var reloadKey by remember { mutableStateOf(0) }               // 刷新钥匙，+1 后子组件会重新拉数据
 
-    // ---- 下拉刷新 ----
-    var isRefreshing by remember { mutableStateOf(false) }
-    val scrollState = rememberScrollState()
-    val refreshScope = rememberCoroutineScope()
+    // ---- 3. 下拉刷新配置 ----
+    var isRefreshing by remember { mutableStateOf(false) }        // 当前是否在下拉刷新
+    val scrollState = rememberScrollState()                       // 记住滚动位置
+    val refreshScope = rememberCoroutineScope()                   // 创建协程作用域（用于在 Composable 里启动协程）
     val pullRefreshState = rememberPullRefreshState(
-        refreshing = isRefreshing,
+        refreshing = isRefreshing,                                // 绑定刷新状态
         onRefresh = {
+            // 用户下拉触发刷新时的回调
             isRefreshing = true
-            reloadKey++
+            reloadKey++                                            // 让所有子卡片重新拉取数据
             refreshScope.launch {
-                delay(1500)
-                isRefreshing = false
+                delay(1500)                                       // 至少转 1.5 秒动画，避免刷新太快闪退感
+                isRefreshing = false                              // 关闭刷新指示器
             }
         }
     )
 
-    // ---- 查配对对方 ----
+    // ---- 4. 查询配对对方的信息（启动时执行一次，myCode/myId 变化时重新执行）----
     // ✅ 优先用 partner_id 查（配对码不再共享，每个人有独立码）
     //    兼容旧数据：没 partner_id 的用 couple_code 查
+    //
+    // 【LaunchedEffect】= Compose 的副作用 API：参数变化时执行一次，离开时取消。
     LaunchedEffect(myCode, myId) {
+        // 先清空旧值，准备重新加载
         partnerId = null; partnerName = ""; partnerLoaded = false
-        val myPartnerId = user?.partnerId
+        val myPartnerId = user?.partnerId                          // 自己的「对方 ID」字段
+        // UUID 正则：8-4-4-4-12 的十六进制字符串（如 550e8400-e29b-41d4-a716-446655440000）
         val uuidRe = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOption.IGNORE_CASE)
         if (!myPartnerId.isNullOrBlank() && uuidRe.matches(myPartnerId)) {
+            // 走网络请求拿对方资料，必须切到 IO 线程避免阻塞 UI
             withContext(Dispatchers.IO) {
                 runCatching {
+                    // 通过 REST 查 profile 表，按 id 过滤
                     NetworkModule.restService.getProfile(id = myPartnerId)
                 }.getOrNull()?.body()?.firstOrNull()?.let { p ->
+                    // 查到了：保存 ID 和昵称（昵称为空时回退用 username）
                     partnerId = p.id
                     partnerName = p.nickname.ifBlank { p.username }
                 }
-                partnerLoaded = true
+                partnerLoaded = true                              // 标记加载完成（无论查没查到）
             }
         } else {
+            // 没有 partner_id → 直接标记完成
             partnerLoaded = true
         }
     }
 
-    val subjectId = (if (showPartner) partnerId else myId) ?: ""
-    val subjectName = if (showPartner) partnerName.ifBlank { "TA" } else (user?.displayName ?: "我")
-    val subjectIsMe = !showPartner
+    // ---- 5. 计算当前要展示的主体（自己 or 对方）----
+    val subjectId = (if (showPartner) partnerId else myId) ?: ""                       // 展示目标的用户 ID
+    val subjectName = if (showPartner) partnerName.ifBlank { "TA" } else (user?.displayName ?: "我") // 展示名字
+    val subjectIsMe = !showPartner                                                      // 当前是否在看自己
 
+    // ---- 6. 页面根容器：粉色背景 + 下拉刷新支持 ----
     Box(
         Modifier
-            .fillMaxSize()
-            .background(Color(0xFFFDF2F8))
-            .pullRefresh(pullRefreshState)
+            .fillMaxSize()                                         // 占满整个屏幕
+            .background(Color(0xFFFDF2F8))                        // 浅粉色背景（情侣主题）
+            .pullRefresh(pullRefreshState)                         // 让本容器支持下拉刷新手势
     ) {
+        // 下拉刷新指示器（顶部转圈圈）
         PullRefreshIndicator(
             refreshing = isRefreshing,
             state = pullRefreshState,
-            modifier = Modifier.align(Alignment.TopCenter),
-            contentColor = Color(0xFFE75480)
+            modifier = Modifier.align(Alignment.TopCenter),     // 顶部居中
+            contentColor = Color(0xFFE75480)                      // 粉色主题
         )
 
+        // 主内容列，纵向滚动
         Column(
             Modifier
                 .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(horizontal = 16.dp, vertical = 18.dp)
+                .verticalScroll(scrollState)                     // 启用纵向滚动
+                .padding(horizontal = 16.dp, vertical = 18.dp)   // 内边距
         ) {
         // ---- 顶部标题 + 切换按钮 ----
+        // 一行：左边标题，右边切换按钮（看自己/看 TA）
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("应用动态", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.weight(1f))                            // 弹性空白把按钮推到右边
             // 切换按钮始终显示：有配对→切换查看对方，无配对→提示
             Button(
                 onClick = {
                     if (partnerId == null) {
-                        // 无配对，不切换
+                        // 无配对，不切换（按钮只是提示状态）
                     } else {
-                        showPartner = !showPartner; reloadKey++
+                        showPartner = !showPartner; reloadKey++   // 切换并刷新
                     }
                 },
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(20.dp),                // 圆角药丸形按钮
                 colors = ButtonDefaults.buttonColors(
+                    // 颜色随状态变化：未配对灰色 / 看对方蓝色 / 看自己粉色
                     containerColor = if (partnerId == null) Color(0xFFCBD5E0)
                     else if (showPartner) Color(0xFF667EEA) else Color(0xFFE75480)
                 ),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
+                    // 文本随状态变化：未配对"💤 未配对" / 看对方时显示"👤 我" / 看自己时显示"💕 TA"
                     if (partnerId == null) "💤 未配对"
                     else if (showPartner) "👤 我" else "💕 TA",
                     fontSize = 13.sp, fontWeight = FontWeight.Bold,
@@ -167,17 +213,19 @@ fun AppScreen() {
             }
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(10.dp))                            // 模块之间留白
 
         if (partnerId != null) {
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(4.dp))                         // 已配对时多留一点白
         }
 
         // ============= ① 当前正在使用 =============
+        // 大卡片，显示主体当前正在玩的 App（或休息中）
         CurrentAppCard(
             subjectId = subjectId,
             subjectName = subjectName,
             subjectIsMe = subjectIsMe,
+            // 看自己时需要检查是否有「使用情况访问」权限；看对方时云端已有，默认 true
             subjectHasPermission = if (subjectIsMe) localHasUsagePermission(ctx) else true,
             reloadKey = reloadKey
         )
@@ -185,6 +233,7 @@ fun AppScreen() {
         Spacer(Modifier.height(8.dp))
 
         // ============= ② 手机状态 =============
+        // 网格小卡片：电量、网络、状态、心情
         PhoneStatusCard(
             subjectId = subjectId,
             subjectName = subjectName,
@@ -195,6 +244,7 @@ fun AppScreen() {
         Spacer(Modifier.height(12.dp))
 
         // ============= ③ 历史打开记录 =============
+        // 标题 + 列表（按时间倒序展示最近打开过的 App）
         Text("🕒 最近打开记录", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
         Spacer(Modifier.height(6.dp))
 
@@ -209,50 +259,57 @@ fun AppScreen() {
 
 // =====================================================================
 // ① 🎯 当前正在使用 —— 大卡片
+// 这个 Composable 渲染一张大卡片，展示主体（自己或对方）当前正在玩的 App。
+//   - 看自己：本地每 3 秒查一次前台 App + 时长
+//   - 看对方：每 15 秒拉一次云端最新记录
+// 当无活动 / 熄屏 / 没权限时，会显示对应的提示文案与图标。
 // =====================================================================
 @Composable
 private fun CurrentAppCard(
-    subjectId: String,
-    subjectName: String,
-    subjectIsMe: Boolean,
-    subjectHasPermission: Boolean,
-    reloadKey: Int
+    subjectId: String,              // 展示目标的用户 ID
+    subjectName: String,            // 展示名字（"我" / 对方昵称 / "TA"）
+    subjectIsMe: Boolean,           // 是否在看自己
+    subjectHasPermission: Boolean,  // 是否有「使用情况访问」权限（仅自己时检查）
+    reloadKey: Int                  // 刷新钥匙，变化时重新启动轮询
 ) {
     val ctx = LocalContext.current
 
     // 本地实时查自己的前台 APP（名字/分类）
-    var fgPkg by remember { mutableStateOf("") }
-    var fgName by remember { mutableStateOf("") }
-    var fgCategory by remember { mutableStateOf("") }
+    var fgPkg by remember { mutableStateOf("") }       // 当前前台 App 包名
+    var fgName by remember { mutableStateOf("") }       // 当前前台 App 显示名（如「微信」）
+    var fgCategory by remember { mutableStateOf("") }   // 当前前台 App 分类（如「社交」）
 
     // ✅ 自己的累计时长直接读 AppSessionTracker 单例（进程存活就不丢）
-    var sessionSeconds by remember { mutableStateOf(0) }
+    var sessionSeconds by remember { mutableStateOf(0) } // 当前 App 已用秒数
     // 熄屏状态
-    var screenOn by remember { mutableStateOf(true) }
+    var screenOn by remember { mutableStateOf(true) }    // 屏幕是否点亮
 
     // 远端查 TA 的（60 秒精度）
-    var remoteAppName by remember { mutableStateOf("") }
-    var remotePkg by remember { mutableStateOf("") }
-    var remoteSeconds by remember { mutableStateOf(0) }
-    var remoteUpdateAt by remember { mutableStateOf(0L) }
+    var remoteAppName by remember { mutableStateOf("") } // 对方当前 App 名
+    var remotePkg by remember { mutableStateOf("") }     // 对方当前 App 包名
+    var remoteSeconds by remember { mutableStateOf(0) }  // 对方该 App 已用秒数
+    var remoteUpdateAt by remember { mutableStateOf(0L) } // 对方记录的最后更新时间戳
 
     // 自己：每 3 秒查一次前台 APP 名字 + 时长 + 屏幕状态
+    // 【轮询逻辑】用 while(isActive) delay(3000) 形成无限循环，每 3 秒刷新一次
     LaunchedEffect(subjectIsMe, reloadKey) {
         if (subjectIsMe) {
-            if (!subjectHasPermission) return@LaunchedEffect
-            val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (!subjectHasPermission) return@LaunchedEffect  // 没权限就不查
+            val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager // 拿电源服务判断亮屏
             while (isActive) {
-                screenOn = pm.isInteractive
+                screenOn = pm.isInteractive                          // 是否亮屏
                 if (screenOn) {
                     runCatching {
+                        // 查询当前前台 App，返回 (包名, 显示名)
                         val current = queryForegroundApp(ctx)
                         if (current != null && current.first.isNotEmpty()) {
                             val (pkg, name) = current
-                            val cat = categoryOf(ctx, pkg)
+                            val cat = categoryOf(ctx, pkg)            // 推断 App 分类
                             if (pkg != fgPkg) {
+                                // 切换了 App → 更新包名、显示名、分类
                                 fgPkg = pkg; fgName = name; fgCategory = cat
                             } else {
-                                fgName = name
+                                fgName = name                          // 同 App → 只更新显示名
                             }
                             // ✅ 写入单例 + 读秒数
                             AppSessionTracker.setCurrentApp(pkg, name)
@@ -263,33 +320,37 @@ private fun CurrentAppCard(
                     // 熄屏 → 清空当前正在玩
                     fgPkg = ""; fgName = ""; sessionSeconds = 0
                 }
-                delay(3000)
+                delay(3000)                                            // 等 3 秒再查
             }
         }
     }
 
     // TA：每 15 秒拉一次云端 app_usage 最新记录
+    // 【远端逻辑】通过 REST 查询 Supabase 的 app_usage 表，按创建时间倒序取一条
     LaunchedEffect(subjectIsMe, subjectId, reloadKey) {
         if (!subjectIsMe && subjectId.isNotBlank()) {
             while (isActive) {
-                withContext(Dispatchers.IO) {
+                withContext(Dispatchers.IO) {                        // 切到 IO 线程做网络请求
                     runCatching {
+                        // 构造查询：user_id = 当前对方 ID，按 created_at 倒序，只取 1 条
                         NetworkModule.restService.getAppUsage(userId = "eq.$subjectId", order = "created_at.desc", limit = 1)
                     }.getOrNull()?.body()?.firstOrNull()?.let { row ->
                         remotePkg = row.package_name
                         remoteAppName = row.app_name ?: row.package_name
                         remoteSeconds = row.usage_seconds
-                        remoteUpdateAt = parseIsoTime(row.created_at)
+                        remoteUpdateAt = parseIsoTime(row.created_at)  // 把 ISO 字符串转毫秒时间戳
                     }
                 }
-                delay(15_000)
+                delay(15_000)                                         // 等 15 秒再拉
             }
         }
     }
 
+    // 颜色：粉色代表看自己，蓝色代表看对方
     val pink = Color(0xFFE75480)
     val blue = Color(0xFF667EEA)
 
+    // 卡片容器：圆角白色背景 + 轻微阴影
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -298,17 +359,20 @@ private fun CurrentAppCard(
         Column(Modifier.padding(20.dp)) {
             // ✅ 30分钟无活动 → 标题显示"正在休息"
             val now = System.currentTimeMillis()
+            // 判断是否空闲 30 分钟：自己看屏幕状态 + 是否有前台 App；对方看最后更新时间是否超过 30 分钟
             val isIdle30min = if (subjectIsMe) {
                 !screenOn || fgPkg.isEmpty()
             } else {
                 remoteUpdateAt == 0L || (now - remoteUpdateAt) > 30 * 60 * 1000
             }
             Text(
+                // 顶部小标题：根据是否空闲、是否是自己显示不同文案
                 if (isIdle30min) (if (subjectIsMe) "正在休息" else "$subjectName 正在休息") else (if (subjectIsMe) "正在玩" else "$subjectName 正在玩"),
                 fontSize = 12.sp, color = Color(0xFF718096)
             )
             Spacer(Modifier.height(12.dp))
 
+            // ---- 卡片正文：根据不同状态展示不同内容（if/else if 链）----
             if (subjectIsMe && !subjectHasPermission) {
                 // 没权限 —— 引导去开
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
@@ -318,13 +382,14 @@ private fun CurrentAppCard(
                         fontSize = 11.sp, color = Color(0xFF718096))
                 }
             } else if (subjectIsMe && !screenOn) {
-                // 熄屏状态
+                // 熄屏状态：显示月亮 emoji + 提示
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("🌙", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("${subjectName} 熄屏中", fontSize = 15.sp, color = Color(0xFF805AD5), fontWeight = FontWeight.SemiBold)
                 }
             } else if (subjectIsMe && fgPkg.isEmpty()) {
+                // 亮屏但没查到前台 App：可能在桌面/切换中
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("💤", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
@@ -338,6 +403,7 @@ private fun CurrentAppCard(
                     Text("${subjectName} 正在休息", fontSize = 15.sp, color = Color(0xFF718096), fontWeight = FontWeight.SemiBold)
                 }
             } else if (!subjectIsMe && remoteAppName.isEmpty()) {
+                // 对方暂无云端记录（可能没启动后台服务/没联网）
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("🤔", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
@@ -345,21 +411,24 @@ private fun CurrentAppCard(
                 }
             } else {
                 // 有 APP 使用数据 → 左图标、右名字+时长
-                val appEmoji = categoryEmoji(if (subjectIsMe) fgCategory else "")
-                val appName = if (subjectIsMe) fgName else remoteAppName
-                val durationSec = if (subjectIsMe) sessionSeconds else remoteSeconds
-                val duration = formatDuration(durationSec)
-                val accent = if (subjectIsMe) pink else blue
+                val appEmoji = categoryEmoji(if (subjectIsMe) fgCategory else "")  // 分类对应 emoji
+                val appName = if (subjectIsMe) fgName else remoteAppName             // 显示名
+                val durationSec = if (subjectIsMe) sessionSeconds else remoteSeconds // 已用秒数
+                val duration = formatDuration(durationSec)                          // 格式化如 "1h 23m"
+                val accent = if (subjectIsMe) pink else blue                        // 主题色
 
+                // 一行布局：左边 emoji 图标，右边 App 名 + 时长
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
+                    // 左：圆形浅色背景里放 emoji
                     Box(
                         Modifier.size(52.dp).background(accent.copy(alpha = 0.12f), RoundedCornerShape(14.dp)),
                         contentAlignment = Alignment.Center
                     ) { Text(appEmoji, fontSize = 26.sp) }
                     Spacer(Modifier.width(14.dp))
+                    // 右：App 名 + 时长描述
                     Column(Modifier.weight(1f)) {
                         Text(
                             appName, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold,
@@ -367,6 +436,7 @@ private fun CurrentAppCard(
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
+                            // 自己显示"已使用 X" / 对方显示"最近一次 · X"
                             if (subjectIsMe) "已使用 $duration" else "最近一次 · $duration",
                             fontSize = 12.sp, color = Color(0xFF718096)
                         )
@@ -379,8 +449,12 @@ private fun CurrentAppCard(
 
 // =====================================================================
 // ② 📱 手机状态 —— 网格小卡片
+// 这个 Composable 渲染一张含 4 个小卡片的网格：电量 / 网络 / 状态（开关机/熄屏/充电） / 心情。
+//   - 看自己：注册系统广播（电量、亮熄屏）+ 网络回调，实时获取
+//   - 看对方：每 20 秒拉一次云端 locations 表最新一条，根据时间戳判断在线
+// 心情卡片只有看自己时可点击，从弹窗选择 emoji，写入单例 AppSessionTracker。
 // =====================================================================
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class)   // FlowRow（流式布局）属于实验性 API，需声明 OptIn
 @Composable
 private fun PhoneStatusCard(
     subjectId: String,
@@ -390,34 +464,36 @@ private fun PhoneStatusCard(
 ) {
     val ctx = LocalContext.current
 
-    // 本地状态
-    var batteryPct by remember { mutableStateOf(0) }
-    var isCharging by remember { mutableStateOf(false) }
-    var networkType by remember { mutableStateOf("") }
-    var online by remember { mutableStateOf(true) }
-    var screenOn by remember { mutableStateOf(true) }
+    // 本地状态：自己的设备状态
+    var batteryPct by remember { mutableStateOf(0) }       // 电量百分比 0-100
+    var isCharging by remember { mutableStateOf(false) }  // 是否在充电
+    var networkType by remember { mutableStateOf("") }    // 网络类型描述（如 "WiFi · xx"、"移动数据"）
+    var online by remember { mutableStateOf(true) }        // 是否在线
+    var screenOn by remember { mutableStateOf(true) }      // 屏幕是否点亮
 
     // TA 的最新位置（拿 battery_level + created_at 判断在线状态）
-    var taBattery by remember { mutableStateOf<Int?>(null) }
-    var taCharging by remember { mutableStateOf(false) }
-    var taUpdatedAt by remember { mutableStateOf(0L) }
+    var taBattery by remember { mutableStateOf<Int?>(null) } // 对方电量（可空）
+    var taCharging by remember { mutableStateOf(false) }     // 对方是否在充电（云端未上报，恒 false）
+    var taUpdatedAt by remember { mutableStateOf(0L) }        // 对方最后上报时间戳
 
     // 当前心情（AppSessionTracker 单例，进程存活就不丢）
-    val moodEmoji by AppSessionTracker.mood.collectAsState()
-    var showMoodDialog by remember { mutableStateOf(false) }
-    val moodOptions = listOf("😀","🥰","😎","😴","😠","🥺","🤔","🎉","💪","💔")
+    val moodEmoji by AppSessionTracker.mood.collectAsState()  // 订阅心情流，自动刷新
+    var showMoodDialog by remember { mutableStateOf(false) }  // 是否显示心情选择弹窗
+    val moodOptions = listOf("😀","🥰","😎","😴","😠","🥺","🤔","🎉","💪","💔") // 10 个候选心情
 
     // 自己：注册广播 + 网络监听
+    // 【实现思路】LaunchedEffect 启动时立即查一次 + 注册广播；进入循环保持协程活跃
+    // 离开 Composable 时通过 unregisterReceiver / unregisterNetworkCallback 清理
     LaunchedEffect(subjectIsMe, reloadKey) {
         if (subjectIsMe) {
-            // 立即查一次
+            // 立即查一次当前状态（避免初次渲染空白）
             batteryPct = getBatteryPct(ctx)
             isCharging = getBatteryCharging(ctx)
             networkType = getNetworkType(ctx)
-            val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+            val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager  // 电源服务判断亮屏
             screenOn = pm.isInteractive
 
-            // 注册电量变化监听
+            // 注册电量变化监听（系统广播 ACTION_BATTERY_CHANGED 是粘性的，注册即拿到当前值）
             val batteryReceiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
                     batteryPct = getBatteryPct(context ?: ctx)
@@ -442,15 +518,17 @@ private fun PhoneStatusCard(
             }
             ctx.registerReceiver(screenReceiver, screenFilter)
 
-            // 网络变化监听
+            // 网络变化监听（ConnectivityManager.NetworkCallback 比广播更实时）
             val connMgr = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             val netCallback = object : ConnectivityManager.NetworkCallback() {
+                // 网络能力变化（如从 WiFi 切到 4G）
                 override fun onCapabilitiesChanged(
                     network: android.net.Network,
                     nc: NetworkCapabilities
                 ) {
                     networkType = getNetworkType(ctx)
                 }
+                // 网络完全丢失
                 override fun onLost(network: android.net.Network) {
                     networkType = "无网络"
                 }
@@ -462,8 +540,10 @@ private fun PhoneStatusCard(
             // 定时刷新在线状态（自己永远在线）
             online = true
 
-            // 清理
+            // 【保持协程存活】while + delay 形成阻塞，避免离开 LaunchedEffect 触发清理
+            // 一旦 Composable 卸载，isActive 变 false，循环退出，下面 unregister 才会执行
             while (isActive) { delay(30_000) }
+            // 清理：注销所有监听器，避免内存泄漏
             runCatching { ctx.unregisterReceiver(batteryReceiver) }
             runCatching { ctx.unregisterReceiver(screenReceiver) }
             runCatching { connMgr.unregisterNetworkCallback(netCallback) }
@@ -471,49 +551,56 @@ private fun PhoneStatusCard(
     }
 
     // TA：用 getUserLocations 按 user_id 过滤拿最新位置
+    // 【判断在线的依据】最后一条位置记录距今 < 5 分钟 = 在线，否则视为离线/关机
     LaunchedEffect(subjectIsMe, subjectId, reloadKey) {
         if (!subjectIsMe && subjectId.isNotBlank()) {
             while (isActive) {
                 withContext(Dispatchers.IO) {
                     runCatching {
+                        // 查询对方最新一条位置记录
                         NetworkModule.restService.getUserLocations(
                             userId = "eq.$subjectId", order = "created_at.desc", limit = 1
                         )
                     }.getOrNull()?.body()?.firstOrNull()?.let { loc ->
-                        taBattery = loc.battery_level
-                        taUpdatedAt = parseIsoTime(loc.created_at)
+                        taBattery = loc.battery_level                // 云端上报的电量
+                        taUpdatedAt = parseIsoTime(loc.created_at)    // 上报时间戳
                         // 判断在线：最后一条位置记录超过 5 分钟 → 离线/可能关机
                         online = (System.currentTimeMillis() - taUpdatedAt) < 5 * 60_000L
                     }
                 }
-                delay(20_000)
+                delay(20_000)                                          // 20 秒后再拉
             }
         }
     }
 
+    // 主题色：看自己用粉色，看对方用蓝色
     val pink = Color(0xFFE75480)
     val blue = Color(0xFF667EEA)
     val accent = if (subjectIsMe) pink else blue
 
-    val batPct = if (subjectIsMe) batteryPct else taBattery ?: 0
-    val charging = if (subjectIsMe) isCharging else taCharging
-    val net = if (subjectIsMe) networkType else "（云端未记录）"
-    val isOnline = if (subjectIsMe) true else online
+    // 计算展示用的电量/充电状态/网络/在线
+    val batPct = if (subjectIsMe) batteryPct else taBattery ?: 0     // 电量百分比
+    val charging = if (subjectIsMe) isCharging else taCharging       // 是否在充电
+    val net = if (subjectIsMe) networkType else "（云端未记录）"      // 网络描述（云端不记录对方网络类型）
+    val isOnline = if (subjectIsMe) true else online                  // 在线状态
 
+    // 主列：标题 + 两行网格（每行 2 个小卡片）
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("📱 $subjectName 的手机状态", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+        // 第一行：电量 + 网络
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             StatusChip(
-                icon = if (charging) "🔌" else "🔋",
+                icon = if (charging) "🔌" else "🔋",                // 充电中显示插头 emoji，否则电池
                 label = "电量",
                 value = "$batPct%" + if (charging) " 充电中" else "",
                 accent = accent,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f)                       // 平分宽度
             )
             StatusChip(
+                // 根据 net 字符串选 emoji：5G/4G 显示信号塔，WiFi 显示路由，无网络显示禁止
                 icon = if (net.contains("5")) "📶" else if (net.contains("WiFi") || net.contains("wifi")) "📡" else if (net.contains("无")) "🚫" else "🌐",
                 label = "网络",
                 value = if (net.isBlank()) "加载中..." else net,
@@ -521,6 +608,7 @@ private fun PhoneStatusCard(
                 modifier = Modifier.weight(1f)
             )
         }
+        // 第二行：状态 + 心情
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -529,6 +617,7 @@ private fun PhoneStatusCard(
             val statusIcon: String
             val statusValue: String
             val statusAccent: Color
+            // 用 when 优先级判断：离线最优先 → 熄屏 → 充电中 → 开机
             when {
                 !isOnline -> {
                     statusIcon = "🔴"
@@ -555,14 +644,15 @@ private fun PhoneStatusCard(
                 icon = statusIcon,
                 label = "状态",
                 value = statusValue,
-                accent = statusAccent,
+                accent = statusAccent,                              // 状态卡用专属颜色（绿/紫/红）
                 modifier = Modifier.weight(1f)
             )
-            // 心情卡 —— 自己可点击选 emoji
+            // 心情卡 —— 自己可点击选 emoji，对方则不可点击（只展示）
             Card(
                 shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 modifier = Modifier.weight(1f).then(
+                    // 通过 then 拼接不同 modifier，看自己时加 clickable
                     if (subjectIsMe) Modifier.clickable { showMoodDialog = true } else Modifier
                 )
             ) {
@@ -584,20 +674,24 @@ private fun PhoneStatusCard(
     }
 
     // 心情选择对话框（仅自己能选）
+    // 【初学者理解】AlertDialog 是 Material3 内置组件：title/text/confirmButton 三个槽位
     if (showMoodDialog && subjectIsMe) {
         AlertDialog(
-            onDismissRequest = { showMoodDialog = false },
+            onDismissRequest = { showMoodDialog = false },          // 点外部 / 返回键关闭
             title = { Text("选个心情") },
             text = {
+                // FlowRow 是流式布局：自动换行排列 emoji
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     moodOptions.forEach { emoji ->
+                        // 每个 emoji 是一个可点击 Surface，选中的有粉色背景
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = if (emoji == moodEmoji) pink.copy(alpha = 0.15f) else Color.Transparent,
                             modifier = Modifier.size(44.dp).clickable {
+                                // 点击：写入单例 + 关闭弹窗
                                 AppSessionTracker.setMood(emoji); showMoodDialog = false
                             }
                         ) {
@@ -615,26 +709,33 @@ private fun PhoneStatusCard(
     }
 }
 
+// =====================================================================
+// 🧩 StatusChip —— 单个小状态卡片（电量/网络/状态等）
+// 这是一个「可复用」的 Composable：传入图标、标签、值、颜色即可渲染一张小卡片。
+// 一次定义，多次复用，减少重复代码。
+// =====================================================================
 @Composable
 private fun StatusChip(
-    icon: String,
-    label: String,
-    value: String,
-    accent: Color,
-    modifier: Modifier = Modifier
+    icon: String,                  // emoji 图标，如 "🔋"、"📶"
+    label: String,                 // 标签，如 "电量"、"网络"
+    value: String,                 // 值，如 "80%"、"WiFi · MyHome"
+    accent: Color,                 // 主题色（值文本颜色）
+    modifier: Modifier = Modifier  // 外部修饰符（如 weight(1f) 平分宽度）
 ) {
     Card(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(14.dp),                        // 圆角
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        modifier = modifier
+        modifier = modifier                                        // 应用外部传入的修饰符
     ) {
         Column(Modifier.padding(12.dp)) {
+            // 第一行：图标 + 标签
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(icon, fontSize = 16.sp)
                 Spacer(Modifier.width(6.dp))
                 Text(label, fontSize = 11.sp, color = Color(0xFF718096))
             }
             Spacer(Modifier.height(4.dp))
+            // 第二行：值（加粗，使用主题色）
             Text(value, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = accent, maxLines = 1)
         }
     }
@@ -642,6 +743,9 @@ private fun StatusChip(
 
 // =====================================================================
 // ③ 🕒 历史打开记录 —— 列表
+// 这个 Composable 从云端拉取该用户最近 100 条 app_usage 记录，
+// 聚合（同一 App 连续记录合并为一次「打开」会话）后按时间倒序展示。
+// 包含 3 种状态 UI：加载中 / 加载失败 / 空数据 / 正常列表。
 // =====================================================================
 @Composable
 private fun HistoryOpenList(
@@ -649,15 +753,18 @@ private fun HistoryOpenList(
     subjectName: String,
     reloadKey: Int
 ) {
-    var rows by remember { mutableStateOf<List<HistoryOpen>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
-    var loadError by remember { mutableStateOf<String?>(null) }
+    // 列表数据 + 加载状态
+    var rows by remember { mutableStateOf<List<HistoryOpen>>(emptyList()) } // 聚合后的历史记录列表
+    var loading by remember { mutableStateOf(false) }                       // 是否正在加载
+    var loadError by remember { mutableStateOf<String?>(null) }             // 加载失败的错误信息
 
+    // 进入/参数变化时拉一次数据
     LaunchedEffect(subjectId, reloadKey) {
-        if (subjectId.isBlank()) { rows = emptyList(); return@LaunchedEffect }
+        if (subjectId.isBlank()) { rows = emptyList(); return@LaunchedEffect }  // 没用户 ID 直接空列表
         loading = true; loadError = null
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.IO) {                                       // 网络请求切到 IO 线程
             val resp = runCatching {
+                // 拉最近 100 条 app_usage 记录（按创建时间倒序）
                 NetworkModule.restService.getAppUsage(
                     userId = "eq.$subjectId",
                     order = "created_at.desc",
@@ -666,29 +773,36 @@ private fun HistoryOpenList(
             }
             val r = resp.getOrNull()
             when {
+                // 1. 抛异常（如网络断开）
                 r == null -> loadError = resp.exceptionOrNull()?.message?.take(60) ?: "网络异常"
+                // 2. HTTP 状态非 2xx（如 401 鉴权失败）
                 !r.isSuccessful -> {
                     val body = runCatching { r.errorBody()?.string()?.take(120) }.getOrNull() ?: ""
                     loadError = "HTTP " + r.code() + " — " + body
                 }
+                // 3. 成功 → 调 aggregateOpens 聚合后存到 rows
                 else -> rows = aggregateOpens(r.body() ?: emptyList())
             }
             loading = false
         }
     }
 
+    // 根据状态渲染不同 UI（when 类似 switch）
     when {
         loading -> {
+            // 加载中：粉色小转圈
             Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = Color(0xFFE75480), modifier = Modifier.size(20.dp))
             }
         }
         loadError != null -> {
+            // 加载失败：红色错误文案
             Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
                 Text("⚠️ 加载失败：" + loadError, fontSize = 12.sp, color = Color(0xFFE53E3E))
             }
         }
         rows.isEmpty() -> {
+            // 空数据：📭 emoji + 文案
             Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("📭", fontSize = 28.sp)
@@ -701,31 +815,36 @@ private fun HistoryOpenList(
             // 紧凑时间线 —— 每条一行，左 emoji + 中事件 + 右时间戳
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 rows.forEach { open ->
-                    HistoryTimelineItem(open)
+                    HistoryTimelineItem(open)                              // 渲染单条历史项
                 }
             }
         }
     }
 }
 
+// =====================================================================
+// 📝 HistoryTimelineItem —— 单条历史记录的渲染
+// 渲染一行：[emoji] [打开了 App名] [时间]
+// 这是 HistoryOpenList 列表里每一项的 UI 实现。
+// =====================================================================
 @Composable
 private fun HistoryTimelineItem(open: HistoryOpen) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp, horizontal = 4.dp),
+            .padding(vertical = 6.dp, horizontal = 4.dp),         // 每行垂直 6dp / 水平 4dp 内边距
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 左：emoji 图标
+        // 左：emoji 图标（分类对应）
         Text(open.emoji, fontSize = 18.sp, modifier = Modifier.width(28.dp))
         Spacer(Modifier.width(6.dp))
-        // 中：事件描述
+        // 中：事件描述（如 "打开了 微信"）
         Text(
             "打开了 ${open.appName}",
             fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFF2D3748),
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f)                          // 占满中间剩余空间
         )
-        // 右：时间戳
+        // 右：时间戳（短格式，如 "19:38" / "昨天 16:11"）
         Text(
             open.timeLabelShort,
             fontSize = 11.sp, color = Color(0xFFA0AEC0)
@@ -733,62 +852,105 @@ private fun HistoryTimelineItem(open: HistoryOpen) {
     }
 }
 
+// =====================================================================
+// 📐 HistoryOpen.timeLabelShort —— 扩展属性：把完整时间标签简化为短格式
+// 扩展属性（extension property）= 给现有类添加新属性，而不修改原类。
+// 这里给 HistoryOpen 添加 timeLabelShort，从 timeLabel 字符串转换。
+// 转换规则：
+//   "今天 19:38 打开" → "19:38"
+//   "昨天 16:11 打开" → "昨天 16:11"
+//   "09-01 10:00 打开" → "09-01 10:00"
+// =====================================================================
 private val HistoryOpen.timeLabelShort: String
     get() {
         val label = timeLabel
-        // "今天 19:38 打开" → "19:38"
-        // "昨天 16:11 打开" → "昨天 16:11"
-        // "09-01 10:00 打开" → "09-01 10:00"
         return label
-            .replace("打开", "")
-            .trim()
-            .replace("今天 ", "")  // 今天只显示时间
+            .replace("打开", "")      // 删掉"打开"二字
+            .trim()                   // 去掉首尾空格
+            .replace("今天 ", "")     // 今天只显示时间，去掉"今天 "
     }
 
 // =====================================================================
 // 🔧 辅助函数 —— 本地设备查询工具
+// 这些函数都是「普通 Kotlin 函数」（非 @Composable），用于查系统状态。
+// 在 Compose 里通过 LaunchedEffect 调用它们。
 // =====================================================================
 
-/** 本地查询前台 APP（UsageStatsManager）*/
+/**
+ * 本地查询前台 APP（UsageStatsManager）
+ *
+ * 【实现思路】查询最近 2 分钟内的 App 使用事件，找出最后一次「MOVE_TO_FOREGROUND」
+ *   （即某个 App 切到前台）事件，返回它的包名 + 显示名。
+ *
+ * @param ctx Android Context
+ * @return Pair<包名, 显示名>，如 ("com.tencent.mm", "微信")；查不到返回 null
+ */
 private fun queryForegroundApp(ctx: Context): Pair<String, String>? {
+    // 拿 UsageStatsService（需要「使用情况访问」权限）
     val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-    val pm = ctx.packageManager
+    val pm = ctx.packageManager                                       // 用于查 App 名字
     val end = System.currentTimeMillis()
-    val begin = end - 120_000L
-    val events = usm.queryEvents(begin, end)
-    val ev = UsageEvents.Event()
-    var latestFg: String? = null
-    var latestTime = 0L
+    val begin = end - 120_000L                                        // 查最近 2 分钟的事件
+    val events = usm.queryEvents(begin, end)                           // 拿事件迭代器
+    val ev = UsageEvents.Event()                                      // 复用单个事件对象
+    var latestFg: String? = null                                       // 最新前台 App 包名
+    var latestTime = 0L                                               // 该事件发生时间
     while (events.hasNextEvent()) {
-        events.getNextEvent(ev)
+        events.getNextEvent(ev)                                       // 把下一个事件填到 ev
+        // 只关心「切到前台」事件，并且取时间最新的那条
         if (ev.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND && ev.timeStamp > latestTime) {
             latestTime = ev.timeStamp; latestFg = ev.packageName
         }
     }
-    if (latestFg.isNullOrBlank()) return null
+    if (latestFg.isNullOrBlank()) return null                         // 2 分钟内无前台切换 → null
+    // 通过 PackageManager 把包名翻译成中文显示名（如 com.tencent.mm → "微信"）
     val name = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(latestFg, 0)).toString() }
-        .getOrDefault(latestFg)
-    return latestFg to name
+        .getOrDefault(latestFg)                                       // 翻译失败就回退用包名
+    return latestFg to name                                            // Kotlin 的 to 操作符构造 Pair
 }
 
+/**
+ * 检查本应用是否被授予「使用情况访问」权限
+ *
+ * 【关键】AppOpsManager 检查 OPSTR_GET_USAGE_STATS 这个 op 是否被允许。
+ *   - Android Q（10）以上用 unsafeCheckOpNoThrow（更宽松的检查）
+ *   - 低版本用 checkOpNoThrow（已废弃但仍可用）
+ *
+ * @return true 表示有权限，可以查前台 App
+ */
 private fun localHasUsagePermission(ctx: Context): Boolean {
     val ops = ctx.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+    // 根据 SDK 版本选不同方法，Q 以上用 unsafeCheckOpNoThrow
     val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         ops.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.packageName)
     } else {
-        @Suppress("DEPRECATION")
+        @Suppress("DEPRECATION")                                       // 抑制废弃警告
         ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.packageName)
     }
-    return mode == AppOpsManager.MODE_ALLOWED
+    return mode == AppOpsManager.MODE_ALLOWED                          // 是否被允许
 }
 
+/**
+ * 获取电量百分比（一次性查询，不监听变化）
+ *
+ * 【实现】注册一个 null Receiver 拿到最近的粘性广播 ACTION_BATTERY_CHANGED，
+ *   从中读 level / scale 计算百分比。
+ *
+ * @return 0-100 的电量百分比；查不到返回 -1
+ */
 private fun getBatteryPct(ctx: Context): Int {
+    // 传 null 作为 Receiver 可以拿到「粘性广播」最后一次的值而不真正注册监听
     val im = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return -1
-    val level = im.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-    val scale = im.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+    val level = im.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)         // 当前电量
+    val scale = im.getIntExtra(BatteryManager.EXTRA_SCALE, -1)         // 总刻度（一般 100）
     return if (level < 0 || scale <= 0) -1 else (level * 100 / scale)
 }
 
+/**
+ * 是否在充电（包括充满状态）
+ *
+ * @return true 表示正在充电或已充满
+ */
 private fun getBatteryCharging(ctx: Context): Boolean {
     val im = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return false
     val status = im.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
@@ -796,15 +958,24 @@ private fun getBatteryCharging(ctx: Context): Boolean {
            status == BatteryManager.BATTERY_STATUS_FULL
 }
 
+/**
+ * 获取当前网络类型描述
+ *
+ * 【实现】通过 ConnectivityManager 拿当前活动网络的 NetworkCapabilities，
+ *   根据它的 transport 类型返回字符串。
+ *
+ * @return 如 "WiFi · MyHome"、"移动数据"、"无网络"
+ */
 private fun getNetworkType(ctx: Context): String {
     val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    val nc = cm.getNetworkCapabilities(cm.activeNetwork) ?: return "无网络"
+    val nc = cm.getNetworkCapabilities(cm.activeNetwork) ?: return "无网络"  // 无活动网络
     return when {
         nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> {
+            // WiFi 还要尝试拿 SSID（WiFi 名字）
             val ssid = getWifiSsidMultiAttempt(ctx)
             if (ssid != null) "WiFi · $ssid" else "WiFi"
         }
-        nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "移动数据"
+        nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "移动数据"  // 蜂窝/4G/5G
         nc.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "蓝牙"
         nc.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "有线"
         nc.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
@@ -812,14 +983,22 @@ private fun getNetworkType(ctx: Context): String {
     }
 }
 
-/** 多层尝试获取 WiFi SSID（不同 Android 版本/ROM 权限差异大） */
+/**
+ * 多层尝试获取 WiFi SSID（不同 Android 版本/ROM 权限差异大）
+ *
+ * 【为什么这么麻烦？】Android 各版本对 WiFi SSID 的访问权限一直在收紧，
+ *   没有一个统一方法能在所有机型上拿到。这里依次尝试 3 种方案，哪种能用就用哪种。
+ *
+ * @return WiFi 名字（不含引号），全部失败返回 null
+ */
 private fun getWifiSsidMultiAttempt(ctx: Context): String? {
     // 方案 1: WifiManager.connectionInfo (大多数场景可用)
     runCatching {
         val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        val ssid = wm.connectionInfo?.ssid
+        val ssid = wm.connectionInfo?.ssid                       // 系统返回的 SSID 带引号
+        // 过滤无效值：<unknown ssid> 是 Android 在没权限时返回的占位符
         if (!ssid.isNullOrBlank() && ssid != "<unknown ssid>" && ssid != "0x") {
-            val cleaned = ssid.removeSurrounding("\"")
+            val cleaned = ssid.removeSurrounding("\"")            // 去掉首尾引号
             if (cleaned.isNotBlank()) return cleaned
         }
     }
@@ -831,7 +1010,7 @@ private fun getWifiSsidMultiAttempt(ctx: Context): String? {
         // 反射拿 wifi Ssid —— Android 12 后隐藏了但 ROM 可能还能拿到
         val f = nc?.javaClass?.getDeclaredField("ssid")
         if (f != null) {
-            f.isAccessible = true
+            f.isAccessible = true                                 // 反射访问私有字段
             val v = f.get(nc) as? String
             if (!v.isNullOrBlank()) {
                 val cleaned = v.removeSurrounding("\"")
@@ -844,7 +1023,7 @@ private fun getWifiSsidMultiAttempt(ctx: Context): String? {
     runCatching {
         val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         val mWifiInfoField = wm.javaClass.getDeclaredMethod("getConnectionInfo")
-        val wifiInfo = mWifiInfoField.invoke(wm)
+        val wifiInfo = mWifiInfoField.invoke(wm)                   // 反射调用 getConnectionInfo()
         if (wifiInfo != null) {
             val ssidField = wifiInfo.javaClass.getDeclaredField("mSSID")
             ssidField.isAccessible = true
@@ -860,7 +1039,14 @@ private fun getWifiSsidMultiAttempt(ctx: Context): String? {
     return null
 }
 
-/** package → category 映射（简化版） */
+/**
+ * package → category 映射（简化版）
+ *
+ * 【实现】先查系统 ApplicationInfo.category（Android 8+ 自带分类），
+ *   系统没分类的回退到 categorizeByPkg（按包名关键字猜）。
+ *
+ * @return 分类字符串，如 "社交"、"游戏"
+ */
 private fun categoryOf(ctx: Context, pkg: String): String {
     return runCatching {
         val info = ctx.packageManager.getApplicationInfo(pkg, 0)
@@ -873,16 +1059,22 @@ private fun categoryOf(ctx: Context, pkg: String): String {
             ApplicationInfo.CATEGORY_MAPS -> "地图"
             ApplicationInfo.CATEGORY_PRODUCTIVITY -> "效率"
             ApplicationInfo.CATEGORY_IMAGE -> "图像"
-            else -> categorizeByPkg(pkg)
+            else -> categorizeByPkg(pkg)                          // 系统没分类 → 按包名猜
         }
-    }.getOrDefault(categorizeByPkg(pkg))
+    }.getOrDefault(categorizeByPkg(pkg))                          // 出异常也按包名猜
 }
 
 
-/** 系统噪音 APP：桌面、输入法、系统UI、锁屏、虚拟按键等，不记录也不展示 */
+/**
+ * 系统噪音 APP：桌面、输入法、系统UI、锁屏、虚拟按键等，不记录也不展示
+ *
+ * 【为什么？】这些 App 不算用户「主动使用」，过滤掉避免污染历史记录。
+ *
+ * @return true 表示是噪音 App，应被忽略
+ */
 fun isSystemNoisePkg(pkg: String?): Boolean {
     if (pkg.isNullOrBlank()) return true
-    val p = pkg.lowercase()
+    val p = pkg.lowercase()                                       // 统一小写做匹配
     // 桌面 / 启动器
     if (p.contains("launcher") || p.contains("systemui") || p.contains("desk") || p.contains("homescreen")) return true
     // 输入法
@@ -896,61 +1088,103 @@ fun isSystemNoisePkg(pkg: String?): Boolean {
     // 设置 / 包安装器
     if (p.contains("packageinstaller") || p.contains("permissioncontroller")) return true
     // 包名显示异常（识别失败的 ?? API 这种）
-    if (p.length < 5) return true
-    if (!p.contains('.')) return true
+    if (p.length < 5) return true                                  // 包名太短，多半是异常
+    if (!p.contains('.')) return true                             // 包名没点分隔，异常
     return false
 }
 
+/**
+ * 按包名关键字猜 App 分类（兜底方案）
+ *
+ * 【实现】根据包名里的关键字（如 "tencent.mm" 是微信）匹配常见 App。
+ */
 private fun categorizeByPkg(pkg: String): String = when {
-    pkg.contains("tencent.mm") || pkg.contains("qq") -> "社交"
-    pkg.contains("douyin") || pkg.contains("aweme") || pkg.contains("bilibili") || pkg.contains("kuaishou") -> "视频"
-    pkg.contains("netease.cloud") || pkg.contains("qqmusic") || pkg.contains("kugou") || pkg.contains("kuwo") -> "音乐"
-    pkg.contains("taobao") || pkg.contains("tmall") || pkg.contains("jd") || pkg.contains("pinduoduo") -> "购物"
-    pkg.contains("meituan") || pkg.contains("ele") -> "生活"
+    pkg.contains("tencent.mm") || pkg.contains("qq") -> "社交"   // 微信/QQ
+    pkg.contains("douyin") || pkg.contains("aweme") || pkg.contains("bilibili") || pkg.contains("kuaishou") -> "视频"  // 抖音/B站/快手
+    pkg.contains("netease.cloud") || pkg.contains("qqmusic") || pkg.contains("kugou") || pkg.contains("kuwo") -> "音乐"  // 网易云/QQ音乐/酷狗/酷我
+    pkg.contains("taobao") || pkg.contains("tmall") || pkg.contains("jd") || pkg.contains("pinduoduo") -> "购物"  // 淘宝/天猫/京东/拼多多
+    pkg.contains("meituan") || pkg.contains("ele") -> "生活"     // 美团/饿了么
     pkg.contains("launcher") || pkg.contains("systemui") -> "桌面"
     else -> "其他"
 }
 
-/** 聚合 app_usage 行：同一个 APP 连续记录 → 只保留第一条（打开时刻）*/
+/**
+ * 聚合 app_usage 行：同一个 APP 连续记录 → 只保留第一条（打开时刻）
+ *
+ * 【为什么？】云端每分钟上报一条 app_usage，连续玩 30 分钟会有 30 条。
+ *   我们不希望时间线上有 30 条「打开了微信」，所以聚合成 1 条「会话」。
+ *
+ * 【算法】按时间正序遍历：
+ *   - 如果包名变了，或者距上一条 > 3 分钟 → 视为新会话，把上一会话存档
+ *   - 否则视为同一会话，累加 usage_seconds
+ * 最后按时间倒序返回（最新的在前）。
+ */
 private fun aggregateOpens(rows: List<AppUsageRow>): List<HistoryOpen> {
     if (rows.isEmpty()) return emptyList()
-    val sorted = rows.sortedBy { parseIsoTime(it.created_at) } // 时间正序
+    val sorted = rows.sortedBy { parseIsoTime(it.created_at) } // 时间正序（旧 → 新）
     val result = mutableListOf<HistoryOpen>()
-    var lastPkg = ""
-    var lastStart = 0L
-    var totalSeconds = 0
+    var lastPkg = ""                                              // 上一条记录的包名
+    var lastStart = 0L                                            // 当前会话的起始时间戳
+    var totalSeconds = 0                                          // 当前会话累计秒数
 
     for (row in sorted) {
-        val ts = parseIsoTime(row.created_at)
+        val ts = parseIsoTime(row.created_at)                     // 当前记录的时间戳
         val pkg = row.package_name
+        // 计算距上一条的间隔（毫秒）
         val gap = if (lastPkg.isNotEmpty()) (ts - lastStart) else 0
-        if (pkg != lastPkg || gap > 180_000L) { // 换 APP 或间隔 > 3 分钟 → 新会话
+        if (pkg != lastPkg || gap > 180_000L) {                   // 换 APP 或间隔 > 3 分钟 → 新会话
             if (lastPkg.isNotEmpty()) {
+                // 把已累积的上一会话存档
                 result.add(makeHistoryOpen(lastPkg, rows, lastStart, totalSeconds))
             }
             lastPkg = pkg; lastStart = ts; totalSeconds = row.usage_seconds
         } else {
+            // 同一会话 → 累加秒数
             totalSeconds += row.usage_seconds
         }
     }
+    // 把最后一个会话也存档
     if (lastPkg.isNotEmpty()) result.add(makeHistoryOpen(lastPkg, rows, lastStart, totalSeconds))
-    // 按时间倒序返回
+    // 按时间倒序返回（最新的在前）
     return result.sortedByDescending { it.openAt }
 }
 
+/**
+ * 构造一个 HistoryOpen 对象（聚合会话的最终形态）
+ *
+ * @param pkg 包名
+ * @param allRows 所有原始记录（用于查 App 名字和分类）
+ * @param startAt 会话开始时间戳
+ * @param totalSec 会话总秒数
+ */
 private fun makeHistoryOpen(pkg: String, allRows: List<AppUsageRow>, startAt: Long, totalSec: Int): HistoryOpen {
+    // 从所有行里找该包名对应的第一条记录，拿它的 app_name 和 category
     val firstRow = allRows.firstOrNull { it.package_name == pkg }
-    val appName = firstRow?.app_name ?: pkg
-    val cat = firstRow?.category ?: categorizeByPkg(pkg)
-    val timeLabel = formatTimeLabel(startAt)
+    val appName = firstRow?.app_name ?: pkg                       // 没记录就用包名
+    val cat = firstRow?.category ?: categorizeByPkg(pkg)          // 没分类就猜
+    val timeLabel = formatTimeLabel(startAt)                      // 友好的中文时间标签
     return HistoryOpen(
         packageName = pkg, appName = appName, category = cat,
         openAt = startAt, timeLabel = timeLabel,
-        duration = formatDuration(totalSec),
-        emoji = categoryEmoji(cat)
+        duration = formatDuration(totalSec),                       // 时长描述，如 "5分钟"
+        emoji = categoryEmoji(cat)                                 // 分类对应 emoji
     )
 }
 
+/**
+ * 历史打开记录的数据类
+ *
+ * 【data class】Kotlin 的数据类，自动生成 equals/hashCode/toString/copy 等方法。
+ * 主要用于在 UI 中传递一条聚合后的「打开事件」。
+ *
+ * @property packageName 包名，如 "com.tencent.mm"
+ * @property appName 显示名，如 "微信"
+ * @property category 分类，如 "社交"
+ * @property openAt 打开时间戳（毫秒）
+ * @property timeLabel 友好时间标签，如 "今天 19:38 打开"
+ * @property duration 时长描述，如 "5分钟"
+ * @property emoji 分类对应 emoji，如 "💬"
+ */
 data class HistoryOpen(
     val packageName: String,
     val appName: String,
@@ -961,21 +1195,46 @@ data class HistoryOpen(
     val emoji: String
 )
 
+/**
+ * 计算最近 N 天的日期范围（用于 Supabase 查询的过滤条件）
+ *
+ * 【返回】Pair(start, end)，格式是 Supabase REST 过滤语法：
+ *   - "gte.ISO时间戳" 表示 >= start
+ *   - "lt.ISO时间戳" 表示 < end
+ * 比如 dateRangeForDays(1) 返回今天 0 点到明天 0 点的范围。
+ */
 private fun dateRangeForDays(days: Int): Pair<String, String> {
     val zone = ZoneId.systemDefault()
-    val date = LocalDate.now(zone).minusDays(days.toLong())
-    val start = date.atStartOfDay(zone).toInstant().toString()
-    val end = LocalDate.now(zone).plusDays(1).atStartOfDay(zone).toInstant().toString()
+    val date = LocalDate.now(zone).minusDays(days.toLong())       // 起 N 天前
+    val start = date.atStartOfDay(zone).toInstant().toString()    // N 天前 0 点
+    val end = LocalDate.now(zone).plusDays(1).atStartOfDay(zone).toInstant().toString()  // 明天 0 点
     return "gte." + start to "lt." + end
 }
 
+/**
+ * 把 ISO 8601 时间字符串解析为毫秒时间戳
+ *
+ * 【为什么用 runCatching？】后端返回的时间格式可能不规范，避免解析异常崩溃。
+ *
+ * @return 毫秒时间戳；空或解析失败返回 0
+ */
 private fun parseIsoTime(iso: String?): Long {
     if (iso.isNullOrBlank()) return 0L
     return runCatching {
-        java.time.Instant.parse(iso).toEpochMilli()
+        java.time.Instant.parse(iso).toEpochMilli()               // ISO 字符串 → 毫秒
     }.getOrDefault(0L)
 }
 
+/**
+ * 把毫秒时间戳格式化为中文友好时间标签
+ *
+ * 【规则】
+ *   - 今天 → "今天 19:38 打开"
+ *   - 昨天 → "昨天 16:11 打开"
+ *   - 更早 → "09-01 10:00 打开"
+ *
+ * @return 友好时间标签；时间戳无效返回空字符串
+ */
 private fun formatTimeLabel(epochMs: Long): String {
     if (epochMs <= 0) return ""
     val zone = ZoneId.systemDefault()
@@ -983,7 +1242,7 @@ private fun formatTimeLabel(epochMs: Long): String {
     val today = LocalDate.now(zone)
     val yesterday = today.minusDays(1)
     val date = dt.toLocalDate()
-    val time = dt.format(DateTimeFormatter.ofPattern("HH:mm"))
+    val time = dt.format(DateTimeFormatter.ofPattern("HH:mm"))   // 时:分
     return when (date) {
         today -> "今天 $time 打开"
         yesterday -> "昨天 $time 打开"
@@ -991,9 +1250,14 @@ private fun formatTimeLabel(epochMs: Long): String {
     }
 }
 
+/**
+ * 相对时间描述（如"刚刚"、"5分钟前"）
+ *
+ * @return 相对时间字符串；时间戳无效返回空
+ */
 private fun relativeTime(epochMs: Long): String {
     if (epochMs <= 0) return ""
-    val diff = System.currentTimeMillis() - epochMs
+    val diff = System.currentTimeMillis() - epochMs              // 距今多久（毫秒）
     val mins = diff / 60000L
     val hours = mins / 60L
     val days = hours / 24L
@@ -1006,10 +1270,20 @@ private fun relativeTime(epochMs: Long): String {
     }
 }
 
+/**
+ * 把秒数格式化为时长描述
+ *
+ * 【规则】
+ *   - 0 秒 → "—"
+ *   - 不足 1 分钟 → "<1分钟"
+ *   - 不足 1 小时 → "5分钟"
+ *   - 整点小时 → "2小时"
+ *   - 小时 + 分钟 → "1h 23m"
+ */
 private fun formatDuration(seconds: Int): String {
     if (seconds <= 0) return "—"
-    val h = seconds / 3600
-    val m = (seconds % 3600) / 60
+    val h = seconds / 3600                                         // 整点小时
+    val m = (seconds % 3600) / 60                                   // 剩余分钟
     return when {
         h > 0 && m > 0 -> "${h}h ${m}m"
         h > 0 -> "${h}小时"
@@ -1018,6 +1292,11 @@ private fun formatDuration(seconds: Int): String {
     }
 }
 
+/**
+ * 分类 → emoji 映射
+ *
+ * 用于在 UI 上用图标直观表示 App 分类。
+ */
 private fun categoryEmoji(category: String): String = when (category) {
     "社交" -> "💬"
     "视频" -> "🎬"
@@ -1031,7 +1310,7 @@ private fun categoryEmoji(category: String): String = when (category) {
     "新闻" -> "📰"
     "地图" -> "🗺️"
     "图像" -> "🖼️"
-    else -> "📦"
+    else -> "📦"                                                  // 未知分类用箱子 emoji
 }
 
 
