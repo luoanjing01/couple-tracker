@@ -56,6 +56,7 @@ import com.coupletracker.android.BuildConfig                // 编译期生成�
 import com.coupletracker.android.data.NetworkModule         // 网络模块：Retrofit、Supabase 配置
 import com.coupletracker.android.data.PairByCodeReq         // 配对请求的请求体数据类
 import com.coupletracker.android.data.CheckPairStatusReq    // 查询配对状态的请求体数据类
+import com.coupletracker.android.data.AcceptPairReq          // 接受配对请求的请求体数据类
 import com.coupletracker.android.data.UserRepository         // 用户数据仓库：保存用户信息、Token 等
 import com.coupletracker.android.service.TrackerService     // 后台追踪服务（位置采集、APP 使用检测）
 
@@ -199,6 +200,85 @@ class MainActivity : ComponentActivity() {
                 // - var selected by ... 的写法等价于 val state = mutableStateOf(...)，state.value
                 // ------------------------------------------------------------
                 var selected by remember { mutableStateOf(Tab.MAP) }
+
+                // ============================================================================
+                // 配对请求弹窗 + 全局轮询（覆盖所有 Tab）
+                // ----------------------------------------------------------------------------
+                // 背景：B 已登录过的用户重新打开 App 时直接进 MainActivity，LoginActivity 的
+                // PairCard 不再显示，所以 MainActivity 必须自己处理 incoming_request 弹窗。
+                // 与 LoginActivity.PairCard 的轮询逻辑一致，每 5 秒调 check_pair_status：
+                //   - status == incoming_request -> AlertDialog 让 B 接受/拒绝，接受调 accept_pair
+                //   - status == paired          -> setUser(me.copy(partnerId=...)) 触发 UI 与 WebView 刷新
+                //   - partnerId 非空时停止轮询，省电
+                // ============================================================================
+                val pairUser by UserRepository.get().userFlow.collectAsState(initial = null)
+                var incomingRequest by remember { mutableStateOf<com.coupletracker.android.data.CheckPairStatusResp?>(null) }
+                LaunchedEffect(pairUser?.id, pairUser?.partnerId) {
+                    val me = pairUser ?: return@LaunchedEffect
+                    if (!me.partnerId.isNullOrBlank()) return@LaunchedEffect  // 已配对，停止轮询
+                    while (true) {
+                        runCatching {
+                            val resp = withContext(Dispatchers.IO) {
+                                NetworkModule.rpcService.checkPairStatus(
+                                    CheckPairStatusReq(myId = me.id)
+                                )
+                            }
+                            val body = resp.body()
+                            if (body != null) {
+                                when (body.status) {
+                                    // ✅ 已配对：写本地用户，userFlow 发新值触发 UI 重组 + WebView 重新注入
+                                    "paired" -> if (!body.partnerId.isNullOrBlank()) {
+                                        withContext(Dispatchers.Main) {
+                                            UserRepository.get().setUser(me.copy(partnerId = body.partnerId))
+                                        }
+                                        return@LaunchedEffect
+                                    }
+                                    // 收到 A 发来的配对请求：赋值触发 AlertDialog（仅在未弹窗时赋值，避免重复弹窗）
+                                    "incoming_request" -> if (incomingRequest == null) {
+                                        withContext(Dispatchers.Main) { incomingRequest = body }
+                                    }
+                                }
+                            }
+                        }
+                        delay(5000L)
+                    }
+                }
+                // 收到配对请求时显示弹窗（接受/拒绝，逻辑与 LoginActivity.PairCard 一致）
+                incomingRequest?.let { req ->
+                    AlertDialog(
+                        onDismissRequest = { incomingRequest = null },
+                        title = { Text("💑 配对请求") },
+                        text = { Text("${req.requesterNickname ?: "TA"} 想和你配对，是否接受？") },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    val requesterId = req.requesterId ?: ""
+                                    val me = pairUser
+                                    incomingRequest = null
+                                    if (me == null || requesterId.isBlank()) return@Button
+                                    lifecycleScope.launch(Dispatchers.IO) {
+                                        val resp = runCatching {
+                                            NetworkModule.rpcService.acceptPair(
+                                                AcceptPairReq(myId = me.id, theirId = requesterId)
+                                            )
+                                        }
+                                        val body = resp.getOrNull()?.body()
+                                        if (body?.ok == true) {
+                                            // 写本地用户，触发 userFlow 发新值 -> UI 自动刷新
+                                            UserRepository.get().setUser(me.copy(partnerId = requesterId))
+                                        }
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE75480))
+                            ) { Text("接受 💕") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { incomingRequest = null }) {
+                                Text("拒绝", color = Color.Gray)
+                            }
+                        }
+                    )
+                }
 
                 // ----------------------------------------------------------------------------
                 // Scaffold：Material Design 提供的页面骨架组件
@@ -423,45 +503,8 @@ class MainActivity : ComponentActivity() {
         // 分支：如果启用了 WebView 地图模式，就走下面的加载逻辑
         // ============================================================================
         if (useMapWebView) {
-            // ============================================================================
-            // 配对状态轮询：当本地 partnerId 为空（未配对）时，前台轮询 check_pair_status
-            // ----------------------------------------------------------------------------
-            // 成熟方案（参考市面成熟软件的低频状态变更同步实践）：
-            //   ① 前台低频轮询（5s 一次）—— 比简单的「等待对方也输入码」文案更可靠
-            //   ② 状态变更后更新本地用户，触发 userFlow 发新值 -> UI 自动重组 + WebView 自动重新注入
-            //   ③ 已配对（partnerId 非空）则停止轮询，避免无谓耗电
-            // ----------------------------------------------------------------------------
-            // 关键链路：B 接受配对 -> SQL 写入双方 partner_id -> A 这里轮询发现 paired ->
-            //          setUser(me.copy(partnerId=...)) -> userFlow 发新值 ->
-            //          PlaceholderScreen 重组 -> AndroidView update 回调触发 ->
-            //          evaluateJavascript(buildInjectionJs()) 把新 partnerId 注入前端 ->
-            //          前端 __applyAndroidInjection() 拿到新值刷新地图
-            // ============================================================================
-            LaunchedEffect(user?.id, user?.partnerId) {
-                val me = user ?: return@LaunchedEffect
-                // 已配对则无需轮询（省电）
-                if (!me.partnerId.isNullOrBlank()) return@LaunchedEffect
-                while (true) {
-                    runCatching {
-                        val resp = withContext(Dispatchers.IO) {
-                            NetworkModule.rpcService.checkPairStatus(
-                                CheckPairStatusReq(myId = me.id)
-                            )
-                        }
-                        val body = resp.body()
-                        // ✅ 状态变为 paired 且有 partnerId：更新本地用户，触发 UI 重组 + WebView 重新注入
-                        if (body != null && body.status == "paired" && !body.partnerId.isNullOrBlank()) {
-                            withContext(Dispatchers.Main) {
-                                UserRepository.get().setUser(me.copy(
-                                    partnerId = body.partnerId
-                                ))
-                            }
-                            return@LaunchedEffect
-                        }
-                    }
-                    delay(5000L)
-                }
-            }
+            // 配对请求轮询已上移到 MainActivity setContent 顶层（覆盖所有 Tab + 全局 AlertDialog），
+            // 这里不再重复轮询，只负责渲染 WebView 地图。
             // ----------------------------------------------------------------------------
             // Box：Compose 中可以叠放多个子元素的容器（类似 FrameLayout）
             // 这里让它占满整个屏幕尺寸
