@@ -57,6 +57,7 @@ import com.coupletracker.android.data.NetworkModule         // 网络模块：Re
 import com.coupletracker.android.data.PairByCodeReq         // 配对请求的请求体数据类
 import com.coupletracker.android.data.CheckPairStatusReq    // 查询配对状态的请求体数据类
 import com.coupletracker.android.data.AcceptPairReq          // 接受配对请求的请求体数据类
+import com.coupletracker.android.data.UnpairReq              // 取消配对的请求体数据类
 import com.coupletracker.android.data.UserRepository         // 用户数据仓库：保存用户信息、Token 等
 import com.coupletracker.android.service.TrackerService     // 后台追踪服务（位置采集、APP 使用检测）
 
@@ -1696,33 +1697,78 @@ class MainActivity : ComponentActivity() {
                     Spacer(Modifier.height(14.dp))
 
                     // ----------------------------------------------------------------------------
-                    // 退出登录按钮（红色描边样式，传达"危险操作"语义）
-                    // - colors = outlinedButtonColors(contentColor = Red)：文字红色
-                    // - border = outlinedButtonBorder.copy(brush = SolidColor(Red))：边框红色
+                    // 危险操作按钮行：取消配对（左） + 退出登录（右）
                     // ----------------------------------------------------------------------------
-                    // 退出登录
-                    OutlinedButton(
-                        onClick = {
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                // 清空本地登录信息
-                                UserRepository.get().logout()
-                                // 停止后台采集服务
-                                TrackerService.stop(this@MainActivity)
-                                // 切回主线程关闭 Activity（finish 必须在主线程调用）
-                                withContext(Dispatchers.Main) { finish() }
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        shape = RoundedCornerShape(24.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = Color(0xFFE53E3E)
-                        ),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(
-                            brush = SolidColor(Color(0xFFE53E3E))
-                        )
-                    ) { Text("退出登录", fontSize = 14.sp) }
+                    // - 用 Row + spacedBy(10.dp) 让两个按钮水平并排，平分宽度
+                    // - 取消配对：仅已配对（hasPartner == true）时显示，调 unpair RPC
+                    //   单方面取消会让双方 partner_id 都被清空，对方下次拉到状态后会自动刷新
+                    // - 退出登录：清本地登录信息 + 停服务 + 关闭 Activity
+                    // - 两按钮都用红色描边样式，传达"危险操作"语义
+                    // ----------------------------------------------------------------------------
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // 取消配对按钮：仅在已配对时显示
+                        if (hasPartner == true) {
+                            OutlinedButton(
+                                onClick = {
+                                    val me = user
+                                    if (me == null) return@OutlinedButton
+                                    lifecycleScope.launch(Dispatchers.IO) {
+                                        val resp = runCatching {
+                                            NetworkModule.rpcService.unpair(
+                                                UnpairReq(myId = me.id)
+                                            )
+                                        }
+                                        val body = resp.getOrNull()?.body()
+                                        withContext(Dispatchers.Main) {
+                                            if (body?.ok == true) {
+                                                // ✅ 取消成功：清空本地 partnerId -> userFlow 发新值
+                                                //   -> UI 自动切回未配对 + WebView 重新注入空 partnerId
+                                                UserRepository.get().setUser(me.copy(partnerId = null))
+                                                hasPartner = false
+                                                partnerName = ""
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp),
+                                shape = RoundedCornerShape(24.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = Color(0xFFE53E3E)
+                                ),
+                                border = ButtonDefaults.outlinedButtonBorder.copy(
+                                    brush = SolidColor(Color(0xFFE53E3E))
+                                )
+                            ) { Text("取消配对", fontSize = 14.sp) }
+                        }
+                        // 退出登录按钮
+                        OutlinedButton(
+                            onClick = {
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    // 清空本地登录信息
+                                    UserRepository.get().logout()
+                                    // 停止后台采集服务
+                                    TrackerService.stop(this@MainActivity)
+                                    // 切回主线程关闭 Activity（finish 必须在主线程调用）
+                                    withContext(Dispatchers.Main) { finish() }
+                                }
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFFE53E3E)
+                            ),
+                            border = ButtonDefaults.outlinedButtonBorder.copy(
+                                brush = SolidColor(Color(0xFFE53E3E))
+                            )
+                        ) { Text("退出登录", fontSize = 14.sp) }
+                    }
                 }
             }
 

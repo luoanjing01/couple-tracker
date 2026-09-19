@@ -238,6 +238,23 @@ interface RpcService {
     suspend fun acceptPair(
         @Body body: AcceptPairReq
     ): Response<AcceptPairResp>
+
+    /**
+     * 取消配对（单方面取消，双方 partner_id 都被清空）
+     *
+     * 业务场景：A 或 B 任一方在「我的」页点「取消配对」按钮，
+     * 服务器把双方的 partner_id / pending_pair / pair_request_at 全部清空，
+     * 双方都恢复到未配对状态，可重新发起配对。
+     *
+     * @see public.unpair 服务器端 SQL 函数定义（参数：p_my_id）
+     *
+     * @param body 请求体（仅含自己的 ID），见 UnpairReq
+     * @return 取消结果，见 UnpairResp
+     */
+    @POST("unpair")
+    suspend fun unpair(
+        @Body body: UnpairReq
+    ): Response<UnpairResp>
 }
 
 // ============================================================================
@@ -431,6 +448,30 @@ data class AcceptPairResp(
     @SerializedName("partner_nickname") val partnerNickname: String? = null,
     @SerializedName("reason")         val reason: String? = null,
     @SerializedName("msg")            val msg: String? = null
+)
+
+/**
+ * 取消配对请求体
+ *
+ * @param myId 自己的用户 ID（取消操作发起方）
+ */
+data class UnpairReq(
+    @SerializedName("p_my_id") val myId: String
+)
+
+/**
+ * 取消配对响应体
+ *
+ * @param ok        请求是否成功
+ * @param msg       服务器返回的提示消息
+ * @param partnerId 被解除的对方 ID（取消成功后回传，便于前端记录日志）
+ * @param reason    失败原因（如 NOT_PAIRED 表示本来就没配对）
+ */
+data class UnpairResp(
+    @SerializedName("ok")          val ok: Boolean = false,
+    @SerializedName("msg")        val msg: String? = null,
+    @SerializedName("partner_id") val partnerId: String? = null,
+    @SerializedName("reason")     val reason: String? = null
 )
 
 /**
