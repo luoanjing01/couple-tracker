@@ -565,6 +565,9 @@ interface RestService {
      * 通过 id、username 或 couple_code 中任一条件查询。
      * 返回列表（一般只取第一条），即使没匹配也返回空列表而非报错。
      *
+     * 过滤值说明：可传裸值（如纯 UUID），NetworkModule 的 postgrestFilterInterceptor
+     * 会自动补 "eq." 前缀；显式传 "eq.xxx" 也不会重复加前缀。
+     *
      * @param select    要返回哪些字段，"*" 表示所有字段
      * @param id        按 user_id 过滤（可空，不传则忽略该条件）
      * @param username  按用户名过滤（可空）
@@ -584,7 +587,7 @@ interface RestService {
      *
      * 用 PATCH 方法部分更新（只更新 body 中包含的字段，其他字段不变）。
      *
-     * @param id  要更新的用户 ID（按 id 过滤定位记录）
+     * @param id  要更新的用户 ID（可传纯 UUID，NetworkModule 拦截器自动补 "eq." 前缀）
      * @param body 要更新的字段（如 {"nickname": "新昵称"}）
      * @return Response<Unit> 表示无具体返回数据，看状态码判断成功失败
      */
