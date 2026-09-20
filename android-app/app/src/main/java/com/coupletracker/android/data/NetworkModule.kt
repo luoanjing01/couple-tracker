@@ -183,6 +183,7 @@ object NetworkModule {
         val restClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)  // 建立连接最多等 15 秒
             .readTimeout(15, TimeUnit.SECONDS)     // 读取响应最多等 15 秒
+            .addInterceptor(postgrestFilterInterceptor) // 先规范化过滤器（自动补 eq. 前缀），让日志打印最终 URL
             .addInterceptor(logging)               // 加日志
             .addInterceptor(supabaseHeaderInterceptor(addAuthHeader = true)) // 加 Supabase 头 + 登录令牌
             .build()
@@ -293,6 +294,74 @@ object NetworkModule {
         }
         // 把加工好的请求送出去，proceed() 返回服务器的响应
         chain.proceed(builder.build())
+    }
+
+    /*
+     * ===================================================================
+     * postgrestFilterInterceptor —— PostgREST 过滤器规范化拦截器
+     * -------------------------------------------------------------------
+     * 行业对标：supabase-js / postgrest-js 用 .eq("id", x) 这类 builder
+     * 自动拼操作符，调用方永远不用手写 "eq." 前缀。
+     * 我们是直接拼 URL，历史上漏写 "eq." 踩过坑（PostgREST 对裸值直接 400）：
+     *   - 取消配对 PATCH /profiles?id=<裸uuid> → 400 PGRST100 → 界面提示"网络异常"
+     *   - 应用/统计页 getProfile(id=<裸uuid>) → 400 → 伴侣信息加载失败 → 误显示"未配对"
+     *
+     * 本拦截器在请求发出前统一兜底：
+     *   把「列过滤参数」的裸值自动补成 "eq.<值>"；
+     *   已带操作符前缀（eq./gt./is./in.…）或逻辑语法（and(...)/or(...)）的值原样放行，
+     *   不会重复加前缀（幂等，可安全叠加）；
+     *   只处理白名单列名，select / order / limit 等控制参数不受影响。
+     * ===================================================================
+     */
+
+    /** 需要规范化过滤器的数据库列名白名单（按表分组） */
+    private val postgrestFilterKeys = setOf(
+        "id", "username", "couple_code",           // profiles 表
+        "code", "user_a", "user_b",                // couples 表
+        "user_id", "couple_id",                    // locations / app_usage 表
+        "package_name", "created_at"               // app_usage 表
+    )
+
+    /** PostgREST 操作符前缀（eq./gt./is./in. 等），已带前缀的值原样放行 */
+    private val postgrestOpRegex = Regex(
+        "^(eq|neq|gt|gte|lt|lte|like|ilike|is|in|cs|cd|ov|sl|sr|nxl|nxr|adj|fts|plfts|phfts|wfts|not)\\.",
+        RegexOption.IGNORE_CASE
+    )
+
+    /** PostgREST 逻辑语法 and(...)/or(...)，原样放行 */
+    private val postgrestLogicRegex = Regex("^(and|or)\\(.*\\)$", RegexOption.IGNORE_CASE)
+
+    /** 判断一个过滤值是否需要补 eq. 前缀：非空、无操作符、非逻辑语法 */
+    private fun needsEqPrefix(value: String?): Boolean =
+        !value.isNullOrBlank() &&
+            !postgrestOpRegex.containsMatchIn(value) &&
+            !postgrestLogicRegex.matches(value)
+
+    /**
+     * 规范化过滤器：给裸值的列过滤参数自动补 "eq." 前缀。
+     * 对绝大多数请求（无裸值过滤参数）零开销直接放行。
+     */
+    private val postgrestFilterInterceptor = Interceptor { chain ->
+        val request = chain.request()
+        val url = request.url
+        // 找出所有「没带操作符」的列过滤参数；一个都没有就直接放行
+        val keysToFix = postgrestFilterKeys.filter { key ->
+            url.queryParameterValues(key).any { needsEqPrefix(it) }
+        }
+        if (keysToFix.isEmpty()) {
+            return@Interceptor chain.proceed(request)
+        }
+        // 重建 URL：需要修复的参数先删后按「原样 / 补 eq.」规则重新添加
+        val newUrl = url.newBuilder().apply {
+            keysToFix.forEach { key ->
+                val values = url.queryParameterValues(key)
+                removeAllQueryParameters(key)
+                values.forEach { value ->
+                    addQueryParameter(key, if (needsEqPrefix(value)) "eq.$value" else value)
+                }
+            }
+        }.build()
+        chain.proceed(request.newBuilder().url(newUrl).build())
     }
 
     /*
