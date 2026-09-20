@@ -651,7 +651,7 @@ interface RestService {
      */
     @POST("locations")
     suspend fun reportLocation(
-        @Body body: LocationRow
+        @Body body: LocationInsert
     ): Response<Unit>
 
     /**
@@ -665,7 +665,7 @@ interface RestService {
      */
     @POST("locations")
     suspend fun reportLocationsBatch(
-        @Body body: List<LocationRow>
+        @Body body: List<LocationInsert>
     ): Response<Unit>
 
     /**
@@ -710,7 +710,7 @@ interface RestService {
      */
     @POST("app_usage")
     suspend fun reportAppUsage(
-        @Body body: AppUsageRow
+        @Body body: AppUsageInsert
     ): Response<Unit>
 
     /**
@@ -867,4 +867,39 @@ data class AppUsageRow(
     val usage_seconds: Int = 0,
     val window_start: String? = null,
     val created_at: String? = null
+)
+
+// ============================================================================
+// 上报专用 DTO（请求体）——与查询用的 Row 类分离
+//
+// 为什么需要单独的 Insert 类？
+//   网络层开启了 Gson serializeNulls()（取消配对时需要用 null 清空字段），
+//   副作用是：所有 null 字段都会被显式写进 JSON 发出去。
+//   如果把 "id":null 发给服务器，PostgreSQL 的列默认值 gen_random_uuid() 不会生效，
+//   直接违反主键 NOT NULL 约束 → HTTP 400 / 23502，所有上报全部失败。
+//   所以上报请求体里【绝不包含】id / created_at 这类服务端生成字段，
+//   让数据库自己填默认值。这也是业界标准的"请求/响应 DTO 分离"做法。
+// ============================================================================
+
+/** 位置上报请求体（只含客户端能提供的字段，id/created_at 由数据库生成） */
+data class LocationInsert(
+    val user_id: String,
+    val couple_id: String? = null,
+    val latitude: Double,
+    val longitude: Double,
+    val accuracy: Double? = null,
+    val speed: Double? = null,
+    val battery_level: Int? = null,
+    val is_moving: Boolean = false
+)
+
+/** APP 使用记录上报请求体（只含客户端能提供的字段，id/created_at 由数据库生成） */
+data class AppUsageInsert(
+    val user_id: String,
+    val couple_id: String? = null,
+    val package_name: String,
+    val app_name: String? = null,
+    val category: String? = null,
+    val usage_seconds: Int = 0,
+    val window_start: String? = null
 )
