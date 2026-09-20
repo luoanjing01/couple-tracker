@@ -251,7 +251,7 @@ fun StatsScreen() {
     Box(
         Modifier
             .fillMaxSize()           // 占满整个屏幕
-            .background(Brush.verticalGradient(listOf(Color(0xFFFFF8F0), Color(0xFFFFE4D1))))  // 奶油 → 蜜桃渐变（方案 D）
+            .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xFFFFE4D1))))  // 奶油 → 蜜桃渐变（方案 D）
             .pullRefresh(pullRefreshState)  // 绑定下拉刷新 (让此 Box 内的下拉可触发刷新)
     ) {
         // 下拉刷新动画指示器 (顶部小圆圈),固定在 Box 顶部居中

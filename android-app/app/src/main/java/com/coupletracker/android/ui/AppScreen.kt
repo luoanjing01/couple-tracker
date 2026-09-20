@@ -160,34 +160,36 @@ fun AppScreen() {
     val subjectName = if (showPartner) partnerName.ifBlank { "TA" } else (user?.displayName ?: "我") // 展示名字
     val subjectIsMe = !showPartner                                                      // 当前是否在看自己
 
-    // ---- 6. 页面根容器：奶油渐变背景（方案 D · 潮汐卡片）+ 下拉刷新支持 ----
+    // ---- 6. 卡片内紧凑布局：无标题栏、无背景、无外框（外层玻璃卡片已提供）----
+    // 方案 D 适配：AppScreen 现在被包在 MainActivity 的玻璃卡片内，
+    // 因此去掉 fillMaxSize、背景色、标题栏，改为紧凑的纵向滚动 Column
     Box(
         Modifier
-            .fillMaxSize()                                         // 占满整个屏幕
-            .background(Brush.verticalGradient(listOf(Color(0xFFFFF8F0), Color(0xFFFFE4D1))))  // 奶油 → 蜜桃渐变
-            .pullRefresh(pullRefreshState)                         // 让本容器支持下拉刷新手势
+            .pullRefresh(pullRefreshState)                         // 保留下拉刷新手势
     ) {
         // 下拉刷新指示器（顶部转圈圈）
         PullRefreshIndicator(
             refreshing = isRefreshing,
             state = pullRefreshState,
-            modifier = Modifier.align(Alignment.TopCenter),     // 顶部居中
+            modifier = Modifier.align(Alignment.TopCenter),
             contentColor = Color(0xFFFF8B7B)                      // 珊瑚粉主题
         )
 
-        // 主内容列，纵向滚动
+        // 主内容列，纵向滚动（紧凑布局，无外框）
         Column(
             Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
                 .verticalScroll(scrollState)                     // 启用纵向滚动
-                .padding(horizontal = 16.dp, vertical = 18.dp)   // 内边距
         ) {
-        // ---- 顶部标题 + 切换按钮 ----
-        // 一行：左边标题，右边切换按钮（看自己/看 TA）
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        // ---- 卡片内顶部：切换按钮行（无标题，只有切换按钮 + 状态提示）----
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            // 左侧：当前查看对象提示
             Text(
-                if (showPartner) "$subjectName 的手机状态" else "我的手机状态",
-                fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A)
+                if (showPartner) "👀 正在查看 $subjectName" else "👀 正在查看自己",
+                fontSize = 13.sp, color = Color(0xFFA89890)
             )
             Spacer(Modifier.weight(1f))                            // 弹性空白把按钮推到右边
             // 切换按钮始终显示：有配对→切换查看对方，无配对→提示
@@ -199,16 +201,14 @@ fun AppScreen() {
                         showPartner = !showPartner; reloadKey++   // 切换并刷新
                     }
                 },
-                shape = RoundedCornerShape(20.dp),                // 圆角药丸形按钮
+                shape = RoundedCornerShape(20.dp),
                 colors = ButtonDefaults.buttonColors(
-                    // 颜色随状态变化：未配对沙灰 / 看对方薄荷绿 / 看自己珊瑚粉
                     containerColor = if (partnerId == null) Color(0xFFD8C7BA)
                     else if (showPartner) Color(0xFF3A9E91) else Color(0xFFFF8B7B)
                 ),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
-                    // 文本随状态变化：未配对"💤 未配对" / 看对方时显示"👤 我" / 看自己时显示"💕 TA"
                     if (partnerId == null) "💤 未配对"
                     else if (showPartner) "👤 我" else "💕 TA",
                     fontSize = 13.sp, fontWeight = FontWeight.Bold,
@@ -217,11 +217,7 @@ fun AppScreen() {
             }
         }
 
-        Spacer(Modifier.height(10.dp))                            // 模块之间留白
-
-        if (partnerId != null) {
-            Spacer(Modifier.height(4.dp))                         // 已配对时多留一点白
-        }
+        Spacer(Modifier.height(14.dp))                            // 模块之间留白
 
         // ============= ① 手机状态 =============
         // 2x2 网格小卡片：电量、网络、状态、心情
