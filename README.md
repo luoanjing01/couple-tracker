@@ -5,6 +5,20 @@
 
 ---
 
+## 📖 Code Wiki（开发者文档）
+
+| 页面 | 内容 |
+|------|------|
+| [Wiki 首页](docs/wiki/Home.md) | 项目总览与文档导航 |
+| [整体架构](docs/wiki/Architecture.md) | 系统架构图、模块划分、技术栈与依赖关系 |
+| [Android App 详解](docs/wiki/Android-App.md) | 全部关键类与函数（UI / Service / 采集器 / 数据层） |
+| [后端与数据库](docs/wiki/Backend-and-Database.md) | Supabase 表结构、7 个 RPC 函数、SQL 演进史 |
+| [核心业务流程](docs/wiki/Data-Flow.md) | 启动 / 注册登录 / 配对状态机 / 位置上报 / APP 统计 |
+| [构建与运行](docs/wiki/Build-and-Run.md) | 环境要求、本地构建、GitHub Actions / CircleCI |
+| [设计决策与已知坑](docs/wiki/Design-Decisions.md) | 技术选型理由、Token 三重防御、踩坑速查表 |
+
+---
+
 ## 📍 快速开始（新设备开发指南）
 
 ### 1. 克隆项目
