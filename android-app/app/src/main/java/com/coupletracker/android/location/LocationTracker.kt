@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat                // AndroidX 兼容库�
 import com.coupletracker.android.data.NetworkModule      // 项目内的网络模块（含 REST 服务和状态 LiveData）
 import com.coupletracker.android.data.UserRepository     // 项目内的用户仓库（获取当前登录用户信息）
 import kotlinx.coroutines.*                              // Kotlin 协程库，用于异步上报位置到云端（不阻塞主线程）
+import java.util.concurrent.CopyOnWriteArrayList          // 线程安全列表：批量缓存位置点（回调线程与上报协程可能不同线程）
 
 /**
  * GPS/网络定位追踪器：基于 Android 原生 LocationManager（不依赖GMS）
@@ -31,10 +32,18 @@ import kotlinx.coroutines.*                              // Kotlin 协程库，�
  *    最终 locations 表 0 条记录 → 地图永远"等待位置..."。
  *    改用原生 LocationManager 后，100% 国产机兼容。
  *
- * ✅ 定位策略：GPS_PROVIDER（高精度室外）+ NETWORK_PROVIDER（室内/WiFi/基站）双开，
- *    任一有新结果都回调，取"更新的/更准的"优先。
- * ✅ 默认每 8 秒上报一次（3 秒内位移<5m则跳过，省电省流量）
- * ✅ 启动时立刻读取所有 provider 的 lastKnownLocation 选出最新的 force 上报，
+ * ✅ 定位策略：GPS_PROVIDER（高精度室外）+ NETWORK_PROVIDER（室内/WiFi/基站）
+ *    + PASSIVE_PROVIDER（被动定位，零耗电复用其他App的定位结果），取"更新的/更准的"优先。
+ *
+ * ✅ 轻量化省电方案（对标 Life360 等业界成熟做法）：
+ *    1.【动态调频】移动中按用户设置的间隔采集；检测到静止（连续多次位移<30m）
+ *      自动把系统定位间隔拉到 5 分钟；恢复移动（位移>50m 或速度>0.5m/s）立刻切回高频。
+ *    2.【被动定位】注册 PASSIVE_PROVIDER，白嫖微信/地图等已算好的位置，自己不花电。
+ *    3.【批量上报】位置点先缓存在本地，攒满 5 条或距上次上传超 3 分钟才一次性
+ *      POST 数组（PostgREST 批量插入），网络唤醒次数降到原来的 1/5 以下；
+ *      失败自动保留缓存下次重试，最多缓存 50 条防爆内存。
+ * ✅ 精度过滤：accuracy>200m 丢弃；30 秒内已有更准位置则丢弃退步结果
+ * ✅ 启动时立刻读取所有 provider 的 lastKnownLocation 选出最新的强制上报，
  *    保证地图立刻有位置，不等 provider 下一次扫描。
  */
 // ============================================================================
@@ -54,6 +63,30 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
     // 用 nullable 是因为：未启动定位时它们为 null；启动后才赋值实际监听器对象
     private var gpsListener: LocationListener? = null   // GPS 卫星定位监听器（高精度，室外好用）
     private var netListener: LocationListener? = null   // 网络定位监听器（基于 WiFi/基站，室内兜底）
+    private var passiveListener: LocationListener? = null   // 被动定位监听器（零耗电：复用其他App已算好的位置）
+    private var enabledProviders: List<String> = emptyList() // 当前可用的 provider 列表（重注册时用）
+
+    // —— 轻量化①：动态调频状态 ——
+    private var baseIntervalMs = 8000L   // 用户设置的"移动中"采集间隔（由 TrackerService 传入）
+    private var isStill = false          // 当前是否判定为静止
+    private var stillCount = 0           // 连续静止计数（防抖：防止偶尔不动被误判）
+    private var currentIntervalMs = -1L  // 当前实际生效的系统定位间隔（避免重复注册）
+
+    // —— 轻量化②：批量上报缓存 ——
+    private val pendingBatch = CopyOnWriteArrayList<com.coupletracker.android.data.LocationRow>()  // 待上传位置缓存
+    private var lastFlushAt = 0L         // 上次批量上传时间戳
+    @Volatile private var isFlushing = false   // 上传中标记：防止并发重复上传
+
+    companion object {
+        private const val STILL_INTERVAL_MS = 300_000L   // 静止时定位间隔：5 分钟（Life360 省电模式同级）
+        private const val STILL_DISPLACEMENT_M = 30f     // 静止判定：位移 < 30 米
+        private const val STILL_SPEED_MS = 0.3f          // 静止判定：速度 < 0.3 m/s
+        private const val STILL_CONFIRM_COUNT = 3        // 连续 3 次静止才确认（防抖）
+        private const val MOVING_DISPLACEMENT_M = 50f    // 恢复移动：单次位移 > 50 米立即恢复高频
+        private const val BATCH_SIZE = 5                 // 批量上传：攒满 5 条立即传
+        private const val BATCH_FLUSH_MS = 180_000L      // 批量上传：距上次超 3 分钟兜底传一次
+        private const val MAX_CACHE_SIZE = 50            // 缓存上限（防离线太久撑爆内存）
+    }
 
     // 记录上一次上报的位置和时刻，用于节流（避免短时间内重复上报几乎相同的位置）
     private var lastLocation: Location? = null   // 最近一次成功上报的位置
@@ -86,6 +119,7 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
     // ============================================================================
     @SuppressLint("MissingPermission")
     suspend fun start(intervalMs: Long = 8000L) {
+        baseIntervalMs = intervalMs   // 保存用户设置的移动间隔，静止调频以此为基准
         // —— 安全检查：如果没有定位权限，立刻退出并提示用户去授权 ——
         if (!hasPermission()) {
             // 通过 NetworkModule 的状态 LiveData 把提示文字推送到 UI 层显示
@@ -122,52 +156,51 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
             if (age < 120_000L) report(it, force = true)   // force=true 表示强制上报，跳过节流
         }
 
-        // —— 第二步：订阅 GPS_PROVIDER 定期更新（高精度室外）——
-        // 只在 GPS provider 可用时才订阅，避免无效注册浪费资源
-        if (providersEnabled.contains(LocationManager.GPS_PROVIDER)) {
-            // 创建一个匿名对象实现 LocationListener 接口的 4 个回调方法
-            gpsListener = object : LocationListener {
-                // 核心回调：系统每次拿到新位置时调用
-                override fun onLocationChanged(loc: Location) { report(loc, force = false) }
-                // 当用户关闭 GPS 时触发（这里留空，不做额外处理）
-                override fun onProviderDisabled(provider: String) {}
-                // 当用户打开 GPS 时触发（这里留空）
-                override fun onProviderEnabled(provider: String)  {}
-                // provider 状态变化（旧 API，Android 6.0 后基本不再回调，但接口要求必须实现）
-                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-            }
-            runCatching {
-                // 向系统注册位置更新请求
-                locMgr.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER,  // 指定使用 GPS 卫星定位
-                    intervalMs,    // minTime: 最少间隔 ms（系统可能延后到这个时间才回调，省电）
-                    0f,            // minDistance: 0 米（我们自行在 report() 里过滤）
-                    gpsListener!!, // 监听器回调对象（!! 表示断言非空，因为我们刚赋值）
-                    Looper.getMainLooper()   // 指定在主线程回调，避免线程安全问题
-                )
-            }
-        }
+        // —— 第二/三步：按当前运动状态注册 GPS + NETWORK + PASSIVE 三个 provider ——
+        // 间隔由 detectInterval() 决定：移动中用用户设置的间隔，静止时自动拉到 5 分钟
+        enabledProviders = providersEnabled
+        registerProviders(detectInterval())
+    }
 
-        // —— 第三步：订阅 NETWORK_PROVIDER 定期更新（室内/WiFi/基站兜底）——
-        // 室内通常收不到 GPS 卫星信号，此时网络定位是兜底方案
-        if (providersEnabled.contains(LocationManager.NETWORK_PROVIDER)) {
-            // 创建网络定位监听器（结构同上，不再赘述）
-            netListener = object : LocationListener {
-                override fun onLocationChanged(loc: Location) { report(loc, force = false) }
-                override fun onProviderDisabled(provider: String) {}
-                override fun onProviderEnabled(provider: String)  {}
-                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-            }
-            runCatching {
-                locMgr.requestLocationUpdates(
-                    LocationManager.NETWORK_PROVIDER,   // 指定使用网络定位
-                    intervalMs,
-                    0f,
-                    netListener!!,
-                    Looper.getMainLooper()
-                )
-            }
+    // ========================================================================
+    //  轻量化核心①：根据运动状态决定系统定位间隔（动态调频）
+    // ========================================================================
+    private fun detectInterval(): Long =
+        if (isStill) STILL_INTERVAL_MS else baseIntervalMs
+
+    // ========================================================================
+    //  轻量化核心②：注册/重注册所有定位 provider
+    //  静止/移动状态切换时调用：改 minTime 间隔必须先 removeUpdates 再重新订阅
+    // ========================================================================
+    @SuppressLint("MissingPermission")
+    private fun registerProviders(intervalMs: Long) {
+        // 间隔没变且已注册过 → 无需重复操作（重复注册会让回调变密，白费电）
+        if (currentIntervalMs == intervalMs && gpsListener != null) return
+        currentIntervalMs = intervalMs
+
+        // 先注销旧监听器
+        gpsListener?.let { runCatching { locMgr.removeUpdates(it) } }
+        netListener?.let { runCatching { locMgr.removeUpdates(it) } }
+        passiveListener?.let { runCatching { locMgr.removeUpdates(it) } }
+
+        // 三个 provider 共用一个监听器实例（回调逻辑都是 report）
+        val listener = object : LocationListener {
+            override fun onLocationChanged(loc: Location) { report(loc, force = false) }
+            override fun onProviderDisabled(provider: String) {}
+            override fun onProviderEnabled(provider: String)  {}
+            @Deprecated("deprecated in API 29")
+            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
         }
+        gpsListener = listener; netListener = listener; passiveListener = listener
+
+        if (enabledProviders.contains(LocationManager.GPS_PROVIDER)) {
+            runCatching { locMgr.requestLocationUpdates(LocationManager.GPS_PROVIDER, intervalMs, 0f, listener, Looper.getMainLooper()) }
+        }
+        if (enabledProviders.contains(LocationManager.NETWORK_PROVIDER)) {
+            runCatching { locMgr.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, intervalMs, 0f, listener, Looper.getMainLooper()) }
+        }
+        // PASSIVE_PROVIDER：被动接收其他 App（微信/地图等）触发的定位结果，系统不会因它额外唤醒 GPS，零耗电
+        runCatching { locMgr.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 0L, 0f, listener, Looper.getMainLooper()) }
     }
 
     // ============================================================================
@@ -176,9 +209,16 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
     // 重要：Service 销毁时必须调用，否则监听器不会被回收，造成电量泄露和内存泄漏
     // ============================================================================
     fun stop() {
-        // gpsListener 不为空时调用 removeUpdates 注销监听器；runCatching 防止异常
+        // 三个监听器全部注销；runCatching 防止异常
         gpsListener?.let { runCatching { locMgr.removeUpdates(it) } }; gpsListener = null
         netListener?.let { runCatching { locMgr.removeUpdates(it) } }; netListener = null
+        passiveListener?.let { runCatching { locMgr.removeUpdates(it) } }; passiveListener = null
+        // 停止前把缓存里没上传的位置点补传一次
+        // 注意：Service 销毁时 scope 可能已被取消，这里用 GlobalScope 兜底（fire-and-forget）
+        if (pendingBatch.isNotEmpty()) {
+            @OptIn(DelicateCoroutinesApi::class)
+            kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) { doFlush() }
+        }
     }
 
     // ========================================================================
@@ -206,31 +246,23 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
     }
 
     // ========================================================================
-    //  节流 + 上报云端
+    //  节流过滤 + 静止检测 + 批量缓存上报
     // ========================================================================
     // report 是 LocationTracker 的"出口"方法：所有定位回调最终都汇聚到这里
     // 参数 loc  : 待上报的位置
     // 参数 force: true=强制上报（启动时初次显示用），false=普通回调（要走节流/精度过滤）
     private fun report(loc: Location, force: Boolean) {
-        // 记录"当前时刻"，后续多处节流判断都要用
         val now = System.currentTimeMillis()
 
         // ✅ 精度过滤：防止基站/WiFi 定位偏差几百米导致"定位不对"
-        //    accuracy > 200m 的直接丢弃（除非是启动时的 force 上报且无其他位置）
-        // loc.hasAccuracy()：判断该位置是否包含精度信息（有些 provider 不提供精度）
-        // 如果没有精度信息，用 999f（一个很大的值）当作"精度很差"处理
         val acc = if (loc.hasAccuracy()) loc.accuracy else 999f
-        // 普通回调（非 force）且精度大于 200 米 → 丢弃，不浪费流量上报差位置
         if (!force && acc > 200f) {
-            // 打印调试日志到 logcat，便于排查"为什么不上报"
             android.util.Log.d("CT-Tracker", "丢弃低精度定位: acc=${acc}m provider=${loc.provider}")
-            return   // 直接返回，不继续上报
+            return
         }
         // 如果已有更准的位置（30秒内），新位置精度差很多则丢弃
-        // 场景：刚才 GPS 给了 5m 精度的位置，现在网络给个 100m 的，没必要覆盖
         if (!force && lastLocation != null && lastLocation!!.hasAccuracy()) {
-            val lastAcc = lastLocation!!.accuracy   // 上次位置的精度（米）
-            // 三个条件同时满足才丢弃：新精度比上次差 2 倍以上 且 新精度大于 50m 且 距上次上报不到 30 秒
+            val lastAcc = lastLocation!!.accuracy
             if (acc > lastAcc * 2 && acc > 50f && (now - lastReportAt) < 30_000L) {
                 android.util.Log.d("CT-Tracker", "丢弃退步定位: newAcc=${acc}m vs lastAcc=${lastAcc}m")
                 return
@@ -238,63 +270,87 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         }
 
         // —— 位移节流：短时间内几乎没动 → 省电跳过 ——
+        val movedSinceLast = lastLocation?.let { loc.distanceTo(it) } ?: Float.MAX_VALUE
         if (!force && lastLocation != null) {
-            val delta = now - lastReportAt                // 距上次上报的毫秒数
-            val moved = loc.distanceTo(lastLocation!!)    // 计算两次位置之间的直线距离（米）
-            if (delta < 2000 && moved < 3f) return   // 2秒内移动不足3米 → 省电跳过
+            val delta = now - lastReportAt
+            if (delta < 2000 && movedSinceLast < 3f) return   // 2秒内移动不足3米 → 省电跳过
         }
-        // 通过所有过滤，更新"最近一次"记录，准备上报
+
+        // ====================================================================
+        // 轻量化①：静止/移动检测 → 动态调整系统定位间隔（Life360 式省电核心）
+        //   静止判定：连续 STILL_CONFIRM_COUNT 次位移<30m（且无速度或速度<0.3m/s）
+        //   移动恢复：单次位移>50m 或速度>0.5m/s，立即恢复高频
+        // ====================================================================
+        val slowOrNoSpeed = !loc.hasSpeed() || loc.speed < STILL_SPEED_MS
+        if (movedSinceLast < STILL_DISPLACEMENT_M && slowOrNoSpeed) stillCount++ else stillCount = 0
+        val movingNow = movedSinceLast > MOVING_DISPLACEMENT_M || (loc.hasSpeed() && loc.speed > 0.5f)
+        val decidedStill = if (movingNow) { stillCount = 0; false } else stillCount >= STILL_CONFIRM_COUNT
+        if (decidedStill != isStill) {
+            isStill = decidedStill
+            android.util.Log.d("CT-Tracker", "运动状态切换: isStill=$isStill → 定位间隔调整为 ${detectInterval()}ms")
+            registerProviders(detectInterval())   // 状态变了 → 用新间隔重新订阅
+        }
+
+        // 通过所有过滤，更新"最近一次"记录
         lastLocation = loc; lastReportAt = now
-        // 判断是否在移动：speed>0.5 m/s（约 1.8 km/h，人正常步行的速度）视为移动中
         val isMoving = (loc.hasSpeed() && loc.speed > 0.5f)
 
-        // —— 异步上报到云端：用协程在 IO 线程执行，避免阻塞主线程 ——
-        // Dispatchers.IO：Kotlin 协程的 IO 调度器，专门用于磁盘/网络等阻塞 IO 操作
+        // ====================================================================
+        // 轻量化②：先入本地缓存，攒批后一次性上传（减少网络唤醒次数）
+        // ====================================================================
         scope.launch(Dispatchers.IO) {
-            // 从本地仓库获取当前登录用户（如果未登录则 userId 为 null，直接返回不上报）
             val user = UserRepository.get().getUser()
-            val userId = user?.id ?: return@launch   // return@launch 表示从协程中返回（结束协程）
+            val userId = user?.id ?: return@launch
+            // couple_id 传 null（数据库已允许 null，未配对也记录自己的轨迹）
+            pendingBatch += com.coupletracker.android.data.LocationRow(
+                user_id       = userId,
+                couple_id     = null,
+                latitude      = loc.latitude,
+                longitude     = loc.longitude,
+                accuracy      = if (loc.hasAccuracy()) loc.accuracy.toDouble() else null,
+                speed         = if (loc.hasSpeed())  loc.speed.toDouble()  else null,
+                battery_level = batteryPct,
+                is_moving     = isMoving
+            )
+            trimCache()
 
-            // —— 未配对时跳过位置上报 ——
-            // locations 表 couple_id 列是 NOT NULL，未配对时 couple_id 为 null
-            // 会导致 HTTP 400 (PostgreSQL 23502 not_null_violation)
-            // 部署 supabase_fix_locations.sql (ALTER COLUMN couple_id DROP NOT NULL) 后可恢复未配对上报
-            if (user.partnerId.isNullOrBlank()) {
-                NetworkModule.lastLocationReportStatus.value = "未配对，位置暂不上报（配对后自动恢复）"
-                return@launch
+            // 触发上传条件：① 强制（启动时）② 攒满 BATCH_SIZE 条 ③ 距上次上传超 BATCH_FLUSH_MS
+            if (force || pendingBatch.size >= BATCH_SIZE || now - lastFlushAt >= BATCH_FLUSH_MS) {
+                doFlush()
             }
-            // ✅ 已配对：couple_id 传 null 或实际值（部署 SQL 后允许 null）
-            val resp = runCatching {
-                // 调用后端 REST 接口上报位置
-                NetworkModule.restService.reportLocation(
-                    // 构造一条位置记录数据对象 LocationRow
-                    com.coupletracker.android.data.LocationRow(
-                        user_id       = userId,                                    // 用户 ID
-                        couple_id     = null,                                      // 配对 ID（未配对传 null）
-                        latitude      = loc.latitude,                             // 纬度
-                        longitude     = loc.longitude,                            // 经度
-                        accuracy      = if (loc.hasAccuracy()) loc.accuracy.toDouble() else null,  // 精度（米），无则 null
-                        speed         = if (loc.hasSpeed())  loc.speed.toDouble()  else null,       // 速度（m/s），无则 null
-                        battery_level = batteryPct,                                // 电量百分比（可能为 null）
-                        is_moving     = isMoving                                   // 是否在移动
-                    )
-                )
-            }
-            val http = resp.getOrNull()   // 取出成功时的 Response 对象，失败时为 null
-            // 根据 HTTP 响应结果，更新 UI 上的状态文字（LiveData 推送，UI 自动刷新）
-            NetworkModule.lastLocationReportStatus.value =
-                when {
-                    // 情况1：抛异常（网络错误、JSON 解析错误等）
-                    http == null -> "位置上报异常：${resp.exceptionOrNull()?.message?.take(40).orEmpty()}"
-                    // 情况2：HTTP 状态码非 2xx（如 401 未登录、500 服务器错误）
-                    !http.isSuccessful -> {
-                        // 读取错误响应体前 60 字符，便于排查
-                        val errBody = runCatching { http.errorBody()?.string()?.take(60) }.getOrNull().orEmpty()
-                        "位置上报失败 HTTP ${http.code()}：$errBody"
-                    }
-                    // 情况3：成功，显示经纬度（保留 4 位小数）
-                    else -> "位置上报成功 · ${String.format("%.4f",loc.latitude)},${String.format("%.4f",loc.longitude)}"
-                }
         }
     }
+
+    // ========================================================================
+    //  批量上传执行器：把缓存的位置点一次性 POST 到云端（PostgREST 批量插入）
+    //  失败时把数据加回缓存，且不更新 lastFlushAt，下个位置点进来时自动触发重试
+    // ========================================================================
+    private suspend fun doFlush() {
+        if (isFlushing || pendingBatch.isEmpty()) return
+        isFlushing = true
+        val batch = pendingBatch.toList()   // 拷贝快照
+        pendingBatch.clear()
+        val resp = runCatching { NetworkModule.restService.reportLocationsBatch(batch) }
+        val http = resp.getOrNull()
+        NetworkModule.lastLocationReportStatus.value =
+            when {
+                http == null -> {
+                    pendingBatch.addAll(0, batch); trimCache()   // 网络异常 → 加回缓存重试
+                    "位置上报异常：${resp.exceptionOrNull()?.message?.take(40).orEmpty()}"
+                }
+                !http.isSuccessful -> {
+                    pendingBatch.addAll(0, batch); trimCache()   // 服务器错误 → 加回缓存重试
+                    val errBody = runCatching { http.errorBody()?.string()?.take(60) }.getOrNull().orEmpty()
+                    "位置上报失败 HTTP ${http.code()}：$errBody"
+                }
+                else -> {
+                    lastFlushAt = System.currentTimeMillis()   // 只有成功才更新上传时间
+                    "位置上报成功 ×${batch.size} · ${String.format("%.4f", batch.last().latitude)},${String.format("%.4f", batch.last().longitude)}"
+                }
+            }
+        isFlushing = false
+    }
+
+    // 缓存防爆：超过上限时丢弃最旧的点
+    private fun trimCache() { while (pendingBatch.size > MAX_CACHE_SIZE) pendingBatch.removeAt(0) }
 }
