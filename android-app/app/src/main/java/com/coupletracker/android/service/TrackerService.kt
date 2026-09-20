@@ -90,6 +90,8 @@ class TrackerService : Service() {
     private var locationTracker: LocationTracker? = null
     // APP 使用监控器实例；同样可能初始化失败，所以也是 nullable
     private var appMonitor: AppUsageMonitor? = null
+    // 设备状态心跳上报器（电量/充电/WiFi/网络/屏幕 → device_status 表，60s 心跳+变化即报）
+    private var deviceStatusReporter: DeviceStatusReporter? = null
     // 电量监控协程的 Job 句柄，用来随时取消该协程
     private var batteryJob: Job? = null
     // 位置采集协程的 Job 句柄，用来在频率变化时先取消旧的再起新的
@@ -124,6 +126,7 @@ class TrackerService : Service() {
             // ---------------------------------------------------------------------
             locationTracker = runCatching { LocationTracker(this, serviceScope) }.getOrNull()
             appMonitor   = runCatching { AppUsageMonitor(this, serviceScope) }.getOrNull()
+            deviceStatusReporter = runCatching { DeviceStatusReporter(this, serviceScope) }.getOrNull()
 
             // ---------------------------------------------------------------------
             // 步骤 2：尝试变成"前台服务"（必须显示一个常驻通知）
@@ -180,8 +183,13 @@ class TrackerService : Service() {
                                     restartAppMonitor(appMs)
                                     // 启动电量监控（每 10 秒读一次电量，塞进位置上报里顺便传）
                                     startBatteryMonitor()
+                                    // 启动设备状态心跳（60s 心跳 + 状态变化即报 → device_status 表）
+                                    // 这是"手机状态/在线状态/WiFi"展示的数据源，与位置上报解耦，
+                                    // 即使定位被系统限制，心跳仍能维持对方看到"在线"
+                                    runCatching { deviceStatusReporter?.start() }
                                 } else {
-                                    // 用户未登录 → 调用 stopSelf() 结束本服务
+                                    // 用户未登录 → 停止心跳并结束本服务
+                                    runCatching { deviceStatusReporter?.stop() }
                                     stopSelf()
                                 }
                             }
@@ -302,6 +310,8 @@ class TrackerService : Service() {
                     runCatching {
                         locationTracker = runCatching { LocationTracker(this, serviceScope) }.getOrNull()
                         appMonitor = runCatching { AppUsageMonitor(this, serviceScope) }.getOrNull()
+                        deviceStatusReporter = runCatching { DeviceStatusReporter(this, serviceScope) }.getOrNull()
+                        runCatching { deviceStatusReporter?.start() }   // 兜底：补初始化后立即启动心跳
                         // 把实例引用也存到 companion 的静态变量里，方便 UI 层直接读取
                         Companion.appMonitor = appMonitor
                     }
@@ -331,6 +341,7 @@ class TrackerService : Service() {
     //   - 每一步都包 runCatching：保证即使某一步出错，后续清理仍能执行
     // ===========================================================================
     override fun onDestroy() {
+        runCatching { deviceStatusReporter?.stop() } // 停止设备状态心跳（先停，避免取消 scope 后再发请求）
         runCatching { serviceScope.cancel() }   // 取消整个协程作用域（会连带取消所有子协程）
         runCatching { locationTracker?.stop() } // 停止位置采集
         runCatching { appMonitor?.stop() }      // 停止 APP 使用监控

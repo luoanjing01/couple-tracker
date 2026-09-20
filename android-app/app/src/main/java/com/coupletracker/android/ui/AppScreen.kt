@@ -471,10 +471,14 @@ private fun PhoneStatusCard(
     var online by remember { mutableStateOf(true) }        // 是否在线
     var screenOn by remember { mutableStateOf(true) }      // 屏幕是否点亮
 
-    // TA 的最新位置（拿 battery_level + created_at 判断在线状态）
+    // TA 的设备状态（来自 device_status 心跳表；对方未升级新版时回退 locations 推断）
     var taBattery by remember { mutableStateOf<Int?>(null) } // 对方电量（可空）
-    var taCharging by remember { mutableStateOf(false) }     // 对方是否在充电（云端未上报，恒 false）
-    var taUpdatedAt by remember { mutableStateOf(0L) }        // 对方最后上报时间戳
+    var taCharging by remember { mutableStateOf(false) }     // 对方是否在充电（心跳上报）
+    var taUpdatedAt by remember { mutableStateOf(0L) }        // 对方最后心跳/上报时间戳
+    var taNetworkType by remember { mutableStateOf<String?>(null) } // 对方网络类型（wifi/cellular/none）
+    var taWifiSsid by remember { mutableStateOf<String?>(null) }    // 对方 WiFi 名称
+    var taScreenOn by remember { mutableStateOf(true) }             // 对方屏幕是否点亮
+    var taHasDeviceStatus by remember { mutableStateOf(false) }     // 对方心跳表是否可用（false=旧版客户端）
 
     // 当前心情（AppSessionTracker 单例，进程存活就不丢）
     val moodEmoji by AppSessionTracker.mood.collectAsState()  // 订阅心情流，自动刷新
@@ -550,22 +554,42 @@ private fun PhoneStatusCard(
         }
     }
 
-    // TA：用 getUserLocations 按 user_id 过滤拿最新位置
-    // 【判断在线的依据】最后一条位置记录距今 < 5 分钟 = 在线，否则视为离线/关机
+    // TA：优先读 device_status 心跳表（60s 心跳，含电量/充电/WiFi/屏幕状态）；
+    //     查不到行（对方客户端未升级）→ 回退旧逻辑：locations 最后一条 < 5 分钟 = 在线
+    // 【为什么换数据源？】位置上报在"手机静止/后台被杀"时会断更，导致误显示离线；
+    //   心跳与位置解耦，只要 App 活着就持续 upsert —— Life360 类产品的通用做法。
     LaunchedEffect(subjectIsMe, subjectId, reloadKey) {
         if (!subjectIsMe && subjectId.isNotBlank()) {
             while (isActive) {
                 withContext(Dispatchers.IO) {
-                    runCatching {
-                        // 查询对方最新一条位置记录
-                        NetworkModule.restService.getUserLocations(
-                            userId = "eq.$subjectId", order = "created_at.desc", limit = 1
-                        )
-                    }.getOrNull()?.body()?.firstOrNull()?.let { loc ->
-                        taBattery = loc.battery_level                // 云端上报的电量
-                        taUpdatedAt = parseIsoTime(loc.created_at)    // 上报时间戳
-                        // 判断在线：最后一条位置记录超过 5 分钟 → 离线/可能关机
-                        online = (System.currentTimeMillis() - taUpdatedAt) < 5 * 60_000L
+                    // ① 优先查心跳表（表不存在/对方未上报 → null → 走回退）
+                    val ds = runCatching {
+                        NetworkModule.restService.getDeviceStatus("eq.$subjectId")
+                            .body()?.firstOrNull()
+                    }.getOrNull()
+                    if (ds != null) {
+                        taHasDeviceStatus = true
+                        taBattery = ds.battery_level ?: taBattery  // 心跳没采到电量时保留旧值
+                        taCharging = ds.is_charging
+                        taNetworkType = ds.network_type
+                        taWifiSsid = ds.wifi_ssid
+                        taScreenOn = ds.screen_on
+                        taUpdatedAt = parseIsoTime(ds.updated_at)   // 心跳时间戳
+                        // 心跳距今 < 30 分钟视为在线（显示层再细分"X 分钟前"）
+                        online = (System.currentTimeMillis() - taUpdatedAt) < 30 * 60_000L
+                    } else {
+                        // ② 回退：对方未升级新版 → 查询对方最新一条位置记录（旧逻辑）
+                        taHasDeviceStatus = false
+                        runCatching {
+                            NetworkModule.restService.getUserLocations(
+                                userId = "eq.$subjectId", order = "created_at.desc", limit = 1
+                            )
+                        }.getOrNull()?.body()?.firstOrNull()?.let { loc ->
+                            taBattery = loc.battery_level                // 云端上报的电量
+                            taUpdatedAt = parseIsoTime(loc.created_at)    // 上报时间戳
+                            // 判断在线：最后一条位置记录超过 5 分钟 → 离线
+                            online = (System.currentTimeMillis() - taUpdatedAt) < 5 * 60_000L
+                        }
                     }
                 }
                 delay(20_000)                                          // 20 秒后再拉
@@ -581,7 +605,16 @@ private fun PhoneStatusCard(
     // 计算展示用的电量/充电状态/网络/在线
     val batPct = if (subjectIsMe) batteryPct else taBattery ?: 0     // 电量百分比
     val charging = if (subjectIsMe) isCharging else taCharging       // 是否在充电
-    val net = if (subjectIsMe) networkType else "（云端未记录）"      // 网络描述（云端不记录对方网络类型）
+    // 网络描述：自己读本机实时状态；对方读云端心跳（device_status 表），
+    // 对方未升级新版客户端时保持旧文案
+    val net = if (subjectIsMe) networkType else when {
+        !taHasDeviceStatus -> "（云端未记录）"              // 旧版对方客户端 → 保持旧文案
+        !taWifiSsid.isNullOrBlank() -> "WiFi · $taWifiSsid" // 拿到 SSID → 显示具体 WiFi 名
+        taNetworkType == "wifi" -> "WiFi"                    // 权限受限拿不到 SSID → 只显示 WiFi
+        taNetworkType == "cellular" -> "移动数据"
+        taNetworkType == "none" -> "无网络"
+        else -> "未知"
+    }
     val isOnline = if (subjectIsMe) true else online                  // 在线状态
 
     // 主列：标题 + 两行网格（每行 2 个小卡片）
@@ -613,17 +646,54 @@ private fun PhoneStatusCard(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // 状态：开机 / 熄屏 / 充电中 / 离线(可能关机) — label 统一叫"状态"
+            // 状态：在线 / 熄屏 / 充电中 / X分钟前 / 离线 — label 统一叫"状态"
+            // 【行业惯例】（Life360 风格）按对方心跳距今分级：
+            //   < 2 分钟 → 在线（再细分 熄屏/充电中）；< 30 分钟 → "X 分钟前"；≥ 30 分钟 → 离线。
+            //   不再武断显示"关机"——App 无法区分"关机"和"后台被杀"，统一用"离线"表达。
             val statusIcon: String
             val statusValue: String
             val statusAccent: Color
-            // 用 when 优先级判断：离线最优先 → 熄屏 → 充电中 → 开机
+            // 对方心跳距今的分钟数（仅在 device_status 心跳可用时用于分级）
+            val taDiffMin = ((System.currentTimeMillis() - taUpdatedAt) / 60_000L).toInt()
             when {
-                !isOnline -> {
+                // —— 对方（新版客户端，有心跳表）：按心跳新鲜度分级 ——
+                !subjectIsMe && taHasDeviceStatus && taDiffMin >= 30 -> {
                     statusIcon = "🔴"
-                    statusValue = "关机"
+                    statusValue = "离线"
                     statusAccent = Color(0xFFE53E3E)
                 }
+                !subjectIsMe && taHasDeviceStatus && taDiffMin >= 2 -> {
+                    statusIcon = "🟠"
+                    statusValue = "$taDiffMin 分钟前"
+                    statusAccent = Color(0xFFDD6B20)
+                }
+                !subjectIsMe && taHasDeviceStatus && !taScreenOn -> {
+                    statusIcon = "🌙"
+                    statusValue = "熄屏"
+                    statusAccent = Color(0xFF805AD5)
+                }
+                !subjectIsMe && taHasDeviceStatus && charging -> {
+                    statusIcon = "🔌"
+                    statusValue = "充电中"
+                    statusAccent = Color(0xFF38A169)
+                }
+                !subjectIsMe && taHasDeviceStatus -> {
+                    statusIcon = "🟢"
+                    statusValue = "在线"
+                    statusAccent = Color(0xFF2F855A)
+                }
+                // —— 对方（旧版客户端，无心跳表，回退位置 5 分钟推断）——
+                !subjectIsMe && !isOnline -> {
+                    statusIcon = "🔴"
+                    statusValue = "离线"
+                    statusAccent = Color(0xFFE53E3E)
+                }
+                !subjectIsMe -> {
+                    statusIcon = "🟢"
+                    statusValue = "在线"
+                    statusAccent = Color(0xFF2F855A)
+                }
+                // —— 自己：本机状态实时可知，保持原有逻辑 ——
                 !screenOn -> {
                     statusIcon = "🌙"
                     statusValue = "熄屏"
@@ -1109,6 +1179,13 @@ private fun categorizeByPkg(pkg: String): String = when {
 }
 
 /**
+ * 取一条 app_usage 记录代表"打开时刻"的时间戳：
+ *   优先 window_start（新版客户端上报的会话真实打开时刻），
+ *   旧数据 window_start 为 null 时回退 created_at（上报创建时间）。
+ */
+private fun rowTs(row: AppUsageRow): Long = parseIsoTime(row.window_start ?: row.created_at)
+
+/**
  * 聚合 app_usage 行：同一个 APP 连续记录 → 只保留第一条（打开时刻）
  *
  * 【为什么？】云端每分钟上报一条 app_usage，连续玩 30 分钟会有 30 条。
@@ -1121,14 +1198,14 @@ private fun categorizeByPkg(pkg: String): String = when {
  */
 private fun aggregateOpens(rows: List<AppUsageRow>): List<HistoryOpen> {
     if (rows.isEmpty()) return emptyList()
-    val sorted = rows.sortedBy { parseIsoTime(it.created_at) } // 时间正序（旧 → 新）
+    val sorted = rows.sortedBy { rowTs(it) } // 时间正序（旧 → 新）
     val result = mutableListOf<HistoryOpen>()
     var lastPkg = ""                                              // 上一条记录的包名
     var lastStart = 0L                                            // 当前会话的起始时间戳
     var totalSeconds = 0                                          // 当前会话累计秒数
 
     for (row in sorted) {
-        val ts = parseIsoTime(row.created_at)                     // 当前记录的时间戳
+        val ts = rowTs(row)                                       // 当前记录的打开时间戳（window_start 优先）
         val pkg = row.package_name
         // 计算距上一条的间隔（毫秒）
         val gap = if (lastPkg.isNotEmpty()) (ts - lastStart) else 0
@@ -1220,8 +1297,15 @@ private fun dateRangeForDays(days: Int): Pair<String, String> {
  */
 private fun parseIsoTime(iso: String?): Long {
     if (iso.isNullOrBlank()) return 0L
+    // 【兼容性修复】Supabase/PostgREST 返回的 timestamptz 常带 "+00:00" 偏移后缀，
+    // 而老版本 Android 的 Instant.parse 只认 "Z" 结尾，会解析失败返回 0，
+    // 导致"打开时间空白 / 在线状态永远离线"。
+    // 成熟做法：先用 OffsetDateTime（"Z" 和 "+00:00" 都支持），失败再回退 Instant。
+    val normalized = iso.trim().replace(' ', 'T')   // 兜底：兼容空格分隔的日期时间
     return runCatching {
-        java.time.Instant.parse(iso).toEpochMilli()               // ISO 字符串 → 毫秒
+        java.time.OffsetDateTime.parse(normalized).toInstant().toEpochMilli()
+    }.recoverCatching {
+        java.time.Instant.parse(normalized).toEpochMilli()        // ISO 字符串 → 毫秒
     }.getOrDefault(0L)
 }
 

@@ -117,7 +117,8 @@ object AppSessionTracker {
                 // 只上报 ≥ 10 秒的，避免短时间切换产生噪音数据
                 if (prevSec >= 10) {
                     // 名称兜底：如果没有可读名称，就用包名作为名字
-                    uploadUsage(_currentPkg.value, _currentName.value.ifBlank { _currentPkg.value }, prevSec)
+                    // window_start 传旧会话的真实打开时刻（此刻 sessionStartAt 尚未被重置）
+                    uploadUsage(_currentPkg.value, _currentName.value.ifBlank { _currentPkg.value }, prevSec, sessionStartAt)
                 }
             }
             // 切换到新 APP：更新包名、名称、重置会话起始时间
@@ -205,8 +206,9 @@ object AppSessionTracker {
      * @param pkg     APP 包名
      * @param name    APP 可读名称
      * @param seconds 本次使用时长（秒）
+     * @param windowStartMs 会话真实打开时刻（毫秒），写入 window_start 字段
      */
-    private fun uploadUsage(pkg: String, name: String, seconds: Int) {
+    private fun uploadUsage(pkg: String, name: String, seconds: Int, windowStartMs: Long? = null) {
         // 第 1 步：系统噪音直接跳过，并通知 UI
         if (isSystemNoisePkg(pkg)) { _lastReportStatus.value = "跳过系统噪音 "; return }
 
@@ -237,7 +239,11 @@ object AppSessionTracker {
                         package_name = pkg,       // APP 包名
                         app_name = name,           // APP 可读名称
                         category = categorizePkg(pkg),  // 自动分类（社交/视频/...）
-                        usage_seconds = seconds   // 本次使用时长
+                        usage_seconds = seconds,   // 本次使用时长
+                        // window_start = 会话真实打开时刻（ISO 8601 UTC）
+                        window_start = windowStartMs?.let {
+                            java.time.Instant.ofEpochMilli(it).toString()
+                        }
                     )
                 )
 

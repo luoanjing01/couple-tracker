@@ -49,6 +49,13 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
     // lastPackage：记录"上一次"查询到的前台 App 包名，用来判断 App 是否切换
     private var lastPackage: String = ""
 
+    // lastEventTs：UsageEvents 查询游标（毫秒）。
+    // 【为什么需要游标？】旧实现每次固定查"最近 60 秒"窗口里的 MOVE_TO_FOREGROUND 事件：
+    //   用户在同一个 App 里停留超过 60 秒后，窗口内没有任何新前台事件 → 返回 null
+    //   → 上层直接 return → 计时和上报中断，长会话被切碎，"打开时间"显示错乱。
+    // 行业成熟做法：维护游标只增量查询，窗口内无新事件时保持当前 App 不变。
+    private var lastEventTs: Long = 0L
+
     // lastReportAt：上次上报后端的时间戳（毫秒），用来控制上报频率（每 15 秒一次）
     private var lastReportAt: Long = 0L
     /** 累计使用时长（毫秒），从当前 APP 打开开始算，APP 切换就重置 */
@@ -165,7 +172,8 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
                 // 只上报使用 ≥10 秒的，过滤掉短暂切换（比如误触）
                 if (prevSeconds >= 10) {
                     val prevPkg = lastPackage
-                    reportOnce(prevPkg, prevSeconds)
+                    // window_start 传旧会话的真实打开时刻（此刻 sessionStartAt 尚未被重置）
+                    reportOnce(prevPkg, prevSeconds, sessionStartAt)
                 }
             }
             // 切换后，把"上次包名"更新为新 App，并重置会话起点和上报时间
@@ -189,8 +197,8 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
             val elapsedSeconds = ((now - lastReportAt) / 1000).toInt().coerceAtLeast(1)
             // 刷新上报时间戳
             lastReportAt = now
-            // 上报当前 App 这段时间的使用秒数
-            reportOnce(fg, elapsedSeconds)
+            // 上报当前 App 这段时间的使用秒数（window_start = 会话真实打开时刻）
+            reportOnce(fg, elapsedSeconds, sessionStartAt)
         }
     }
 
@@ -199,7 +207,9 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
     // 参数：
     //   - pkg：App 包名（如 "com.tencent.mm"）
     //   - seconds：使用时长（秒）
-    private fun reportOnce(pkg: String, seconds: Int) {
+    //   - windowStartMs：会话真实打开时刻（毫秒）。写入 window_start 字段，
+    //     让"历史打开记录"显示的是真实打开时间，而不是上报创建时间
+    private fun reportOnce(pkg: String, seconds: Int, windowStartMs: Long? = null) {
     // 不记录系统桌面/输入法等噪音
     // 先过滤掉系统 App（桌面、输入法等），这些不算"使用 App"
     if (isSystemNoisePkg(pkg)) return
@@ -223,7 +233,12 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
                         package_name = pkg,      // 包名
                         app_name = appName,      // App 名称
                         category = category,     // 分类
-                        usage_seconds = seconds  // 使用时长（秒）
+                        usage_seconds = seconds, // 使用时长（秒）
+                        // window_start = 会话真实打开时刻（ISO 8601 UTC），
+                        // 查询端优先用它作为"打开时间"；为 null 时服务端默认 now()
+                        window_start = windowStartMs?.let {
+                            java.time.Instant.ofEpochMilli(it).toString()
+                        }
                     )
                 )
             }
@@ -242,21 +257,28 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
         }
     }
 
-    // ===== 查询当前前台 App 包名 =====
-    // 通过 UsageStatsManager 查询过去 60 秒内的"使用事件"，找出最后一次切到前台的那个 App
+    // ===== 查询当前前台 App 包名（游标增量版） =====
+    // 通过 UsageStatsManager 查询使用事件，找出最后一次切到前台的那个 App。
+    //
+    // 【游标机制】
+    //   - 首次启动：查最近 10 分钟的大窗口，确定当前前台 App
+    //   - 之后每次：只查"上次游标之后"的增量事件，并推进游标
+    //   - 窗口内无新事件：说明前台 App 没有变化 → 返回 lastPackage（保持当前会话，
+    //     长会话不再中断）—— 这是修复"打开时间错乱/上报中断"的关键
     private fun getForegroundPackage(): String? {
-        // end：当前时间；begin：60 秒前。查询这 60 秒窗口内的事件
         val end = System.currentTimeMillis()
-        val begin = end - 60_000L
-        // queryEvents 返回这段时间内所有 App 切换事件
+        // 首次查 10 分钟大窗口；之后从游标位置继续（游标处留 1ms 避免重复处理同一事件）
+        val begin = if (lastEventTs > 0L) lastEventTs + 1L else end - 600_000L
+        if (begin >= end) return lastPackage.ifEmpty { null }  // 游标已追平当前时间 → 无新事件
         val events = usm.queryEvents(begin, end)
         // 复用一个 Event 对象（避免循环里反复创建对象，是性能优化写法）
         val ev = UsageEvents.Event()
         var latestFg: String? = null  // 记录最新的前台包名
         var latestTime = 0L           // 记录最新前台事件的时间戳
-        // 遍历所有事件
         while (events.hasNextEvent()) {
             events.getNextEvent(ev)
+            // 所有类型事件都推进游标（前台/后台切换都算"已消费"）
+            if (ev.timeStamp > lastEventTs) lastEventTs = ev.timeStamp
             // 只关心"切到前台"事件，且时间戳要比已记录的更新（取最新一个）
             if (ev.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND &&
                 ev.timeStamp > latestTime) {
@@ -264,8 +286,8 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
                 latestFg = ev.packageName
             }
         }
-        // 返回最新的前台包名（如果 60 秒内没有任何切前台事件，会返回 null）
-        return latestFg
+        // 窗口内没有新的前台事件 → 前台 App 未变化，保持上一次的结果
+        return latestFg ?: lastPackage.ifEmpty { null }
     }
 
     // ===== 获取 App 的友好名称和分类 =====

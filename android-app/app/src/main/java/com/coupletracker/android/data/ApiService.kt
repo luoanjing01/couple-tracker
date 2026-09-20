@@ -28,6 +28,7 @@ import retrofit2.Response                          // Response：包装服务器
 import retrofit2.http.Body                         // @Body：标记请求体参数（要发送给服务器的数据对象）
 import retrofit2.http.GET                          // @GET：标记 HTTP GET 请求（用于查询数据）
 import retrofit2.http.Header                       // @Header：标记请求头参数（已导入但本文件未使用，保留备用）
+import retrofit2.http.Headers                      // @Headers：标记静态请求头（如 upsert 需要 Prefer: resolution=merge-duplicates）
 import retrofit2.http.PATCH                        // @PATCH：标记 HTTP PATCH 请求（用于部分更新数据）
 import retrofit2.http.POST                         // @POST：标记 HTTP POST 请求（用于新增/提交数据）
 import retrofit2.http.Query                        // @Query：标记 URL 查询参数（拼接在 ? 后面的参数）
@@ -754,6 +755,39 @@ interface RestService {
         @Query("order") order: String = "created_at.desc",
         @Query("limit") limit: Int = 1000
     ): Response<List<AppUsageRow>>
+
+    // ========================================================================
+    // 设备状态（device_status）表操作 —— 行业通用"心跳"方案
+    //
+    // 每个用户一行（user_id 主键），客户端每 60 秒 + 状态变化时 upsert。
+    // 伴侣端按 updated_at 距今时长分级显示在线状态：
+    //   < 2 分钟 → 在线；< 30 分钟 → X 分钟前；否则 → 离线。
+    // ========================================================================
+
+    /**
+     * 上报本机设备状态（upsert：存在则覆盖，不存在则插入）
+     *
+     * PostgREST 的 upsert 约定：
+     *   POST + Prefer: resolution=merge-duplicates，冲突按主键（user_id）合并。
+     *
+     * @param body 设备状态数据，见 DeviceStatusUpsert
+     */
+    @Headers("Prefer: resolution=merge-duplicates")
+    @POST("device_status")
+    suspend fun upsertDeviceStatus(
+        @Body body: DeviceStatusUpsert
+    ): Response<Unit>
+
+    /**
+     * 查询某用户的设备状态（每用户至多一行）
+     *
+     * @param userId 用户 ID（拦截器会自动补 eq. 前缀，也可显式传 "eq.xxx"）
+     * @return 至多一行的列表；对方客户端未升级时为空列表
+     */
+    @GET("device_status")
+    suspend fun getDeviceStatus(
+        @Query("user_id") userId: String
+    ): Response<List<DeviceStatusRow>>
 }
 
 // ============================================================================
@@ -905,4 +939,45 @@ data class AppUsageInsert(
     val category: String? = null,
     val usage_seconds: Int = 0,
     val window_start: String? = null
+)
+
+/**
+ * 设备状态（对应数据库 device_status 表的一行，查询用）
+ *
+ * 每个用户一行，由客户端心跳 upsert 覆盖为最新状态。
+ *
+ * @param user_id       用户 ID（主键）
+ * @param battery_level 电量百分比（0~100）
+ * @param is_charging   是否在充电
+ * @param network_type  网络类型（"wifi" / "cellular" / "none"）
+ * @param wifi_ssid     WiFi 名称（蜂窝/无网络时为 null）
+ * @param screen_on     屏幕是否点亮
+ * @param updated_at    客户端心跳时间（ISO 8601）
+ */
+data class DeviceStatusRow(
+    val user_id: String = "",
+    val battery_level: Int? = null,
+    val is_charging: Boolean = false,
+    val network_type: String? = null,
+    val wifi_ssid: String? = null,
+    val screen_on: Boolean = true,
+    val updated_at: String? = null
+)
+
+/**
+ * 设备状态上报请求体（upsert 用）
+ *
+ * 注意：网络层 Gson 开启了 serializeNulls()，null 字段会显式写入 JSON，
+ * 这正好用于"断开 WiFi 时把 wifi_ssid 清空为 null"的场景。
+ * updated_at 由客户端填当前 UTC 时间（Instant.now().toString()），
+ * 避免服务器时钟与"心跳时刻"语义混淆。
+ */
+data class DeviceStatusUpsert(
+    val user_id: String,
+    val battery_level: Int? = null,
+    val is_charging: Boolean = false,
+    val network_type: String? = null,
+    val wifi_ssid: String? = null,
+    val screen_on: Boolean = true,
+    val updated_at: String
 )
