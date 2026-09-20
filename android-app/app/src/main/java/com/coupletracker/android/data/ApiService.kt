@@ -655,6 +655,20 @@ interface RestService {
     ): Response<Unit>
 
     /**
+     * 批量上报位置（轻量化省电：本地攒多条后一次性上传，减少网络唤醒次数）
+     *
+     * PostgREST 原生支持数组 body 批量插入：POST 一个 JSON 数组即可一次写入多行，
+     * 与单条上报共用同一个 "locations" 端点，服务器无需任何改动。
+     *
+     * @param body 位置数据列表（按时间先后排序）
+     * @return 无具体返回数据
+     */
+    @POST("locations")
+    suspend fun reportLocationsBatch(
+        @Body body: List<LocationRow>
+    ): Response<Unit>
+
+    /**
      * 查询情侣双方的位置记录
      *
      * @param coupleId 情侣关系 ID
