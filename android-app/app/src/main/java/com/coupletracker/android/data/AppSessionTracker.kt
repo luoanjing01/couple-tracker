@@ -231,7 +231,7 @@ object AppSessionTracker {
 
                 // (c) 构造上报数据并调用网络层
                 val resp = NetworkModule.restService.reportAppUsage(
-                    AppUsageRow(
+                    AppUsageInsert(
                         user_id = userId,         // 当前用户 ID
                         couple_id = null,         // 情侣 ID 暂未填充（后端可由 user 反查）
                         package_name = pkg,       // APP 包名
