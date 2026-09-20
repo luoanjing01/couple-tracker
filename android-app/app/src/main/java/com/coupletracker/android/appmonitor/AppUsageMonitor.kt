@@ -11,7 +11,7 @@ import android.content.Intent               // Intent：Android 中用来"打开
 import android.content.pm.ApplicationInfo   // ApplicationInfo：保存某个 App 的元信息（名称、类别等）
 import android.os.PowerManager              // PowerManager：电源管理器，可以判断屏幕亮/灭状态
 import android.os.Process                   // Process：可获取当前 App 的 UID 等进程信息
-import com.coupletracker.android.data.AppUsageRow  // AppUsageRow：项目自定义的数据类，对应后端 app_usage 表的一行记录
+import com.coupletracker.android.data.AppUsageInsert  // AppUsageRow：项目自定义的数据类，对应后端 app_usage 表的一行记录
 import com.coupletracker.android.data.NetworkModule // NetworkModule：项目自定义的网络模块，封装了所有 HTTP 接口
 import com.coupletracker.android.data.UserRepository // UserRepository：项目自定义的用户仓库，用来获取当前登录用户
 import kotlinx.coroutines.*                 // 协程相关：Job、CoroutineScope、Dispatchers、delay、isActive 等
@@ -217,7 +217,7 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
                 // 调用网络模块的 reportAppUsage 接口，把数据发到后端 app_usage 表
                 NetworkModule.restService.reportAppUsage(
                     // 构造一行数据
-                    AppUsageRow(
+                    AppUsageInsert(
                         user_id = userId,        // 用户 ID
                         couple_id = null,        // 情侣 ID（这里没用，传 null）
                         package_name = pkg,      // 包名
