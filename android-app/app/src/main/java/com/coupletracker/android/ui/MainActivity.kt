@@ -121,7 +121,7 @@ class MainActivity : ComponentActivity() {
         val icon: @Composable () -> Unit        // Tab 图标：返回一个 Composable UI
     ) {
         MAP("/map",   "地图", { Text("🗺️", fontSize = 20.sp) }),  // 地图 Tab，访问前端 /map
-        APPS("/apps", "应用", { Text("🌐", fontSize = 20.sp) }), // 应用 Tab，访问前端 /apps
+        APPS("/apps", "状态", { Text("📱", fontSize = 20.sp) }), // 状态 Tab（原应用页），访问前端 /apps
         STATS("/stats","统计",{ Text("📊", fontSize = 20.sp) }),  // 统计 Tab，访问前端 /stats
         ME("/me",     "我的", { Text("👤", fontSize = 20.sp) })  // 我的 Tab，原生 Compose 设置页
     }
@@ -183,14 +183,14 @@ class MainActivity : ComponentActivity() {
             //   - primary：主色调（粉红色 #E75480，用于按钮、Tab 选中色等）
             //   - secondary：次色调（蓝紫色 #667EEA）
             //   - background：背景色（极浅粉 #FDF2F8，营造温柔氛围）
-            // - Color(0xFFE75480) 中：
+            // - Color(0xFFFF8B7B) 中：
             //   - 0xFF 表示完全不透明（FF=255）
             //   - E75480 是 RGB 十六进制值
             // ----------------------------------------------------------------------------
             MaterialTheme(colorScheme = lightColorScheme(
-                primary = Color(0xFFE75480),
-                secondary = Color(0xFF667EEA),
-                background = Color(0xFFFDF2F8)
+                primary = Color(0xFFFF8B7B),
+                secondary = Color(0xFF3A9E91),
+                background = Color(0xFFFFF8F0)
             )) {
                 // ------------------------------------------------------------
                 // 状态：当前选中的 Tab
@@ -278,7 +278,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE75480))
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF8B7B))
                             ) { Text("接受 💕") }
                         },
                         dismissButton = {
@@ -332,9 +332,9 @@ class MainActivity : ComponentActivity() {
                                     icon = t.icon,               // 该 Tab 的图标（emoji）
                                     label = { Text(t.label) },   // 该 Tab 的文字标签
                                     colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = Color(0xFFE75480),  // 选中时图标色
-                                        selectedTextColor = Color(0xFFE75480),  // 选中时文字色
-                                        indicatorColor = Color(0xFFFDF2F8)      // 选中时背景指示色
+                                        selectedIconColor = Color(0xFFFF8B7B),  // 选中时图标色
+                                        selectedTextColor = Color(0xFFFF8B7B),  // 选中时文字色
+                                        indicatorColor = Color(0xFFFFE4D1)      // 选中时背景指示色（蜜桃）
                                     )
                                 )
                             }
@@ -355,7 +355,7 @@ class MainActivity : ComponentActivity() {
                                 icon = { Text("🗺️", fontSize = 40.sp) },  // 大图标
                                 title = "实时地图",                       // 标题
                                 desc = "地图页面已接入\n\n当前功能状态：\n✅ 位置已采集（后台按设置频率上报到云端）\n✅ 云端已保存所有位置记录\n✅ 两台手机同一个账号配对后即可互相查看\n✅ 已支持 WebView 本地地图 + Supabase 实时同步",
-                                accent = Color(0xFFE75480),                // 主题色（粉红）
+                                accent = Color(0xFFFF8B7B),                // 主题色（粉红）
                                 useMapWebView = true                       // 启用 WebView 地图模式
                             )
                             // 应用 Tab：渲染应用列表页（AppScreen 是另一个 Composable）
@@ -851,8 +851,8 @@ class MainActivity : ComponentActivity() {
             // 标题文本
             // - fontSize = 24.sp：文字大小 24sp（sp = scaled pixel，会跟随系统字号缩放）
             // - fontWeight = Bold：粗体
-            // - color = Color(0xFF2D3748)：深灰色（接近黑但更柔和）
-            Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+            // - color = Color(0xFF3D2E2A)：深灰色（接近黑但更柔和）
+            Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
             Spacer(Modifier.height(10.dp))
             // ----------------------------------------------------------------------------
             // 副标题：显示当前账号
@@ -861,7 +861,7 @@ class MainActivity : ComponentActivity() {
             // ----------------------------------------------------------------------------
             Text(
                 "正在为 ${"@" + (user?.username ?: "-")} 准备中...",
-                color = Color(0xFF718096), fontSize = 13.sp
+                color = Color(0xFFA89890), fontSize = 13.sp
             )
             Spacer(Modifier.height(22.dp))
 
@@ -880,7 +880,7 @@ class MainActivity : ComponentActivity() {
                 Column(Modifier.padding(20.dp)) {
                     Text(
                         "💕 后台采集状态",
-                        fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748)
+                        fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A)
                     )
                     Spacer(Modifier.height(10.dp))
                     // ----------------------------------------------------------------------------
@@ -894,25 +894,25 @@ class MainActivity : ComponentActivity() {
                         // 一个 10dp 的圆点（绿色，表示"运行中"）
                         Box(Modifier.size(10.dp).background(Color(0xFF48BB78), RoundedCornerShape(50)))
                         Spacer(Modifier.width(8.dp))
-                        Text("位置上报", color = Color(0xFF2D3748), fontSize = 13.sp)
+                        Text("位置上报", color = Color(0xFF3D2E2A), fontSize = 13.sp)
                         Spacer(Modifier.weight(1f))
-                        Text("每 ${locSec} 秒", color = Color(0xFF718096), fontSize = 12.sp)
+                        Text("每 ${locSec} 秒", color = Color(0xFFA89890), fontSize = 12.sp)
                     }
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(10.dp).background(Color(0xFF48BB78), RoundedCornerShape(50)))
                         Spacer(Modifier.width(8.dp))
-                        Text("APP 使用", color = Color(0xFF2D3748), fontSize = 13.sp)
+                        Text("APP 使用", color = Color(0xFF3D2E2A), fontSize = 13.sp)
                         Spacer(Modifier.weight(1f))
-                        Text("每 ${appSec} 秒检测", color = Color(0xFF718096), fontSize = 12.sp)
+                        Text("每 ${appSec} 秒检测", color = Color(0xFFA89890), fontSize = 12.sp)
                     }
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(10.dp).background(Color(0xFF48BB78), RoundedCornerShape(50)))
                         Spacer(Modifier.width(8.dp))
-                        Text("数据存储", color = Color(0xFF2D3748), fontSize = 13.sp)
+                        Text("数据存储", color = Color(0xFF3D2E2A), fontSize = 13.sp)
                         Spacer(Modifier.weight(1f))
-                        Text("云端 Supabase", color = Color(0xFF718096), fontSize = 12.sp)
+                        Text("云端 Supabase", color = Color(0xFFA89890), fontSize = 12.sp)
                     }
                 }
             }
@@ -927,7 +927,7 @@ class MainActivity : ComponentActivity() {
                 colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
                 Column(Modifier.padding(20.dp)) {
-                    Text("📝 功能说明", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+                    Text("📝 功能说明", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
                     Spacer(Modifier.height(12.dp))
                     Text(desc, color = Color(0xFF4A5568), fontSize = 13.sp, lineHeight = 22.sp)
                 }
@@ -1056,7 +1056,7 @@ class MainActivity : ComponentActivity() {
         Column(
             Modifier
                 .fillMaxSize()
-                .background(Color(0xFFFDF2F8))
+                .background(Color(0xFFFFF8F0))
                 .padding(horizontal = 20.dp, vertical = 24.dp)
                 .verticalScroll(rememberScrollState())
         ) {
@@ -1073,12 +1073,12 @@ class MainActivity : ComponentActivity() {
                     Text(
                         user?.displayName ?: "未登录",
                         fontSize = 22.sp,
-                        color = Color(0xFF2D3748),
+                        color = Color(0xFF3D2E2A),
                         fontWeight = FontWeight.Bold
                     )
                     Text(
                         "@" + (user?.username ?: "-"),
-                        color = Color(0xFF718096), fontSize = 13.sp
+                        color = Color(0xFFA89890), fontSize = 13.sp
                     )
                 }
             }
@@ -1229,7 +1229,7 @@ class MainActivity : ComponentActivity() {
                     colors = CardDefaults.cardColors(containerColor = Color.White)
                 ) {
                     Column(Modifier.padding(16.dp)) {
-                        Text("配对码", color = Color(0xFF718096), fontSize = 12.sp)
+                        Text("配对码", color = Color(0xFFA89890), fontSize = 12.sp)
                         Spacer(Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             // 配对码大字显示，留白处理空字符串
@@ -1237,7 +1237,7 @@ class MainActivity : ComponentActivity() {
                                 if (code.isBlank()) "暂无" else code,
                                 fontSize = 30.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = Color(0xFFE75480),
+                                color = Color(0xFFFF8B7B),
                                 letterSpacing = 4.sp
                             )
                             Spacer(Modifier.weight(1f))
@@ -1249,20 +1249,20 @@ class MainActivity : ComponentActivity() {
                                 // - shape = RoundedCornerShape(50)：完全圆角（胶囊形）
                                 OutlinedButton(
                                     onClick = { copyCoupleCode() },
-                                    border = BorderStroke(1.dp, Color(0xFFE75480)),
+                                    border = BorderStroke(1.dp, Color(0xFFFF8B7B)),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     shape = RoundedCornerShape(50)
                                 ) {
                                     Text(
                                         "📋",
-                                        color = Color(0xFFE75480),
+                                        color = Color(0xFFFF8B7B),
                                         fontSize = 12.sp
                                     )
                                     Spacer(Modifier.width(4.dp))
                                     // 按钮文字：复制后短暂显示"已复制"，否则显示"复制"
                                     Text(
                                         if (copyTip.isNotBlank()) copyTip else "复制",
-                                        color = Color(0xFFE75480), fontSize = 12.sp
+                                        color = Color(0xFFFF8B7B), fontSize = 12.sp
                                     )
                                 }
                             }
@@ -1273,7 +1273,7 @@ class MainActivity : ComponentActivity() {
                             if (hasPartner == false)
                                 "把这串码发给TA，让TA在下面或登录页「配对」输入即可绑定"
                             else "正在加载绑定状态...",
-                            color = Color(0xFF718096),
+                            color = Color(0xFFA89890),
                             fontSize = 12.sp
                         )
                     }
@@ -1298,7 +1298,7 @@ class MainActivity : ComponentActivity() {
                             "🔗 还没绑定？在这里输入TA的配对码",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF2D3748)
+                            color = Color(0xFF3D2E2A)
                         )
                         Spacer(Modifier.height(8.dp))
                         // ============================================================================
@@ -1328,7 +1328,7 @@ class MainActivity : ComponentActivity() {
                                             pairInput = clip.getItemAt(0).text.toString().trim().uppercase()
                                         }
                                     }
-                                }) { Text("粘贴", fontSize = 12.sp, color = Color(0xFF667EEA)) }
+                                }) { Text("粘贴", fontSize = 12.sp, color = Color(0xFF3A9E91)) }
                             },
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -1446,7 +1446,7 @@ class MainActivity : ComponentActivity() {
                                 .fillMaxWidth()
                                 .height(48.dp)
                                 .clip(RoundedCornerShape(24.dp)),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF667EEA))
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A9E91))
                         ) {
                             // loading 时显示转圈，否则显示"立即配对 💕"
                             if (pairLoading) CircularProgressIndicator(
@@ -1479,7 +1479,7 @@ class MainActivity : ComponentActivity() {
                             "⚙️ 采集频率（调大可降低卡顿/省电）",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF2D3748)
+                            color = Color(0xFF3D2E2A)
                         )
                     }
                     Spacer(Modifier.height(14.dp))
@@ -1504,7 +1504,7 @@ class MainActivity : ComponentActivity() {
                         // 大字号显示当前秒数
                         Text(
                             "每 ${tmpLoc.floatValue.toInt()} 秒",
-                            color = Color(0xFFE75480),
+                            color = Color(0xFFFF8B7B),
                             fontSize = 18.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
@@ -1527,7 +1527,7 @@ class MainActivity : ComponentActivity() {
                         },
                         valueRange = UserRepository.MIN_LOC_INTERVAL_SEC.toFloat()..UserRepository.MAX_LOC_INTERVAL_SEC.toFloat(),
                         steps = UserRepository.MAX_LOC_INTERVAL_SEC - UserRepository.MIN_LOC_INTERVAL_SEC - 1,
-                        colors = SliderDefaults.colors(thumbColor = Color(0xFFE75480), activeTrackColor = Color(0xFFE75480))
+                        colors = SliderDefaults.colors(thumbColor = Color(0xFFFF8B7B), activeTrackColor = Color(0xFFFF8B7B))
                     )
                     Spacer(Modifier.height(10.dp))
 
@@ -1540,7 +1540,7 @@ class MainActivity : ComponentActivity() {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "每 ${tmpApp.floatValue.toInt()} 秒",
-                            color = Color(0xFF667EEA),
+                            color = Color(0xFF3A9E91),
                             fontSize = 18.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
@@ -1561,7 +1561,7 @@ class MainActivity : ComponentActivity() {
                         },
                         valueRange = UserRepository.MIN_APP_INTERVAL_SEC.toFloat()..UserRepository.MAX_APP_INTERVAL_SEC.toFloat(),
                         steps = UserRepository.MAX_APP_INTERVAL_SEC - UserRepository.MIN_APP_INTERVAL_SEC - 1,
-                        colors = SliderDefaults.colors(thumbColor = Color(0xFF667EEA), activeTrackColor = Color(0xFF667EEA))
+                        colors = SliderDefaults.colors(thumbColor = Color(0xFF3A9E91), activeTrackColor = Color(0xFF3A9E91))
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
@@ -1584,7 +1584,7 @@ class MainActivity : ComponentActivity() {
                     fun colorOf(s: String) = when {
                         s.contains("成功") -> Color(0xFF2F855A)
                         s.contains("失败") || s.contains("异常") -> Color(0xFFE53E3E)
-                        else -> Color(0xFF718096)
+                        else -> Color(0xFFA89890)
                     }
                     Divider(color = Color(0xFFEDF2F7))
                     Spacer(Modifier.height(8.dp))
@@ -1646,7 +1646,7 @@ class MainActivity : ComponentActivity() {
                         .weight(1f)
                         .height(48.dp),
                     shape = RoundedCornerShape(24.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF667EEA))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A9E91))
                 ) {
                     Text("🔄", fontSize = 16.sp)
                     Spacer(Modifier.width(4.dp))
@@ -1669,13 +1669,13 @@ class MainActivity : ComponentActivity() {
                 colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("☁️ 云端服务", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+                    Text("☁️ 云端服务", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
                     Spacer(Modifier.height(8.dp))
-                    Text("Supabase", color = Color(0xFF718096), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text("Supabase", color = Color(0xFFA89890), fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     // Auth 接口地址：把 /rest/v1 替换为 /auth/v1
-                    Text("Auth: ${NetworkModule.getApiBase().replace("/rest/v1", "/auth/v1")}", color = Color(0xFF718096), fontSize = 11.sp)
+                    Text("Auth: ${NetworkModule.getApiBase().replace("/rest/v1", "/auth/v1")}", color = Color(0xFFA89890), fontSize = 11.sp)
                     // REST 接口地址
-                    Text("REST: ${NetworkModule.getApiBase()}", color = Color(0xFF718096), fontSize = 11.sp)
+                    Text("REST: ${NetworkModule.getApiBase()}", color = Color(0xFFA89890), fontSize = 11.sp)
                 }
             }
 
@@ -1696,29 +1696,29 @@ class MainActivity : ComponentActivity() {
                 colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("👤 账号管理", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+                    Text("👤 账号管理", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
                     Spacer(Modifier.height(8.dp))
                     Divider(color = Color(0xFFEDF2F7))
                     Spacer(Modifier.height(12.dp))
 
                     // 账号信息：用户名
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("账号", color = Color(0xFF718096), fontSize = 13.sp, modifier = Modifier.width(60.dp))
-                        Text(user?.username ?: "-", color = Color(0xFF2D3748), fontSize = 13.sp)
+                        Text("账号", color = Color(0xFFA89890), fontSize = 13.sp, modifier = Modifier.width(60.dp))
+                        Text(user?.username ?: "-", color = Color(0xFF3D2E2A), fontSize = 13.sp)
                     }
                     Spacer(Modifier.height(6.dp))
                     // 账号信息：昵称
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("昵称", color = Color(0xFF718096), fontSize = 13.sp, modifier = Modifier.width(60.dp))
-                        Text(user?.displayName ?: "-", color = Color(0xFF2D3748), fontSize = 13.sp)
+                        Text("昵称", color = Color(0xFFA89890), fontSize = 13.sp, modifier = Modifier.width(60.dp))
+                        Text(user?.displayName ?: "-", color = Color(0xFF3D2E2A), fontSize = 13.sp)
                     }
                     Spacer(Modifier.height(6.dp))
                     // 账号信息：配对状态
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("配对", color = Color(0xFF718096), fontSize = 13.sp, modifier = Modifier.width(60.dp))
+                        Text("配对", color = Color(0xFFA89890), fontSize = 13.sp, modifier = Modifier.width(60.dp))
                         Text(
                             if (hasPartner == true) "已与 ${partnerName.ifBlank { "TA" }} 绑定" else "未配对",
-                            color = if (hasPartner == true) Color(0xFF38A169) else Color(0xFF718096),
+                            color = if (hasPartner == true) Color(0xFF38A169) else Color(0xFFA89890),
                             fontSize = 13.sp
                         )
                     }
@@ -1848,12 +1848,12 @@ class MainActivity : ComponentActivity() {
             // ============================================================================
             Text(
                 "版本 v${BuildConfig.VERSION_NAME}",
-                color = Color(0xFF718096), fontSize = 12.sp,
+                color = Color(0xFFA89890), fontSize = 12.sp,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
             Text(
                 "后端 ${NetworkModule.getApiBase()}\n前端 ${BuildConfig.DEFAULT_WEB_BASE}",
-                color = Color(0xFF718096), fontSize = 10.sp,
+                color = Color(0xFFA89890), fontSize = 10.sp,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
         }

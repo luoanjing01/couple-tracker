@@ -14,6 +14,7 @@ package com.coupletracker.android.ui
 
 // ---------- Android Compose 基础组件导入 ----------
 import androidx.compose.foundation.background     // 背景色修饰符
+import androidx.compose.foundation.lazy.LazyRow            // 横向滑动列表（最近打开窗口）
 import androidx.compose.foundation.layout.*         // 布局相关 (Column/Row/Box/Spacer 等)
 import androidx.compose.foundation.rememberScrollState  // 记住滚动位置
 import androidx.compose.foundation.shape.RoundedCornerShape  // 圆角形状
@@ -30,6 +31,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush                   // 渐变画刷（LIVE 卡片）
+import androidx.compose.ui.draw.clip                        // 圆角裁剪
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp    // 尺寸单位
@@ -237,9 +240,8 @@ fun StatsScreen() {
     // =========================================================================
     // 第七部分：颜色主题
     // =========================================================================
-    val pink = Color(0xFFE75480)             // 粉色 (代表"我")
-    val blue = Color(0xFF667EEA)             // 蓝色 (代表"TA" 伴侣)
-    val bg = Color(0xFFFDF2F8)               // 页面背景色 (淡粉色)
+    val pink = Color(0xFFFF8B7B)             // 珊瑚粉 (代表"我")
+    val blue = Color(0xFF3A9E91)             // 薄荷绿 (代表"TA" 伴侣)
     // 主色调：查看伴侣时用蓝色,查看自己时用粉色,UI 整体随之切换
     val mainColor = if (showPartner) blue else pink
 
@@ -249,7 +251,7 @@ fun StatsScreen() {
     Box(
         Modifier
             .fillMaxSize()           // 占满整个屏幕
-            .background(bg)          // 设置背景色
+            .background(Brush.verticalGradient(listOf(Color(0xFFFFF8F0), Color(0xFFFFE4D1))))  // 奶油 → 蜜桃渐变（方案 D）
             .pullRefresh(pullRefreshState)  // 绑定下拉刷新 (让此 Box 内的下拉可触发刷新)
     ) {
         // 下拉刷新动画指示器 (顶部小圆圈),固定在 Box 顶部居中
@@ -269,7 +271,7 @@ fun StatsScreen() {
         ) {
         // ---- 8.1 顶部标题栏 (标题 + 我/TA 切换按钮) ----
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("每日统计", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+            Text("每日统计", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
             Spacer(Modifier.weight(1f))  // 弹性空白,把后续元素推到右侧
             // 切换按钮始终显示：有配对→切换查看对方，无配对→灰色提示
             Button(
@@ -282,7 +284,7 @@ fun StatsScreen() {
                 shape = RoundedCornerShape(20.dp),  // 圆角 20dp,呈胶囊状
                 colors = ButtonDefaults.buttonColors(
                     // 按钮背景色：未配对→灰色;查看自己时→粉色;查看伴侣时→蓝色
-                    containerColor = if (partnerId == null) Color(0xFFCBD5E0)
+                    containerColor = if (partnerId == null) Color(0xFFD8C7BA)
                     else if (showPartner) blue else pink
                 ),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)  // 按钮内边距
@@ -341,7 +343,7 @@ fun StatsScreen() {
                 // 顶部小标题：对象名 · 日期标签 (如 "小明 · 今日")
                 Text(
                     subjectName + " · " + dateLabel(dayOffset),
-                    fontSize = 13.sp, color = Color(0xFF718096)
+                    fontSize = 13.sp, color = Color(0xFFA89890)
                 )
                 Spacer(Modifier.height(6.dp))
                 // 大字号总时长 (如 "3小时45分"),无数据则显示"暂无记录"
@@ -352,17 +354,17 @@ fun StatsScreen() {
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // 左侧：使用 APP 数量
-                    Text("📱 使用 APP 数", fontSize = 12.sp, color = Color(0xFF718096))
+                    Text("📱 使用 APP 数", fontSize = 12.sp, color = Color(0xFFA89890))
                     Spacer(Modifier.width(6.dp))
-                    Text("" + byApp.size + " 个", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF2D3748))
+                    Text("" + byApp.size + " 个", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF3D2E2A))
                     Spacer(Modifier.width(18.dp))
                     // 右侧：最常用 APP
-                    Text("⭐ 最常用", fontSize = 12.sp, color = Color(0xFF718096))
+                    Text("⭐ 最常用", fontSize = 12.sp, color = Color(0xFFA89890))
                     Spacer(Modifier.width(6.dp))
                     Text(
                         // 有数据→"emoji + APP名";无数据→"-"
                         topApp?.let { categoryEmoji(it.category) + " " + it.appName } ?: "-",
-                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF2D3748),
+                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF3D2E2A),
                         maxLines = 1  // 单行,避免超长 APP 名撑破布局
                     )
                 }
@@ -376,13 +378,22 @@ fun StatsScreen() {
             }
         }
 
+        Spacer(Modifier.height(14.dp))
+
+        // ---- 最近打开：横向滑动窗口（自原「应用」页迁移至此，可一直滑动查看）----
+        RecentOpensWindow(
+            subjectId = (if (showPartner) partnerId else myId) ?: "",
+            accent = mainColor,
+            reloadKey = reloadKey
+        )
+
         Spacer(Modifier.height(18.dp))  // 卡片与排行列表间距
 
         // =========================================================================
         // 第十部分：APP 使用排行 (按使用时长降序列出每个 APP)
         // =========================================================================
         // ===== APP 排行 =====
-        Text("🏆 APP 使用排行", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+        Text("🏆 APP 使用排行", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
         Spacer(Modifier.height(10.dp))
 
         // 根据当前状态显示不同内容 (loading / 错误 / 空数据 / 正常列表)
@@ -410,7 +421,7 @@ fun StatsScreen() {
                     ) {
                         Text("⚠️ 加载失败", fontSize = 15.sp, color = Color(0xFFE53E3E), fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(6.dp))
-                        Text(loadError ?: "", fontSize = 11.sp, color = Color(0xFF718096))
+                        Text(loadError ?: "", fontSize = 11.sp, color = Color(0xFFA89890))
                         Spacer(Modifier.height(10.dp))
                         // 点击重试：自增 reloadKey 触发上方 LaunchedEffect 重新加载
                         TextButton(onClick = { reloadKey++ }) { Text("重试", color = blue) }
@@ -429,7 +440,7 @@ fun StatsScreen() {
                     ) {
                         Text("😴", fontSize = 40.sp)  // 大号 emoji 表达"今日无记录"
                         Spacer(Modifier.height(8.dp))
-                        Text("这一天没有使用记录", fontSize = 14.sp, color = Color(0xFF718096))
+                        Text("这一天没有使用记录", fontSize = 14.sp, color = Color(0xFFA89890))
                     }
                 }
             }
@@ -459,6 +470,181 @@ fun StatsScreen() {
         }  // closes Column
     }      // closes Box
 }
+
+// ============================================================================
+// 最近打开 —— 水平滑动窗口（方案 D · 潮汐卡片）
+// ----------------------------------------------------------------------------
+// 从云端拉取该用户最近 100 条 app_usage 记录，用 AppScreen.kt 里的 aggregateOpens
+// 聚合成「打开会话」，以横向可滑动的卡片流展示（最新一条若仍在进行中会高亮为
+// 渐变珊瑚色 + LIVE 标签）。数据逻辑与原「应用页 · 最近打开记录」完全一致，
+// 仅把纵向时间线换成横向滑窗，解决统计页空间拥挤问题。
+// ============================================================================
+@Composable
+private fun RecentOpensWindow(
+    subjectId: String,
+    accent: Color,
+    reloadKey: Int
+) {
+    // 列表数据 + 加载状态
+    var opens by remember { mutableStateOf<List<HistoryOpen>>(emptyList()) }  // 聚合后的打开会话
+    var loading by remember { mutableStateOf(false) }                        // 是否正在加载
+    var loadError by remember { mutableStateOf<String?>(null) }              // 加载失败错误信息
+
+    // 进入/参数变化时拉一次数据（与原 HistoryOpenList 同一数据源）
+    LaunchedEffect(subjectId, reloadKey) {
+        if (subjectId.isBlank()) { opens = emptyList(); return@LaunchedEffect }
+        loading = true; loadError = null
+        withContext(Dispatchers.IO) {
+            val resp = runCatching {
+                NetworkModule.restService.getAppUsage(
+                    userId = "eq.$subjectId",
+                    order = "created_at.desc",
+                    limit = 100
+                )
+            }
+            val r = resp.getOrNull()
+            when {
+                r == null -> loadError = resp.exceptionOrNull()?.message?.take(60) ?: "网络异常"
+                !r.isSuccessful -> loadError = "HTTP " + r.code()
+                else -> opens = aggregateOpens(r.body() ?: emptyList())
+            }
+            loading = false
+        }
+    }
+
+    // 窗口容器：半透明白卡（与状态页 status-tile 同一质感）
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.65f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
+            // 标题行：左「🕘 最近打开」，右滑动提示
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "🕘 最近打开", fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    color = Color(0xFFA89890), letterSpacing = 1.sp
+                )
+                Spacer(Modifier.weight(1f))
+                Text("左右滑动查看 →", fontSize = 10.sp, color = Color(0xFFA89890))
+            }
+            Spacer(Modifier.height(10.dp))
+
+            when {
+                // 加载中：小转圈
+                loading -> Box(Modifier.fillMaxWidth().padding(14.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = accent, modifier = Modifier.size(20.dp))
+                }
+                // 加载失败：红色错误文案
+                loadError != null -> Box(Modifier.fillMaxWidth().padding(14.dp), contentAlignment = Alignment.Center) {
+                    Text("⚠️ 加载失败：" + loadError, fontSize = 11.sp, color = Color(0xFFE53E3E))
+                }
+                // 空数据
+                opens.isEmpty() -> Box(Modifier.fillMaxWidth().padding(14.dp), contentAlignment = Alignment.Center) {
+                    Text("📭 暂无打开记录", fontSize = 12.sp, color = Color(0xFFA89890))
+                }
+                // 正常：横向滑动卡片流（LazyRow 按需组合，列表再长也不卡）
+                else -> {
+                    val nowMs = System.currentTimeMillis()
+                    val maxSec = (opens.maxOfOrNull { it.totalSeconds } ?: 1).coerceAtLeast(1)
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(opens.size) { idx ->
+                            val open = opens[idx]
+                            // 最新一条且会话结束时间距今 < 3 分钟 → 视为「正在使用」高亮卡
+                            val isNow = idx == 0 &&
+                                (nowMs - (open.openAt + open.totalSeconds * 1000L)) < 3 * 60_000L
+                            RecentOpenCard(open = open, isNow = isNow, maxSec = maxSec, accent = accent)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// RecentOpenCard —— 单张「最近打开」卡片（固定宽 124dp）
+//   - isNow=true：渐变珊瑚底 + 白字 + LIVE 标签
+//   - 否则：白底 + 墨色字 + 珊瑚进度条
+// ============================================================================
+@Composable
+private fun RecentOpenCard(open: HistoryOpen, isNow: Boolean, maxSec: Int, accent: Color) {
+    // 进度条比例：相对本次列表中时长最长的一条（至少 4% 保证可见）
+    val frac = (open.totalSeconds.toFloat() / maxSec).coerceIn(0.04f, 1f)
+    val contentColor = if (isNow) Color.White else Color(0xFF3D2E2A)
+    val subColor = if (isNow) Color.White.copy(alpha = 0.85f) else Color(0xFFA89890)
+    Box(
+        Modifier
+            .width(124.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .then(
+                if (isNow) Modifier.background(Brush.linearGradient(listOf(Color(0xFFFF8B7B), Color(0xFFFFB5A7))))
+                else Modifier.background(Color.White)
+            )
+            .padding(12.dp)
+    ) {
+        Column {
+            // 顶部：emoji 图标 + 名称/时间
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .background(
+                            if (isNow) Color.White.copy(alpha = 0.25f) else Color(0xFFFFE4D1),
+                            RoundedCornerShape(10.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) { Text(open.emoji, fontSize = 14.sp) }
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text(open.appName, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = contentColor, maxLines = 1)
+                    Text(
+                        if (isNow) "正在使用" else relativeTime(open.openAt),
+                        fontSize = 10.sp, color = subColor, maxLines = 1
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            // 时长比例条
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .background(
+                        if (isNow) Color.White.copy(alpha = 0.25f) else Color(0x143D2E2A),
+                        RoundedCornerShape(2.dp)
+                    )
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(frac)
+                        .height(4.dp)
+                        .background(if (isNow) Color.White else accent, RoundedCornerShape(2.dp))
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            // 底部：时长 + LIVE 标签
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(open.duration, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = subColor)
+                Spacer(Modifier.weight(1f))
+                if (isNow) {
+                    Box(
+                        Modifier
+                            .background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(50))
+                            .padding(horizontal = 6.dp, vertical = 1.dp)
+                    ) { Text("LIVE", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color.White) }
+                }
+            }
+        }
+    }
+}
+
 
 // ============================================================================
 // 24小时柱状图 (HourBarChart)
@@ -595,14 +781,14 @@ private fun AppRankRow(
                         name,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF2D3748),
+                        color = Color(0xFF3D2E2A),
                         maxLines = 1
                     )
-                    Text(category, fontSize = 11.sp, color = Color(0xFF718096))
+                    Text(category, fontSize = 11.sp, color = Color(0xFFA89890))
                 }
                 // 右侧数值列：时长 (主) + 百分比 (副)
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(duration, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+                    Text(duration, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
                     Text("" + percent + "%", fontSize = 11.sp, color = Color(0xFFA0AEC0))
                 }
             }

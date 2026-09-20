@@ -1,10 +1,10 @@
 // =====================================================================
 // 文件：AppScreen.kt
-// 作用：情侣追踪 App 的「应用动态」主界面。
+// 作用：情侣追踪 App 的「状态」主界面（方案 D · 潮汐卡片风格）。
 //       这是用户看到的主页面，包含 3 个模块：
 //         ① 当前正在使用（大卡片，实时显示对方/自己正在玩的 App）
 //         ② 手机状态（电量/网络/在线状态/心情，网格小卡片）
-//         ③ 历史打开记录（按时间倒序展示最近打开过的 App）
+//         ③ 智能手环（占位卡片，标记「正在开发」）
 // 作者：coupletracker 团队
 // =====================================================================
 
@@ -49,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable    // 可保存的状�
 import androidx.compose.ui.Alignment                         // 对齐方式（居中、顶部等）
 import androidx.compose.ui.Modifier                          // 修饰符链（Compose 的核心装饰机制）
 import androidx.compose.ui.graphics.Color                    // 颜色定义
+import androidx.compose.ui.graphics.Brush                   // 渐变画刷（方案 D）
 import androidx.compose.ui.platform.LocalContext              // 获取当前 Android Context
 import androidx.compose.ui.text.font.FontWeight               // 字重（粗细）
 import androidx.compose.ui.unit.dp                            // 密度无关像素单位
@@ -78,7 +79,7 @@ import java.time.format.DateTimeFormatter // 日期时间格式化器
  * 应用 Tab：3 个模块
  *   ① 🎯 当前正在使用（实时大卡片）
  *   ② 📱 手机状态（电量/网络/在线状态）
- *   ③ 🕒 历史打开记录（打开时刻时间线）
+ *   ③ ⌚ 智能手环（占位卡片，正在开发）
  *
  * 数据源：
  *   - 看自己：UsageStatsManager + BatteryManager + ConnectivityManager 本地实时
@@ -159,11 +160,11 @@ fun AppScreen() {
     val subjectName = if (showPartner) partnerName.ifBlank { "TA" } else (user?.displayName ?: "我") // 展示名字
     val subjectIsMe = !showPartner                                                      // 当前是否在看自己
 
-    // ---- 6. 页面根容器：粉色背景 + 下拉刷新支持 ----
+    // ---- 6. 页面根容器：奶油渐变背景（方案 D · 潮汐卡片）+ 下拉刷新支持 ----
     Box(
         Modifier
             .fillMaxSize()                                         // 占满整个屏幕
-            .background(Color(0xFFFDF2F8))                        // 浅粉色背景（情侣主题）
+            .background(Brush.verticalGradient(listOf(Color(0xFFFFF8F0), Color(0xFFFFE4D1))))  // 奶油 → 蜜桃渐变
             .pullRefresh(pullRefreshState)                         // 让本容器支持下拉刷新手势
     ) {
         // 下拉刷新指示器（顶部转圈圈）
@@ -171,7 +172,7 @@ fun AppScreen() {
             refreshing = isRefreshing,
             state = pullRefreshState,
             modifier = Modifier.align(Alignment.TopCenter),     // 顶部居中
-            contentColor = Color(0xFFE75480)                      // 粉色主题
+            contentColor = Color(0xFFFF8B7B)                      // 珊瑚粉主题
         )
 
         // 主内容列，纵向滚动
@@ -184,7 +185,10 @@ fun AppScreen() {
         // ---- 顶部标题 + 切换按钮 ----
         // 一行：左边标题，右边切换按钮（看自己/看 TA）
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("应用动态", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
+            Text(
+                if (showPartner) "$subjectName 的手机状态" else "我的手机状态",
+                fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A)
+            )
             Spacer(Modifier.weight(1f))                            // 弹性空白把按钮推到右边
             // 切换按钮始终显示：有配对→切换查看对方，无配对→提示
             Button(
@@ -197,9 +201,9 @@ fun AppScreen() {
                 },
                 shape = RoundedCornerShape(20.dp),                // 圆角药丸形按钮
                 colors = ButtonDefaults.buttonColors(
-                    // 颜色随状态变化：未配对灰色 / 看对方蓝色 / 看自己粉色
-                    containerColor = if (partnerId == null) Color(0xFFCBD5E0)
-                    else if (showPartner) Color(0xFF667EEA) else Color(0xFFE75480)
+                    // 颜色随状态变化：未配对沙灰 / 看对方薄荷绿 / 看自己珊瑚粉
+                    containerColor = if (partnerId == null) Color(0xFFD8C7BA)
+                    else if (showPartner) Color(0xFF3A9E91) else Color(0xFFFF8B7B)
                 ),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
             ) {
@@ -219,8 +223,19 @@ fun AppScreen() {
             Spacer(Modifier.height(4.dp))                         // 已配对时多留一点白
         }
 
-        // ============= ① 当前正在使用 =============
-        // 大卡片，显示主体当前正在玩的 App（或休息中）
+        // ============= ① 手机状态 =============
+        // 2x2 网格小卡片：电量、网络、状态、心情
+        PhoneStatusCard(
+            subjectId = subjectId,
+            subjectName = subjectName,
+            subjectIsMe = subjectIsMe,
+            reloadKey = reloadKey
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        // ============= ② 当前正在使用 =============
+        // 渐变珊瑚大卡片，显示主体当前正在玩的 App（或休息中）
         CurrentAppCard(
             subjectId = subjectId,
             subjectName = subjectName,
@@ -230,29 +245,12 @@ fun AppScreen() {
             reloadKey = reloadKey
         )
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(14.dp))
 
-        // ============= ② 手机状态 =============
-        // 网格小卡片：电量、网络、状态、心情
-        PhoneStatusCard(
-            subjectId = subjectId,
-            subjectName = subjectName,
-            subjectIsMe = subjectIsMe,
-            reloadKey = reloadKey
-        )
+        // ============= ③ 智能手环（占位：正在开发）=============
+        BandSection()
 
-        Spacer(Modifier.height(12.dp))
-
-        // ============= ③ 历史打开记录 =============
-        // 标题 + 列表（按时间倒序展示最近打开过的 App）
-        Text("🕒 最近打开记录", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
-        Spacer(Modifier.height(6.dp))
-
-        HistoryOpenList(
-            subjectId = subjectId,
-            subjectName = subjectName,
-            reloadKey = reloadKey
-        )
+        Spacer(Modifier.height(20.dp))
         }  // closes Column
     }      // closes Box
 }          // closes AppScreen
@@ -346,17 +344,15 @@ private fun CurrentAppCard(
         }
     }
 
-    // 颜色：粉色代表看自己，蓝色代表看对方
-    val pink = Color(0xFFE75480)
-    val blue = Color(0xFF667EEA)
-
-    // 卡片容器：圆角白色背景 + 轻微阴影
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    // 方案 D：渐变「正在使用」卡片（珊瑚粉 → 柔珊瑚），白色文字
+    val nowPlayingBrush = Brush.linearGradient(listOf(Color(0xFFFF8B7B), Color(0xFFFFB5A7)))
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .background(nowPlayingBrush, RoundedCornerShape(18.dp))
+            .padding(20.dp)
     ) {
-        Column(Modifier.padding(20.dp)) {
+        Column(Modifier.fillMaxWidth()) {
             // ✅ 30分钟无活动 → 标题显示"正在休息"
             val now = System.currentTimeMillis()
             // 判断是否空闲 30 分钟：自己看屏幕状态 + 是否有前台 App；对方看最后更新时间是否超过 30 分钟
@@ -368,7 +364,7 @@ private fun CurrentAppCard(
             Text(
                 // 顶部小标题：根据是否空闲、是否是自己显示不同文案
                 if (isIdle30min) (if (subjectIsMe) "正在休息" else "$subjectName 正在休息") else (if (subjectIsMe) "正在玩" else "$subjectName 正在玩"),
-                fontSize = 12.sp, color = Color(0xFF718096)
+                fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.SemiBold
             )
             Spacer(Modifier.height(12.dp))
 
@@ -376,38 +372,38 @@ private fun CurrentAppCard(
             if (subjectIsMe && !subjectHasPermission) {
                 // 没权限 —— 引导去开
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    Text("⚠️ 未授予「使用情况访问」权限", fontSize = 14.sp, color = Color(0xFFE53E3E), fontWeight = FontWeight.SemiBold)
+                    Text("⚠️ 未授予「使用情况访问」权限", fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
                     Text("去手机设置 → 应用 → 特殊权限 → 使用情况访问 → 允许 小世界",
-                        fontSize = 11.sp, color = Color(0xFF718096))
+                        fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f))
                 }
             } else if (subjectIsMe && !screenOn) {
                 // 熄屏状态：显示月亮 emoji + 提示
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("🌙", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text("${subjectName} 熄屏中", fontSize = 15.sp, color = Color(0xFF805AD5), fontWeight = FontWeight.SemiBold)
+                    Text("${subjectName} 熄屏中", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
             } else if (subjectIsMe && fgPkg.isEmpty()) {
                 // 亮屏但没查到前台 App：可能在桌面/切换中
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("💤", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text("${subjectName} 正在休息", fontSize = 15.sp, color = Color(0xFF718096), fontWeight = FontWeight.SemiBold)
+                    Text("${subjectName} 正在休息", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
             } else if (!subjectIsMe && isIdle30min) {
                 // TA 30分钟无活动 → 正在休息
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("💤", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text("${subjectName} 正在休息", fontSize = 15.sp, color = Color(0xFF718096), fontWeight = FontWeight.SemiBold)
+                    Text("${subjectName} 正在休息", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
             } else if (!subjectIsMe && remoteAppName.isEmpty()) {
                 // 对方暂无云端记录（可能没启动后台服务/没联网）
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("🤔", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text("${subjectName} 暂无使用记录", fontSize = 15.sp, color = Color(0xFF718096), fontWeight = FontWeight.SemiBold)
+                    Text("${subjectName} 暂无使用记录", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
             } else {
                 // 有 APP 使用数据 → 左图标、右名字+时长
@@ -415,16 +411,15 @@ private fun CurrentAppCard(
                 val appName = if (subjectIsMe) fgName else remoteAppName             // 显示名
                 val durationSec = if (subjectIsMe) sessionSeconds else remoteSeconds // 已用秒数
                 val duration = formatDuration(durationSec)                          // 格式化如 "1h 23m"
-                val accent = if (subjectIsMe) pink else blue                        // 主题色
 
                 // 一行布局：左边 emoji 图标，右边 App 名 + 时长
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    // 左：圆形浅色背景里放 emoji
+                    // 左：半透明白底圆角块里放 emoji
                     Box(
-                        Modifier.size(52.dp).background(accent.copy(alpha = 0.12f), RoundedCornerShape(14.dp)),
+                        Modifier.size(52.dp).background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(14.dp)),
                         contentAlignment = Alignment.Center
                     ) { Text(appEmoji, fontSize = 26.sp) }
                     Spacer(Modifier.width(14.dp))
@@ -432,13 +427,13 @@ private fun CurrentAppCard(
                     Column(Modifier.weight(1f)) {
                         Text(
                             appName, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFF2D3748), maxLines = 1
+                            color = Color.White, maxLines = 1
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
                             // 自己显示"已使用 X" / 对方显示"最近一次 · X"
                             if (subjectIsMe) "已使用 $duration" else "最近一次 · $duration",
-                            fontSize = 12.sp, color = Color(0xFF718096)
+                            fontSize = 12.sp, color = Color.White.copy(alpha = 0.85f)
                         )
                     }
                 }
@@ -598,8 +593,8 @@ private fun PhoneStatusCard(
     }
 
     // 主题色：看自己用粉色，看对方用蓝色
-    val pink = Color(0xFFE75480)
-    val blue = Color(0xFF667EEA)
+    val pink = Color(0xFFFF8B7B)
+    val blue = Color(0xFF3A9E91)
     val accent = if (subjectIsMe) pink else blue
 
     // 计算展示用的电量/充电状态/网络/在线
@@ -619,7 +614,6 @@ private fun PhoneStatusCard(
 
     // 主列：标题 + 两行网格（每行 2 个小卡片）
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("📱 $subjectName 的手机状态", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2D3748))
         // 第一行：电量 + 网络
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -670,7 +664,7 @@ private fun PhoneStatusCard(
                 !subjectIsMe && taHasDeviceStatus && !taScreenOn -> {
                     statusIcon = "🌙"
                     statusValue = "熄屏"
-                    statusAccent = Color(0xFF805AD5)
+                    statusAccent = Color(0xFF6B7FBF)
                 }
                 !subjectIsMe && taHasDeviceStatus && charging -> {
                     statusIcon = "🔌"
@@ -697,7 +691,7 @@ private fun PhoneStatusCard(
                 !screenOn -> {
                     statusIcon = "🌙"
                     statusValue = "熄屏"
-                    statusAccent = Color(0xFF805AD5)
+                    statusAccent = Color(0xFF6B7FBF)
                 }
                 charging -> {
                     statusIcon = "🔌"
@@ -720,7 +714,8 @@ private fun PhoneStatusCard(
             // 心情卡 —— 自己可点击选 emoji，对方则不可点击（只展示）
             Card(
                 shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.65f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                 modifier = Modifier.weight(1f).then(
                     // 通过 then 拼接不同 modifier，看自己时加 clickable
                     if (subjectIsMe) Modifier.clickable { showMoodDialog = true } else Modifier
@@ -730,7 +725,7 @@ private fun PhoneStatusCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("💖", fontSize = 16.sp)
                         Spacer(Modifier.width(6.dp))
-                        Text("当前心情", fontSize = 11.sp, color = Color(0xFF718096))
+                        Text("当前心情", fontSize = 11.sp, color = Color(0xFFA89890))
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -794,7 +789,8 @@ private fun StatusChip(
 ) {
     Card(
         shape = RoundedCornerShape(14.dp),                        // 圆角
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.65f)),  // 半透明白（方案 D）
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier                                        // 应用外部传入的修饰符
     ) {
         Column(Modifier.padding(12.dp)) {
@@ -802,7 +798,7 @@ private fun StatusChip(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(icon, fontSize = 16.sp)
                 Spacer(Modifier.width(6.dp))
-                Text(label, fontSize = 11.sp, color = Color(0xFF718096))
+                Text(label, fontSize = 11.sp, color = Color(0xFFA89890))
             }
             Spacer(Modifier.height(4.dp))
             // 第二行：值（加粗，使用主题色）
@@ -812,133 +808,71 @@ private fun StatusChip(
 }
 
 // =====================================================================
-// ③ 🕒 历史打开记录 —— 列表
-// 这个 Composable 从云端拉取该用户最近 100 条 app_usage 记录，
-// 聚合（同一 App 连续记录合并为一次「打开」会话）后按时间倒序展示。
-// 包含 3 种状态 UI：加载中 / 加载失败 / 空数据 / 正常列表。
+// ⌚ BandSection —— 智能手环占位区（方案 D）
+// 展示心率/睡眠/步数/压力 4 张渐变卡片；功能尚未接入，统一标记「正在开发」。
+// 后续接入真实手环 SDK 时，把 "--" 与占位文案替换为真实数据即可。
 // =====================================================================
 @Composable
-private fun HistoryOpenList(
-    subjectId: String,
-    subjectName: String,
-    reloadKey: Int
-) {
-    // 列表数据 + 加载状态
-    var rows by remember { mutableStateOf<List<HistoryOpen>>(emptyList()) } // 聚合后的历史记录列表
-    var loading by remember { mutableStateOf(false) }                       // 是否正在加载
-    var loadError by remember { mutableStateOf<String?>(null) }             // 加载失败的错误信息
-
-    // 进入/参数变化时拉一次数据
-    LaunchedEffect(subjectId, reloadKey) {
-        if (subjectId.isBlank()) { rows = emptyList(); return@LaunchedEffect }  // 没用户 ID 直接空列表
-        loading = true; loadError = null
-        withContext(Dispatchers.IO) {                                       // 网络请求切到 IO 线程
-            val resp = runCatching {
-                // 拉最近 100 条 app_usage 记录（按创建时间倒序）
-                NetworkModule.restService.getAppUsage(
-                    userId = "eq.$subjectId",
-                    order = "created_at.desc",
-                    limit = 100
-                )
+private fun BandSection() {
+    // 手环卡片配色（与方案 D 设计稿一致）
+    data class BandSpec(val label: String, val ico: String, val colors: List<Color>)
+    val tiles = listOf(
+        BandSpec("心率", "♥", listOf(Color(0xFFFF6B7E), Color(0xFFFFA0B0))),
+        BandSpec("睡眠", "☾", listOf(Color(0xFF6B7FBF), Color(0xFF9DAFDD))),
+        BandSpec("步数", "⚡", listOf(Color(0xFF3F8E80), Color(0xFF7ECEC0))),
+        BandSpec("压力", "○", listOf(Color(0xFFA8855E), Color(0xFFD4B58F)))
+    )
+    Column {
+        // 标题行：左「⌚ 智能手环」，右「正在开发」徽章
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "⌚ 智能手环", fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                color = Color(0xFFA89890), letterSpacing = 1.sp
+            )
+            Spacer(Modifier.weight(1f))
+            Box(
+                Modifier
+                    .background(Color(0xFFFFE4D1), RoundedCornerShape(50))
+                    .padding(horizontal = 10.dp, vertical = 3.dp)
+            ) {
+                Text("正在开发", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFF8B7B))
             }
-            val r = resp.getOrNull()
-            when {
-                // 1. 抛异常（如网络断开）
-                r == null -> loadError = resp.exceptionOrNull()?.message?.take(60) ?: "网络异常"
-                // 2. HTTP 状态非 2xx（如 401 鉴权失败）
-                !r.isSuccessful -> {
-                    val body = runCatching { r.errorBody()?.string()?.take(120) }.getOrNull() ?: ""
-                    loadError = "HTTP " + r.code() + " — " + body
+        }
+        Spacer(Modifier.height(10.dp))
+        // 2x2 网格：两行两列渐变卡片
+        tiles.chunked(2).forEach { rowTiles ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                rowTiles.forEach { t ->
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(88.dp)
+                            .background(Brush.linearGradient(t.colors), RoundedCornerShape(14.dp))
+                            .padding(12.dp)
+                    ) {
+                        // 右上角半透明大图标（装饰）
+                        Text(
+                            t.ico, fontSize = 18.sp, color = Color.White.copy(alpha = 0.4f),
+                            modifier = Modifier.align(Alignment.TopEnd)
+                        )
+                        Column(Modifier.align(Alignment.TopStart)) {
+                            Text(t.label, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color.White.copy(alpha = 0.9f))
+                            Spacer(Modifier.height(2.dp))
+                            Text("--", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                        Text(
+                            "正在开发", fontSize = 10.sp, color = Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier.align(Alignment.BottomStart)
+                        )
+                    }
                 }
-                // 3. 成功 → 调 aggregateOpens 聚合后存到 rows
-                else -> rows = aggregateOpens(r.body() ?: emptyList())
+                // 奇数个时补一个空位保持两列对齐（本例 4 个不会触发）
+                if (rowTiles.size < 2) Spacer(Modifier.weight(1f))
             }
-            loading = false
-        }
-    }
-
-    // 根据状态渲染不同 UI（when 类似 switch）
-    when {
-        loading -> {
-            // 加载中：粉色小转圈
-            Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFFE75480), modifier = Modifier.size(20.dp))
-            }
-        }
-        loadError != null -> {
-            // 加载失败：红色错误文案
-            Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
-                Text("⚠️ 加载失败：" + loadError, fontSize = 12.sp, color = Color(0xFFE53E3E))
-            }
-        }
-        rows.isEmpty() -> {
-            // 空数据：📭 emoji + 文案
-            Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("📭", fontSize = 28.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text("最近 24 小时没有打开记录", fontSize = 12.sp, color = Color(0xFF718096))
-                }
-            }
-        }
-        else -> {
-            // 紧凑时间线 —— 每条一行，左 emoji + 中事件 + 右时间戳
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                rows.forEach { open ->
-                    HistoryTimelineItem(open)                              // 渲染单条历史项
-                }
-            }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
-
-// =====================================================================
-// 📝 HistoryTimelineItem —— 单条历史记录的渲染
-// 渲染一行：[emoji] [打开了 App名] [时间]
-// 这是 HistoryOpenList 列表里每一项的 UI 实现。
-// =====================================================================
-@Composable
-private fun HistoryTimelineItem(open: HistoryOpen) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp, horizontal = 4.dp),         // 每行垂直 6dp / 水平 4dp 内边距
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // 左：emoji 图标（分类对应）
-        Text(open.emoji, fontSize = 18.sp, modifier = Modifier.width(28.dp))
-        Spacer(Modifier.width(6.dp))
-        // 中：事件描述（如 "打开了 微信"）
-        Text(
-            "打开了 ${open.appName}",
-            fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFF2D3748),
-            modifier = Modifier.weight(1f)                          // 占满中间剩余空间
-        )
-        // 右：时间戳（短格式，如 "19:38" / "昨天 16:11"）
-        Text(
-            open.timeLabelShort,
-            fontSize = 11.sp, color = Color(0xFFA0AEC0)
-        )
-    }
-}
-
-// =====================================================================
-// 📐 HistoryOpen.timeLabelShort —— 扩展属性：把完整时间标签简化为短格式
-// 扩展属性（extension property）= 给现有类添加新属性，而不修改原类。
-// 这里给 HistoryOpen 添加 timeLabelShort，从 timeLabel 字符串转换。
-// 转换规则：
-//   "今天 19:38 打开" → "19:38"
-//   "昨天 16:11 打开" → "昨天 16:11"
-//   "09-01 10:00 打开" → "09-01 10:00"
-// =====================================================================
-private val HistoryOpen.timeLabelShort: String
-    get() {
-        val label = timeLabel
-        return label
-            .replace("打开", "")      // 删掉"打开"二字
-            .trim()                   // 去掉首尾空格
-            .replace("今天 ", "")     // 今天只显示时间，去掉"今天 "
-    }
 
 // =====================================================================
 // 🔧 辅助函数 —— 本地设备查询工具
@@ -1196,7 +1130,7 @@ private fun rowTs(row: AppUsageRow): Long = parseIsoTime(row.window_start ?: row
  *   - 否则视为同一会话，累加 usage_seconds
  * 最后按时间倒序返回（最新的在前）。
  */
-private fun aggregateOpens(rows: List<AppUsageRow>): List<HistoryOpen> {
+fun aggregateOpens(rows: List<AppUsageRow>): List<HistoryOpen> {
     if (rows.isEmpty()) return emptyList()
     val sorted = rows.sortedBy { rowTs(it) } // 时间正序（旧 → 新）
     val result = mutableListOf<HistoryOpen>()
@@ -1244,7 +1178,8 @@ private fun makeHistoryOpen(pkg: String, allRows: List<AppUsageRow>, startAt: Lo
         packageName = pkg, appName = appName, category = cat,
         openAt = startAt, timeLabel = timeLabel,
         duration = formatDuration(totalSec),                       // 时长描述，如 "5分钟"
-        emoji = categoryEmoji(cat)                                 // 分类对应 emoji
+        emoji = categoryEmoji(cat),                                 // 分类对应 emoji
+        totalSeconds = totalSec                            // 会话总时长（秒）
     )
 }
 
@@ -1269,7 +1204,8 @@ data class HistoryOpen(
     val openAt: Long,
     val timeLabel: String,
     val duration: String,
-    val emoji: String
+    val emoji: String,
+    val totalSeconds: Int = 0   // 会话总时长（秒）：统计页「最近打开」进度条用
 )
 
 /**
@@ -1339,7 +1275,7 @@ private fun formatTimeLabel(epochMs: Long): String {
  *
  * @return 相对时间字符串；时间戳无效返回空
  */
-private fun relativeTime(epochMs: Long): String {
+fun relativeTime(epochMs: Long): String {
     if (epochMs <= 0) return ""
     val diff = System.currentTimeMillis() - epochMs              // 距今多久（毫秒）
     val mins = diff / 60000L
