@@ -130,13 +130,12 @@ jobs:
         if: github.ref == 'refs/heads/main' && success()
         run: |
           # 把新版本号写回 build.gradle.kts，下次构建再 +1
-          sed -i 's/versionCode = .*?: 177/versionCode = (project.properties["versionCode"] as? String)?.toInt() ?: ${{ steps.version.outputs.versionCode }}/' android-app/app/build.gradle.kts
-          sed -i 's/versionName = .*?: "0.177"/versionName = project.properties["versionName"] as? String ?: "${{ steps.version.outputs.versionName }}"/' android-app/app/build.gradle.kts
+          sed -i 's/versionCode = (project.properties\["versionCode"\] as? String)?.toInt() ?: [0-9]\+/versionCode = (project.properties["versionCode"] as? String)?.toInt() ?: ${{ steps.version.outputs.versionCode }}/' android-app/app/build.gradle.kts
+          sed -i 's/versionName = project.properties\["versionName"\] as? String ?: "[0-9.]\+"/versionName = project.properties["versionName"] as? String ?: "${{ steps.version.outputs.versionName }}"/' android-app/app/build.gradle.kts
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add android-app/app/build.gradle.kts
-          git commit -m "chore: bump version to ${{ steps.version.outputs.versionName }} [skip ci]"
-          git push
+          git diff --cached --quiet || (git commit -m "chore: bump version to ${{ steps.version.outputs.versionName }} [skip ci]" && git push)
 
       - name: Upload Build Log (always)
         if: always()
