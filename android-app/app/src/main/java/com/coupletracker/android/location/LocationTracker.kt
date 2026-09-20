@@ -73,7 +73,7 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
     private var currentIntervalMs = -1L  // 当前实际生效的系统定位间隔（避免重复注册）
 
     // —— 轻量化②：批量上报缓存 ——
-    private val pendingBatch = CopyOnWriteArrayList<com.coupletracker.android.data.LocationRow>()  // 待上传位置缓存
+    private val pendingBatch = CopyOnWriteArrayList<com.coupletracker.android.data.LocationInsert>()  // 待上传位置缓存
     private var lastFlushAt = 0L         // 上次批量上传时间戳
     @Volatile private var isFlushing = false   // 上传中标记：防止并发重复上传
 
@@ -302,7 +302,7 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
             val user = UserRepository.get().getUser()
             val userId = user?.id ?: return@launch
             // couple_id 传 null（数据库已允许 null，未配对也记录自己的轨迹）
-            pendingBatch += com.coupletracker.android.data.LocationRow(
+            pendingBatch += com.coupletracker.android.data.LocationInsert(
                 user_id       = userId,
                 couple_id     = null,
                 latitude      = loc.latitude,
