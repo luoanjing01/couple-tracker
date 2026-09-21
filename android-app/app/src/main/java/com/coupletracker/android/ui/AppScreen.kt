@@ -93,7 +93,7 @@ import java.time.format.DateTimeFormatter // 日期时间格式化器
  */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.material.ExperimentalMaterialApi::class)
 @Composable
-fun AppScreen() {
+fun AppScreen(embedded: Boolean = false) {
     // ---- 1. 获取基础上下文和当前登录用户 ----
     val ctx = LocalContext.current                                // 当前 Android Context，用于访问系统服务
     val user by UserRepository.get().userFlow.collectAsState(initial = null) // 订阅登录用户流，初次为 null
@@ -160,27 +160,11 @@ fun AppScreen() {
     val subjectName = if (showPartner) partnerName.ifBlank { "TA" } else (user?.displayName ?: "我") // 展示名字
     val subjectIsMe = !showPartner                                                      // 当前是否在看自己
 
-    // ---- 6. 卡片内紧凑布局：无标题栏、无背景、无外框（外层玻璃卡片已提供）----
-    // 方案 D 适配：AppScreen 现在被包在 MainActivity 的玻璃卡片内，
-    // 因此去掉 fillMaxSize、背景色、标题栏，改为紧凑的纵向滚动 Column
-    Box(
-        Modifier
-            .pullRefresh(pullRefreshState)                         // 保留下拉刷新手势
-    ) {
-        // 下拉刷新指示器（顶部转圈圈）
-        PullRefreshIndicator(
-            refreshing = isRefreshing,
-            state = pullRefreshState,
-            modifier = Modifier.align(Alignment.TopCenter),
-            contentColor = Color(0xFFFF8B7B)                      // 珊瑚粉主题
-        )
-
-        // 主内容列，纵向滚动（紧凑布局，无外框）
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(scrollState)                     // 启用纵向滚动
-        ) {
+    // ---- 6. 内容本体（内嵌模式与外框模式共用）----
+    // 方案 D v3 适配：embedded=true 时由外层潮汐抽屉（TidalHomeScreen）提供滚动与容器，
+    // 本页只渲染内容列；embedded=false 时才使用自己的下拉刷新 + 纵向滚动外壳。
+    @Composable
+    fun Content() {
         // ---- 卡片内顶部：切换按钮行（无标题，只有切换按钮 + 状态提示）----
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -247,8 +231,32 @@ fun AppScreen() {
         BandSection()
 
         Spacer(Modifier.height(20.dp))
-        }  // closes Column
-    }      // closes Box
+    }      // closes Content
+
+    // ---- 7. 根容器：内嵌模式 = 纯内容列；独立模式 = 下拉刷新 + 纵向滚动 ----
+    if (embedded) {
+        Column(Modifier.fillMaxWidth()) { Content() }
+    } else {
+        Box(
+            Modifier
+                .pullRefresh(pullRefreshState)                     // 保留下拉刷新手势
+        ) {
+            // 下拉刷新指示器（顶部转圈圈）
+            PullRefreshIndicator(
+                refreshing = isRefreshing,
+                state = pullRefreshState,
+                modifier = Modifier.align(Alignment.TopCenter),
+                contentColor = Color(0xFFFF8B7B)                  // 珊瑚粉主题
+            )
+
+            // 主内容列，纵向滚动（紧凑布局，无外框）
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState)                 // 启用纵向滚动
+            ) { Content() }
+        }
+    }
 }          // closes AppScreen
 
 // =====================================================================

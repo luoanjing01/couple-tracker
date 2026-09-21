@@ -57,7 +57,7 @@ import java.time.format.DateTimeFormatter // 日期格式化 (本文件实际未
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.material.ExperimentalMaterialApi::class)
 // @Composable: 标记此函数为 Compose 可组合函数,可在 UI 树中使用
 @Composable
-fun StatsScreen() {
+fun StatsScreen(embedded: Boolean = false) {
     // =========================================================================
     // 第一部分：状态初始化
     // =========================================================================
@@ -246,29 +246,12 @@ fun StatsScreen() {
     val mainColor = if (showPartner) blue else pink
 
     // =========================================================================
-    // 第八部分：界面布局 (Box 容器：包含刷新指示器 + 滚动内容)
+    // 第八部分：内容本体（内嵌模式与外框模式共用）
+    // 方案 D v3 适配：embedded=true 时由外层潮汐抽屉（TidalHomeScreen）提供滚动与容器，
+    // 本页只渲染内容列；embedded=false 时才使用自己的渐变背景 + 下拉刷新 + 滚动外壳。
     // =========================================================================
-    Box(
-        Modifier
-            .fillMaxSize()           // 占满整个屏幕
-            .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xFFFFE4D1))))  // 奶油 → 蜜桃渐变（方案 D）
-            .pullRefresh(pullRefreshState)  // 绑定下拉刷新 (让此 Box 内的下拉可触发刷新)
-    ) {
-        // 下拉刷新动画指示器 (顶部小圆圈),固定在 Box 顶部居中
-        PullRefreshIndicator(
-            refreshing = isRefreshing,
-            state = pullRefreshState,
-            modifier = Modifier.align(Alignment.TopCenter),
-            contentColor = mainColor
-        )
-
-        // 主内容区：垂直滚动的列表
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)                  // 启用垂直滚动
-                .padding(horizontal = 16.dp, vertical = 18.dp)  // 内边距,左右 16dp,上下 18dp
-        ) {
+    @Composable
+    fun Content() {
         // ---- 8.1 顶部标题栏 (标题 + 我/TA 切换按钮) ----
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("每日统计", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
@@ -467,8 +450,37 @@ fun StatsScreen() {
         }
 
         Spacer(Modifier.height(20.dp))  // 列表底部留白
-        }  // closes Column
-    }      // closes Box
+    }      // closes Content
+
+    // =========================================================================
+    // 第九部分：根容器（内嵌模式 = 纯内容列；独立模式 = 渐变背景 + 下拉刷新 + 滚动）
+    // =========================================================================
+    if (embedded) {
+        Column(Modifier.fillMaxWidth()) { Content() }
+    } else {
+        Box(
+            Modifier
+                .fillMaxSize()           // 占满整个屏幕
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xFFFFE4D1))))  // 奶油 → 蜜桃渐变（方案 D）
+                .pullRefresh(pullRefreshState)  // 绑定下拉刷新 (让此 Box 内的下拉可触发刷新)
+        ) {
+            // 下拉刷新动画指示器 (顶部小圆圈),固定在 Box 顶部居中
+            PullRefreshIndicator(
+                refreshing = isRefreshing,
+                state = pullRefreshState,
+                modifier = Modifier.align(Alignment.TopCenter),
+                contentColor = mainColor
+            )
+
+            // 主内容区：垂直滚动的列表
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)                  // 启用垂直滚动
+                    .padding(horizontal = 16.dp, vertical = 18.dp)  // 内边距,左右 16dp,上下 18dp
+            ) { Content() }
+        }
+    }
 }
 
 // ============================================================================

@@ -61,6 +61,9 @@ import com.coupletracker.android.data.CheckPairStatusReq    // 查询配对状�
 import com.coupletracker.android.data.AcceptPairReq          // 接受配对请求的请求体数据类
 import com.coupletracker.android.data.UserRepository         // 用户数据仓库：保存用户信息、Token 等
 import com.coupletracker.android.service.TrackerService     // 后台追踪服务（位置采集、APP 使用检测）
+import com.coupletracker.android.ui.theme.Coral              // 潮汐主题：珊瑚主色
+import com.coupletracker.android.ui.theme.TidalTheme         // 潮汐主题（透明状态栏 + 珊瑚配色）
+import com.coupletracker.android.ui.tidal.TidalHomeScreen    // 潮汐卡片 v3 主界面（可拖拽底部抽屉）
 
 // 协程相关
 import kotlinx.coroutines.Dispatchers        // 协程调度器：IO（磁盘/网络）、Main（主线程）
@@ -104,28 +107,9 @@ import kotlin.math.roundToInt                 // 浮点数四舍五入转整数
 class MainActivity : ComponentActivity() {
 
     // ============================================================================
-    // Tab 枚举：定义底部导航栏的 4 个标签页
-    // ----------------------------------------------------------------------------
-    // 每个枚举项携带 3 个属性：
-    //   path  -> 该 Tab 对应的前端路由路径（如 /map）
-    //   label -> Tab 上显示的中文名称
-    //   icon  -> Tab 的图标，是一个 @Composable 函数（这里用 emoji 文本代替图标）
-    //
-    // 使用 enum 而不是字符串常量的好处：
-    //   - 编译期类型安全，避免拼写错误；
-    //   - 可以用 Tab.values() 遍历所有 Tab；
-    //   - 与 when(selected) 配合可以穷举所有分支。
+    // 旧版底部 Tab 枚举已移除：潮汐卡片 v3 改为单一宿主（TidalHomeScreen），
+    // 四个区块（位置/状态/统计/我的）由抽屉内滚动锚点 + pill tabs 管理。
     // ============================================================================
-    private enum class Tab(
-        val path: String,                       // 该 Tab 对应前端路由
-        val label: String,                      // Tab 上显示的中文标签
-        val icon: @Composable () -> Unit        // Tab 图标：返回一个 Composable UI
-    ) {
-        MAP("/map",   "地图", { Text("🗺️", fontSize = 20.sp) }),  // 地图 Tab，访问前端 /map
-        APPS("/apps", "状态", { Text("📱", fontSize = 20.sp) }), // 状态 Tab（原应用页），访问前端 /apps
-        STATS("/stats","统计",{ Text("📊", fontSize = 20.sp) }),  // 统计 Tab，访问前端 /stats
-        ME("/me",     "我的", { Text("👤", fontSize = 20.sp) })  // 我的 Tab，原生 Compose 设置页
-    }
 
     // ============================================================================
     // WebView 缓存：保存地图 WebView 实例，避免切 Tab 时重新创建
@@ -154,6 +138,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         // 调用父类 onCreate 是必须的：让父类完成它内部的初始化（如保存的实例状态恢复）
         super.onCreate(savedInstanceState)
+
+        // 沉浸式：内容延伸到状态栏（潮汐设计稿要求全屏地图 + 顶部浮动气泡）
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
 
         // ✅ 闪退兜底：启动前台服务前再做一次权限检查，缺少权限则不启动
         // （Service 内部也会再次检查，这里双保险）
@@ -188,20 +175,9 @@ class MainActivity : ComponentActivity() {
             //   - 0xFF 表示完全不透明（FF=255）
             //   - E75480 是 RGB 十六进制值
             // ----------------------------------------------------------------------------
-            MaterialTheme(colorScheme = lightColorScheme(
-                primary = Color(0xFFFF8B7B),
-                secondary = Color(0xFF3A9E91),
-                background = Color(0xFFFFF8F0)
-            )) {
-                // ------------------------------------------------------------
-                // 状态：当前选中的 Tab
-                // - remember：让 Compose 在重组（重新执行 UI 函数）时记住这个值
-                // - mutableStateOf(Tab.MAP)：一个可观察的状态容器，初始值为 MAP
-                // - by 关键字：使用属性委托，让 selected 像普通变量一样读写，
-                //   读时自动订阅状态变化，写时自动触发 UI 重组刷新
-                // - var selected by ... 的写法等价于 val state = mutableStateOf(...)，state.value
-                // ------------------------------------------------------------
-                var selected by remember { mutableStateOf(Tab.MAP) }
+            // 潮汐主题（珊瑚配色 + 透明状态栏；地图在上，状态栏图标用深色）
+            TidalTheme(darkStatusBarIcons = true) {
+                // 旧 Tab 选中态已移除：区块切换由 TidalHomeScreen 内部锚点滚动管理
 
                 // ============================================================================
                 // 配对请求弹窗 + 全局轮询（覆盖所有 Tab）
@@ -314,239 +290,26 @@ class MainActivity : ComponentActivity() {
                 }
 
                 // ============================================================================
-                // 方案 D · 潮汐卡片：全屏沉浸式布局（Zenly 风格）
+                // 潮汐卡片 v3：BottomSheetScaffold 单一宿主（设计稿 concept-d-tidal-cards-v3）
                 // ----------------------------------------------------------------------------
-                // 设计特点：
-                //   ① 无传统 Scaffold/NavigationBar，改用全屏 Box 叠加
-                //   ② 背景：地图页全屏 WebView；其他页奶油→蜜桃渐变
-                //   ③ 顶部：左右浮动气泡头像（我=薄荷绿，TA=珊瑚粉）
-                //   ④ 底部：大圆角玻璃卡片（28dp 圆角，内含 pill tabs 切换）
-                //   ⑤ 最底部：点状导航指示器
+                // - 背景层：全屏 Leaflet 地图 WebView（PlaceholderScreen 内缓存复用）
+                // - 抽屉层：收起 200dp / 展开 = 屏高 - 125dp（不挡顶部头像气泡）
+                // - 抽屉内容：位置 / 状态(AppScreen) / 统计(StatsScreen) / 我的(SettingsScreen)
+                // - 顶部：「我」「TA」头像气泡常驻；底部：点状导航与滚动联动
                 // ============================================================================
-
-                // 配色 token（与方案 D 设计稿一致）
-                val cream = Color(0xFFFFF8F0)
-                val peach = Color(0xFFFFE4D1)
-                val coral = Color(0xFFFF8B7B)
-                val ink = Color(0xFF3D2E2A)
-                val muted = Color(0xFFA89890)
-                val mint = Color(0xFF3A9E91)
-
-                // 全屏根容器：Box 叠加（背景层 + 内容层 + 卡片层 + 导航层）
-                Box(Modifier.fillMaxSize()) {
-                    // ============================================================================
-                    // 第 1 层：全屏背景
-                    // ----------------------------------------------------------------------------
-                    // 地图页：WebView 全屏铺满；其他页：渐变背景
-                    // ============================================================================
-                    when (selected) {
-                        Tab.MAP -> {
-                            // WebView 地图全屏（底层）
-                            PlaceholderScreen(
-                                icon = { Text("🗺️", fontSize = 40.sp) },
-                                title = "实时地图",
-                                desc = "",
-                                accent = coral,
-                                useMapWebView = true
-                            )
-                        }
-                        else -> {
-                            // 非地图页：奶油→蜜桃渐变背景
-                            Box(
-                                Modifier
-                                    .fillMaxSize()
-                                    .background(
-                                        androidx.compose.ui.graphics.Brush.verticalGradient(
-                                            listOf(cream, peach)
-                                        )
-                                    )
-                            )
-                        }
+                TidalHomeScreen(
+                    mapContent = {
+                        // WebView 地图全屏（底层）
+                        PlaceholderScreen(
+                            icon = { Text("🗺️", fontSize = 40.sp) },
+                            title = "实时地图",
+                            desc = "",
+                            accent = Coral,
+                            useMapWebView = true
+                        )
                     }
-
-                    // ============================================================================
-                    // 第 2 层：顶部浮动气泡头像（左右各一个）
-                    // ----------------------------------------------------------------------------
-                    // 仅在非地图页显示（地图页由 WebView 前端自己渲染）
-                    // ============================================================================
-                    if (selected != Tab.MAP) {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 18.dp, vertical = 50.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            // 我的气泡（薄荷绿）
-                            Box(
-                                Modifier
-                                    .size(64.dp)
-                                    .clip(RoundedCornerShape(50))
-                                    .background(
-                                        androidx.compose.ui.graphics.Brush.linearGradient(
-                                            listOf(Color(0xFF7ECEC0), Color(0xFFA8DDD2))
-                                        )
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("我", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                            }
-                            // TA 的气泡（珊瑚粉）
-                            Box(
-                                Modifier
-                                    .size(64.dp)
-                                    .clip(RoundedCornerShape(50))
-                                    .background(
-                                        androidx.compose.ui.graphics.Brush.linearGradient(
-                                            listOf(coral, Color(0xFFFFB5A7))
-                                        )
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("TA", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-
-                    // ============================================================================
-                    // 第 3 层：底部玻璃卡片（核心交互区）
-                    // ----------------------------------------------------------------------------
-                    // 地图页：紧凑卡片（位置信息）；其他页：高卡片（完整内容）
-                    // 卡片内含 pill tabs 切换 + 点状导航
-                    // ============================================================================
-                    Box(
-                        Modifier
-                            .fillMaxSize(),
-                        contentAlignment = Alignment.BottomCenter
-                    ) {
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp)
-                        ) {
-                            // ============================================================================
-                            // 玻璃卡片主体
-                            // ============================================================================
-                            Card(
-                                Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(28.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = Color.White.copy(alpha = 0.92f)
-                                ),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-                            ) {
-                                Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
-                                    // ============================================================================
-                                    // 卡片顶部：拖拽把手
-                                    // ============================================================================
-                                    Box(
-                                        Modifier
-                                            .align(Alignment.CenterHorizontally)
-                                            .size(36.dp, 4.dp)
-                                            .background(Color(0xFF3D2E2A).copy(alpha = 0.18f), RoundedCornerShape(2.dp))
-                                    )
-                                    Spacer(Modifier.height(14.dp))
-
-                                    // ============================================================================
-                                    // 卡片顶部：pill tabs（位置/状态/统计/我的）
-                                    // ============================================================================
-                                    Row(
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .background(Color(0xFF3D2E2A).copy(alpha = 0.06f), RoundedCornerShape(50))
-                                            .padding(4.dp)
-                                    ) {
-                                        Tab.values().forEach { t ->
-                                            val isActive = selected == t
-                                            Box(
-                                                Modifier
-                                                    .weight(1f)
-                                                    .clip(RoundedCornerShape(50))
-                                                    .background(if (isActive) Color.White else Color.Transparent)
-                                                    .clickable { selected = t }
-                                                    .padding(vertical = 8.dp),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    t.label,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = if (isActive) coral else muted
-                                                )
-                                            }
-                                        }
-                                    }
-                                    Spacer(Modifier.height(14.dp))
-
-                                    // ============================================================================
-                                    // 卡片内容区：根据 Tab 显示不同页面
-                                    // ----------------------------------------------------------------------------
-                                    // 地图页：显示位置摘要；其他页：显示完整内容
-                                    // ============================================================================
-                                    when (selected) {
-                                        Tab.MAP -> {
-                                            // 地图页卡片：位置摘要（紧凑）
-                                            Column {
-                                                Text("TA 在 朝阳公园", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = ink)
-                                                Spacer(Modifier.height(4.dp))
-                                                Text("已停留 23 分钟 · 距你 1.4 km", fontSize = 12.sp, color = muted)
-                                                Spacer(Modifier.height(14.dp))
-                                                // 快捷操作按钮
-                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                    Box(
-                                                        Modifier
-                                                            .background(coral.copy(alpha = 0.12f), RoundedCornerShape(50))
-                                                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                                                    ) {
-                                                        Text("🚗 导航", fontSize = 11.sp, color = coral, fontWeight = FontWeight.SemiBold)
-                                                    }
-                                                    Box(
-                                                        Modifier
-                                                            .background(coral.copy(alpha = 0.12f), RoundedCornerShape(50))
-                                                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                                                    ) {
-                                                        Text("💬 发消息", fontSize = 11.sp, color = coral, fontWeight = FontWeight.SemiBold)
-                                                    }
-                                                    Box(
-                                                        Modifier
-                                                            .background(mint.copy(alpha = 0.15f), RoundedCornerShape(50))
-                                                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                                                    ) {
-                                                        Text("🔔 到达提醒", fontSize = 11.sp, color = mint, fontWeight = FontWeight.SemiBold)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        Tab.APPS -> AppScreen()
-                                        Tab.STATS -> StatsScreen()
-                                        Tab.ME -> SettingsScreen(onBackToMap = { selected = Tab.MAP })
-                                    }
-                                }
-                            }
-
-                            Spacer(Modifier.height(14.dp))
-
-                            // ============================================================================
-                            // 最底部：点状导航指示器
-                            // ============================================================================
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 20.dp),
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Tab.values().forEach { t ->
-                                    val isActive = selected == t
-                                    Box(
-                                        Modifier
-                                            .padding(horizontal = 4.dp)
-                                            .size(if (isActive) 24.dp else 8.dp, 8.dp)
-                                            .clip(RoundedCornerShape(50))
-                                            .background(if (isActive) coral else Color(0xFF3D2E2A).copy(alpha = 0.2f))
-                                    )
-                                }
-                            }
-                        }
-                    }
+                ) { backToMap ->
+                    SettingsScreen(onBackToMap = backToMap, embedded = true)
                 }
             }
         }
@@ -1197,7 +960,7 @@ class MainActivity : ComponentActivity() {
     // ============================================================================
     @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
     @Composable
-    fun SettingsScreen(onBackToMap: () -> Unit) {
+    fun SettingsScreen(onBackToMap: () -> Unit, embedded: Boolean = false) {
         // ============================================================================
         // 状态收集：订阅用户信息、采集频率的最新值
         // - 与 PlaceholderScreen 类似，但这里是设置页，需要根据这些值渲染 UI
@@ -1235,9 +998,9 @@ class MainActivity : ComponentActivity() {
         // 设置页根容器：Column（垂直滚动 + 浅粉色背景）
         // ============================================================================
         Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+            // 嵌入潮汐抽屉时禁用自身滚动，由外层抽屉统一滚动
+            if (embedded) Modifier.fillMaxWidth()
+            else Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
         ) {
             // ============================================================================
             // 顶部：大爱心 emoji + 用户信息
