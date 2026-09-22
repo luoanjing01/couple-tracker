@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn           // 纵向懒加载�
 import androidx.compose.foundation.lazy.LazyRow            // 横向滑动列表（最近打开窗口）
 import androidx.compose.foundation.layout.*         // 布局相关 (Column/Row/Box/Spacer 等)
 import androidx.compose.foundation.rememberScrollState  // 记住滚动位置
+import androidx.compose.foundation.shape.CircleShape    // 正圆（空小时小圆点）
 import androidx.compose.foundation.shape.RoundedCornerShape  // 圆角形状
 import androidx.compose.foundation.verticalScroll  // 垂直滚动
 // ---------- 下拉刷新相关 (Material 旧 API) ----------
@@ -214,10 +215,27 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
     // =========================================================================
     // ===== 聚合 =====
     val zone = ZoneId.systemDefault()  // 系统时区,用于把时间戳换算成本地时辰
-    // byApp: 把 rows 按包名分组,累加使用时长,得到每个 APP 的统计对象
-    // remember(rows): 当 rows 改变时才重新计算,避免每次重组都重复计算
-    val byApp = remember(rows) {
-        rows.groupBy { it.package_name }                       // 按 package_name 分组
+    // ===== 数据清洗：同一小时同一 APP 累计最多 3600 秒 =====
+    // 【为什么】历史版本存在双通道上报（AppUsageMonitor 定时增量 + AppSessionTracker 切换补报
+    //   完整会话时长），同一段时间被重复计入，云端遗留"一小时 >60 分钟"的脏数据。
+    // 【成熟做法】iOS 屏幕使用时间/数字健康均以物理上限为准：一小时最多 60 分钟，
+    //   超出部分视为重复上报直接截断。清洗后 byApp/hourBuckets/hourAppStats 全部用 displayRows。
+    val displayRows = remember(rows) {
+        rows.groupBy { row ->
+            // 解析失败的归到 -1 组：不进柱状图但仍计入总时长（与原行为一致）
+            val lt = runCatching {
+                java.time.Instant.parse(row.created_at).atZone(zone).toLocalDateTime()
+            }.getOrNull()
+            (lt?.hour ?: -1) to row.package_name
+        }.map { (_, list) ->
+            // 同一小时同一 APP 多条记录合并为一条：时长求和后截断到 3600 秒（一小时物理上限）
+            list.first().copy(usage_seconds = list.sumOf { it.usage_seconds }.coerceAtMost(3600))
+        }
+    }
+    // byApp: 把清洗后的记录按包名分组,累加使用时长,得到每个 APP 的统计对象
+    // remember(displayRows): 当 displayRows 改变时才重新计算,避免每次重组都重复计算
+    val byApp = remember(displayRows) {
+        displayRows.groupBy { it.package_name }                       // 按 package_name 分组
             .map { (pkg, list) ->                              // 把每组转换成 AppStat
                 AppStat(
                     packageName = pkg,
@@ -237,9 +255,9 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
     // =========================================================================
     // 按小时聚合（0..23）
     // hourBuckets: 长度 24 的 IntArray,索引 0~23 分别对应该小时的总使用秒数
-    val hourBuckets = remember(rows) {
+    val hourBuckets = remember(displayRows) {
         val hb = IntArray(24) { 0 }                                    // 初始化 24 个桶,全部填 0
-        for (row in rows) {
+        for (row in displayRows) {
             // 把记录的 UTC 时间字符串解析成本地时区的 LocalDateTime
             // runCatching 保护：解析失败则跳过这一行
             val lt = runCatching {
@@ -251,9 +269,9 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
     }
 
     // hourAppStats: 每个小时 → 该小时内各 APP 的使用时长排行
-    // 用途：点击柱状图某根柱子后，在明细面板里展示"这一小时都用了哪些 APP"
-    val hourAppStats = remember(rows) {
-        rows.mapNotNull { row ->
+    // 用途：点击柱状图某根柱子后，在大字区域展示"这一小时都用了哪些 APP"
+    val hourAppStats = remember(displayRows) {
+        displayRows.mapNotNull { row ->
             val lt = runCatching {
                 java.time.Instant.parse(row.created_at).atZone(zone).toLocalDateTime()
             }.getOrNull() ?: return@mapNotNull null
@@ -365,75 +383,59 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
                     fontSize = 13.sp, color = Color(0xFFA89890)
                 )
                 Spacer(Modifier.height(6.dp))
-                // 大字号总时长 (如 "3小时45分"),无数据则显示"暂无记录"
-                Text(
-                    if (totalSec > 0) formatDuration(totalSec) else "暂无记录",
-                    fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = mainColor
-                )
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // 左侧：使用 APP 数量
-                    Text("📱 使用 APP 数", fontSize = 12.sp, color = Color(0xFFA89890))
-                    Spacer(Modifier.width(6.dp))
-                    Text("" + byApp.size + " 个", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF3D2E2A))
-                    Spacer(Modifier.width(18.dp))
-                    // 右侧：最常用 APP
-                    Text("⭐ 最常用", fontSize = 12.sp, color = Color(0xFFA89890))
-                    Spacer(Modifier.width(6.dp))
+                // ===== 大字区域：默认显示当日总时长；点选柱子后原位切换成该小时明细 =====
+                // 【iOS 屏幕使用时间同款交互】选中小时时总时长隐藏、原位显示该小时数据，
+                // 布局高度不变，不会在图表上方多出一行把图表挤下去。
+                if (selectedHour == null) {
+                    // 大字号总时长 (如 "3小时45分"),无数据则显示"暂无记录"
                     Text(
-                        // 有数据→"emoji + APP名";无数据→"-"
-                        topApp?.let { categoryEmoji(it.category) + " " + it.appName } ?: "-",
-                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF3D2E2A),
-                        maxLines = 1  // 单行,避免超长 APP 名撑破布局
+                        if (totalSec > 0) formatDuration(totalSec) else "暂无记录",
+                        fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = mainColor
                     )
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // 左侧：使用 APP 数量
+                        Text("📱 使用 APP 数", fontSize = 12.sp, color = Color(0xFFA89890))
+                        Spacer(Modifier.width(6.dp))
+                        Text("" + byApp.size + " 个", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF3D2E2A))
+                        Spacer(Modifier.width(18.dp))
+                        // 右侧：最常用 APP
+                        Text("⭐ 最常用", fontSize = 12.sp, color = Color(0xFFA89890))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            // 有数据→"emoji + APP名";无数据→"-"
+                            topApp?.let { categoryEmoji(it.category) + " " + it.appName } ?: "-",
+                            fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF3D2E2A),
+                            maxLines = 1  // 单行,避免超长 APP 名撑破布局
+                        )
+                    }
+                } else {
+                    // 选中小时：大字=该小时时长，副行=时段 + 该小时 TOP3 应用
+                    val hour = selectedHour!!
+                    val hourApps = hourAppStats[hour].orEmpty()
+                    Text(
+                        formatDuration(hourBuckets[hour]),
+                        fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = mainColor
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${hour}时 - ${hour + 1}时", fontSize = 12.sp, color = Color(0xFFA89890))
+                        // TOP3 应用横排：emoji + 名称 + 时长
+                        hourApps.take(3).forEach { app ->
+                            Spacer(Modifier.width(14.dp))
+                            Text(
+                                categoryEmoji(app.category) + " " + app.appName + " " + formatDuration(app.totalSeconds),
+                                fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF3D2E2A),
+                                maxLines = 1
+                            )
+                        }
+                    }
                 }
 
-                // ===== 24小时柱状图（点柱子看该小时明细，参考 iOS 屏幕使用时间）=====
+                // ===== 24小时柱状图（点柱子后大字区域原位切换成该小时明细）=====
                 // 仅当总时长 > 0 时才显示柱状图
                 if (totalSec > 0) {
                     Spacer(Modifier.height(16.dp))
-                    // 选中小时的明细面板：左=该小时总时长+时段，右=该小时 TOP3 应用
-                    selectedHour?.let { hour ->
-                        val hourApps = hourAppStats[hour].orEmpty()
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(Color(0xFFF4F6F9))
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    formatDuration(hourBuckets[hour]),
-                                    fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF3D2E2A)
-                                )
-                                Spacer(Modifier.height(2.dp))
-                                Text("${hour}时 - ${hour + 1}时", fontSize = 11.sp, color = Color(0xFFA89890))
-                            }
-                            Spacer(Modifier.weight(1f))
-                            Column(horizontalAlignment = Alignment.End) {
-                                hourApps.take(3).forEach { app ->
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(categoryEmoji(app.category), fontSize = 11.sp)
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(
-                                            app.appName, fontSize = 10.sp,
-                                            color = Color(0xFFA89890), maxLines = 1
-                                        )
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(
-                                            formatDuration(app.totalSeconds),
-                                            fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFF3D2E2A)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                    }
                     HourBarChart(
                         hourBuckets = hourBuckets,
                         color = mainColor,
@@ -840,7 +842,8 @@ private fun HourBarChart(
     // Y轴刻度：分钟
     //   把最大值除以 60 得到分钟,向上取整到 10 的倍数 (例如 12 分 → 20 分,便于刻度)
     //   coerceAtLeast(10): 至少 10 分钟,避免数值过小看不出刻度
-    val yMaxMin = ((maxBucket / 60 + 9) / 10 * 10).coerceAtLeast(10)
+    //   coerceAtMost(60): 一小时物理上限 60 分钟（数据已在聚合层截断，这里二次保险）
+    val yMaxMin = ((maxBucket / 60 + 9) / 10 * 10).coerceAtLeast(10).coerceAtMost(60)
     val yMaxSec = yMaxMin * 60  // 把分钟换算回秒,用作柱子高度比例的分母
 
     Column {
@@ -885,13 +888,22 @@ private fun HourBarChart(
                             Modifier.weight(1f).fillMaxWidth().height(116.dp)
                                 // 有数据的小时才能点选（空小时没有明细可看）
                                 .then(if (sec > 0) Modifier.clickable { onSelect(h) } else Modifier),
-                            contentAlignment = Alignment.BottomCenter  // 内容 (实际柱子) 贴底居中
+                            contentAlignment = Alignment.BottomCenter  // 内容贴底居中
                         ) {
-                            // 实际柱子 (宽度只占父 Box 的 60%,留出空隙)
-                            Box(
-                                Modifier.fillMaxWidth(0.6f).height(hDp)
-                                    .background(color.copy(alpha = barAlpha), RoundedCornerShape(2.dp))  // 圆角 2dp
-                            )
+                            if (sec > 0) {
+                                // 实际柱子 (宽度只占父 Box 的 60%,留出空隙)
+                                Box(
+                                    Modifier.fillMaxWidth(0.6f).height(hDp)
+                                        .background(color.copy(alpha = barAlpha), RoundedCornerShape(2.dp))  // 圆角 2dp
+                                )
+                            } else {
+                                // 无数据小时：贴底小圆点占位（iOS 屏幕使用时间同款），
+                                // 24 个刻度都可见，柱子间距在视觉上就均匀了
+                                Box(
+                                    Modifier.size(3.dp)
+                                        .background(color.copy(alpha = 0.25f * barAlpha), CircleShape)
+                                )
+                            }
                         }
                     }
                 }

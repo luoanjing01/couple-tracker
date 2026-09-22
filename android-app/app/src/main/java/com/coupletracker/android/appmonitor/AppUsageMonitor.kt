@@ -164,16 +164,18 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
 
         // ===== App 切换检测 =====
         if (fg != lastPackage) {
-            // ⚠️ APP 切换了 → 先补报前一个 APP（如果用了 ≥10 秒），再重置
-            // 如果之前有正在用的 App 且会话已开始，先把它的使用时长补报上去
+            // ⚠️ APP 切换了 → 补报前一个 APP「距上次上报的增量」，再重置
+            // 【成熟做法】只报增量（now - lastReportAt），不报会话累计（now - sessionStartAt）：
+            //   会话期间的时长已被每 15 秒的定时增量覆盖，再报累计会同一段时间计两次，
+            //   导致云端一小时超过 60 分钟（iOS/数字健康等统计软件均以物理上限为准）。
             if (lastPackage.isNotEmpty() && sessionStartAt > 0) {
-                // 计算前一个 App 的累计使用秒数
-                val prevSeconds = ((now - sessionStartAt) / 1000).toInt()
-                // 只上报使用 ≥10 秒的，过滤掉短暂切换（比如误触）
-                if (prevSeconds >= 10) {
+                // 计算距上次上报的未上报秒数
+                val pendingSeconds = ((now - lastReportAt) / 1000).toInt()
+                // 只上报 ≥10 秒的，过滤掉短暂切换（比如误触）
+                if (pendingSeconds >= 10) {
                     val prevPkg = lastPackage
                     // window_start 传旧会话的真实打开时刻（此刻 sessionStartAt 尚未被重置）
-                    reportOnce(prevPkg, prevSeconds, sessionStartAt)
+                    reportOnce(prevPkg, pendingSeconds, sessionStartAt)
                 }
             }
             // 切换后，把"上次包名"更新为新 App，并重置会话起点和上报时间
