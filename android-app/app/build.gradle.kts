@@ -15,8 +15,8 @@ android {
         // ====== 版本号自动递增 ======
         // 本地构建用默认值 177 / 0.177
         // GitHub Actions 构建时通过 -PversionCode / -PversionName 传入自动递增的版本号
-        versionCode = (project.properties["versionCode"] as? String)?.toInt() ?: 188
-        versionName = project.properties["versionName"] as? String ?: "0.188"
+        versionCode = (project.properties["versionCode"] as? String)?.toInt() ?: 189
+        versionName = project.properties["versionName"] as? String ?: "0.189"
 
         // ====== Supabase 云端配置 ======
         val supabaseUrl = project.properties["SUPABASE_URL"] as? String
