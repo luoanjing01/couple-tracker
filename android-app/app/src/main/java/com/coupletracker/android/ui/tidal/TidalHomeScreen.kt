@@ -74,6 +74,7 @@ import com.coupletracker.android.data.NetworkModule
 import com.coupletracker.android.data.UserRepository
 import com.coupletracker.android.ui.AppScreen
 import com.coupletracker.android.ui.StatsScreen
+import com.coupletracker.android.ui.TidalMapBridge
 import com.coupletracker.android.ui.theme.ChipBg
 import com.coupletracker.android.ui.theme.ChipBgCool
 import com.coupletracker.android.ui.theme.Coral
@@ -232,6 +233,27 @@ fun TidalHomeScreen(
             // 背景层：全屏地图（铺在抽屉底下，不吃 innerPadding）
             Box(Modifier.fillMaxSize()) { mapContent() }
         }
+
+        // ====================================================================
+        // 状态栏可读性 scrim（主流地图 App 方案：高德/滴滴同款）：
+        // 状态栏保持透明沉浸式，但顶部叠一层 白色→透明 的纵向渐变，
+        // 保证时间/电量等深色图标在浅色地图瓦片上始终清晰可读。
+        // ====================================================================
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(88.dp)
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = 0.92f),
+                            Color.White.copy(alpha = 0.55f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
 
         // ====================================================================
         // 顶部头像气泡（我 = 薄荷渐变，TA = 珊瑚渐变，常驻最上层）
@@ -395,6 +417,8 @@ private fun LocationSection(
     var partnerName by remember { mutableStateOf("TA") }
     var partnerLoc by remember { mutableStateOf<LocationRow?>(null) }
     var myLoc by remember { mutableStateOf<LocationRow?>(null) }
+    // 轨迹开关状态：true=地图上正在显示两人当天轨迹
+    var trackOn by remember { mutableStateOf(false) }
 
     // ---- 轮询：每 30 秒拉一次双方最新位置（看 TA = Supabase 远端数据）----
     LaunchedEffect(myId, partnerId) {
@@ -533,7 +557,19 @@ private fun LocationSection(
                         ctx.startActivity(Intent(Intent.ACTION_VIEW, uri))
                     }
                 }
-                TidalChip(text = "📍 轨迹", bg = ChipBgCool, fg = MintDeep) { onShowTrack() }
+                // 轨迹开关：按下显示两人当天轨迹并收起抽屉看地图，再按取消显示
+                TidalChip(
+                    text = if (trackOn) "✕ 取消轨迹" else "📍 轨迹",
+                    bg = if (trackOn) ChipBg else ChipBgCool,
+                    fg = if (trackOn) Coral else MintDeep
+                ) {
+                    trackOn = !trackOn
+                    // 通过 JS 桥调前端 toggleTodayTracks（页面未就绪时前端静默忽略）
+                    TidalMapBridge.eval(
+                        "try{window.toggleTodayTracks&&window.toggleTodayTracks($trackOn);}catch(e){}"
+                    )
+                    if (trackOn) onShowTrack()   // 收起抽屉露出地图
+                }
             } else {
                 TidalChip(text = "💑 去配对", bg = ChipBgCool, fg = MintDeep) { onGoPair() }
             }

@@ -104,6 +104,20 @@ import kotlin.math.roundToInt                 // 浮点数四舍五入转整数
  * - Jetpack lifecycleScope：与 Activity 生命周期绑定的协程作用域，
  *   在其中启动的协程会在 Activity 销毁时自动取消，避免内存泄漏。
  */
+/**
+ * 地图 JS 桥（潮汐卡片 v3）：原生「轨迹」按钮通过它调用 WebView 前端函数。
+ * WebView 在 PlaceholderScreen 的 update 回调里注册弱引用（缓存复用时也会刷新）。
+ */
+object TidalMapBridge {
+    var webView: java.lang.ref.WeakReference<WebView>? = null
+
+    /** 在主线程对地图 WebView 执行一段 JS（页面未就绪时静默忽略） */
+    fun eval(js: String) {
+        val wv = webView?.get() ?: return
+        wv.post { runCatching { wv.evaluateJavascript(js, null) } }
+    }
+}
+
 class MainActivity : ComponentActivity() {
 
     // ============================================================================
@@ -746,6 +760,8 @@ class MainActivity : ComponentActivity() {
                         //    ① 重新注入用户信息：防止刚登录/刚配对后切回地图页，前端仍用旧数据
                         //    ② 踢一下地图尺寸：防止 WebView 在后台状态中尺寸被清零
                         //    ③ 触发前端立即刷新位置：不等待下次轮询
+                        // 同时把 WebView 引用注册到地图桥，供「轨迹」按钮调前端函数
+                        TidalMapBridge.webView = java.lang.ref.WeakReference(wv)
                         val js = buildInjectionJs() + "; try{ var m = (typeof map !== 'undefined' && map); if (m) { m.invalidateSize(true); setTimeout(function(){m.invalidateSize(true);},300);} } catch(e){} try{ if(typeof poll==='function') poll(); } catch(e){}"
                         runCatching { wv.evaluateJavascript(js, null) }
                     }
