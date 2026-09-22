@@ -419,6 +419,30 @@ private fun LocationSection(
     var myLoc by remember { mutableStateOf<LocationRow?>(null) }
     // 轨迹开关状态：true=地图上正在显示两人当天轨迹
     var trackOn by remember { mutableStateOf(false) }
+    // TA 当前地名（逆地理编码结果，如"东城区 · 北京"）
+    var partnerPlace by remember { mutableStateOf<String?>(null) }
+    // 上次逆地理的坐标：移动 <300m 时复用结果，避免频繁请求
+    var lastGeoLat by remember { mutableStateOf(Double.NaN) }
+    var lastGeoLng by remember { mutableStateOf(Double.NaN) }
+
+    // ---- 逆地理编码：坐标 → 具体地名 ----
+    // 成熟方案参考：Zenly / 苹果"查找" / Life360 都在头像下显示"在 XX区/街道"。
+    // 无地图厂商 key，采用 BigDataCloud 免费逆地理接口（无需注册、支持中文）。
+    LaunchedEffect(partnerLoc?.latitude, partnerLoc?.longitude) {
+        val p = partnerLoc ?: return@LaunchedEffect
+        // 距离上次请求 <300m 直接复用，降低请求频率
+        if (!lastGeoLat.isNaN()) {
+            val moved = FloatArray(1)
+            android.location.Location.distanceBetween(lastGeoLat, lastGeoLng, p.latitude, p.longitude, moved)
+            if (moved[0] < 300f && partnerPlace != null) return@LaunchedEffect
+        }
+        val place = withContext(Dispatchers.IO) { reverseGeocode(p.latitude, p.longitude) }
+        if (place != null) {
+            partnerPlace = place
+            lastGeoLat = p.latitude
+            lastGeoLng = p.longitude
+        }
+    }
 
     // ---- 轮询：每 30 秒拉一次双方最新位置（看 TA = Supabase 远端数据）----
     LaunchedEffect(myId, partnerId) {
@@ -487,6 +511,8 @@ private fun LocationSection(
     val titleText = when {
         !paired -> "还没和 TA 配对"
         partnerLoc == null -> "$partnerName 的位置"
+        // 逆地理成功：显示具体地名（Zenly/查找 同款"在 XX"格式）；否则兜底"在这里"
+        partnerPlace != null -> "$partnerName 在 $partnerPlace"
         else -> "$partnerName 在这里"
     }
     val subText = when {
@@ -503,15 +529,8 @@ private fun LocationSection(
             }
         }
     }
-    // eta 胶囊：估算车程（30km/h ≈ 500m/分钟）；<100m 认为就在附近
-    val etaText: String? = when {
-        !paired || partnerLoc == null || distMeters == null -> null
-        distMeters < 100f -> "就在附近"
-        else -> "约 ${(distMeters / 500f).toInt().coerceAtLeast(1)} 分钟"
-    }
-
     Column(Modifier.fillMaxWidth()) {
-        // ======== peek-place：图标 + 地名 + 副文案 + eta 胶囊 ========
+        // ======== peek-place：图标 + 地名 + 副文案 ========
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
@@ -527,16 +546,6 @@ private fun LocationSection(
                 Text(titleText, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Spacer(Modifier.height(1.dp))
                 Text(subText, fontSize = 11.sp, color = Muted)
-            }
-            if (etaText != null) {
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Coral)
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Text(etaText, color = PureWhite, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                }
             }
         }
 
@@ -597,3 +606,30 @@ private fun TidalChip(
         Text(text, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = fg)
     }
 }
+
+// ============================================================================
+// 逆地理编码：坐标 → 中文地名（BigDataCloud 免费接口，无需 key）
+// 返回格式优先「城市 · 区县」，与 Zenly / 苹果"查找"的"在 XX"展示习惯一致；
+// 网络失败时返回 null，调用方保留旧值或兜底文案。
+// ============================================================================
+private fun reverseGeocode(lat: Double, lng: Double): String? = runCatching {
+    val url = "https://api.bigdatacloud.net/data/reverse-geocode-client" +
+        "?latitude=$lat&longitude=$lng&localityLanguage=zh"
+    val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+        connectTimeout = 5000
+        readTimeout = 5000
+    }
+    val body = conn.inputStream.bufferedReader().use { it.readText() }
+    conn.disconnect()
+    val obj = org.json.JSONObject(body)
+    val locality = obj.optString("locality")            // 区/县/街道级
+    val city = obj.optString("city")                    // 城市
+    val region = obj.optString("principalSubdivision")  // 省/州
+    when {
+        locality.isNotBlank() && city.isNotBlank() && locality != city -> "$city · $locality"
+        locality.isNotBlank() -> locality
+        city.isNotBlank() -> city
+        region.isNotBlank() -> region
+        else -> null
+    }
+}.getOrNull()
