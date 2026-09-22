@@ -876,7 +876,10 @@ data class LocationRow(
     val speed: Double? = null,
     val battery_level: Int? = null,
     val is_moving: Boolean = false,
-    val created_at: String? = null
+    val created_at: String? = null,
+    // 部分写入路径会带客户端时间戳字段 timestamp（epoch 毫秒或 ISO 字符串），
+    // 地图前端按 timestamp || created_at 取值，这里同样优先使用它
+    val timestamp: String? = null
 )
 
 /**

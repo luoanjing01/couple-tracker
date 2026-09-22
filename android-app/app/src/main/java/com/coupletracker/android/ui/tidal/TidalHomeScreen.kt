@@ -20,11 +20,6 @@ package com.coupletracker.android.ui.tidal
 
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -135,8 +130,6 @@ fun TidalHomeScreen(
             idx
         }
     }
-    val sheetExpanded by remember { derivedStateOf { sheetState.currentValue == SheetValue.Expanded } }
-
     // 展开态高度 = 屏高 - 125dp（设计稿：625 / 750，不挡顶部头像气泡）
     val screenH = LocalConfiguration.current.screenHeightDp
     val sheetMaxH = (screenH - 125).coerceAtLeast(360)
@@ -256,17 +249,6 @@ fun TidalHomeScreen(
         }
 
         // ====================================================================
-        // 拖拽提示箭头（仅收起态显示，上下浮动）
-        // ====================================================================
-        if (!sheetExpanded) {
-            DragHint(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 206.dp)
-            )
-        }
-
-        // ====================================================================
         // 底部点状导航（与滚动联动，点击跳转）
         // ====================================================================
         PageDots(
@@ -366,27 +348,6 @@ private fun AvatarBubble(text: String, isMe: Boolean) {
 }
 
 // ============================================================================
-// 拖拽提示箭头：珊瑚色 ↑，1.5s 上下浮动（对应 .drag-hint + bounce 动画）
-// ============================================================================
-@Composable
-private fun DragHint(modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "dragHint")
-    val dy by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = -6f,
-        animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
-        label = "dy"
-    )
-    Text(
-        "↑",
-        modifier = modifier.offset(y = dy.dp),
-        color = Coral.copy(alpha = 0.5f),
-        fontSize = 18.sp,
-        fontWeight = FontWeight.Bold
-    )
-}
-
-// ============================================================================
 // 底部点状导航：8dp 圆点 / 选中 24dp 珊瑚胶囊（对应 .page-dots）
 // ============================================================================
 @Composable
@@ -474,18 +435,28 @@ private fun LocationSection(
         }
     }
 
-    // ---- 派生：更新时间（分钟前）----
-    fun agoMinutes(iso: String?): Long? = iso?.let {
-        runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull()
-            ?.let { t -> ((System.currentTimeMillis() - t) / 60_000L).coerceAtLeast(0) }
+    // ---- 派生：更新时间（与地图前端同逻辑：timestamp || created_at）----
+    // 成熟解析：epoch 毫秒 / ISO OffsetDateTime（+00:00）/ Instant（Z）三路兼容
+    fun parseTimeMs(raw: String?): Long? {
+        if (raw.isNullOrBlank()) return null
+        val s = raw.trim()
+        if (s.all { it.isDigit() }) return s.toLongOrNull()
+        val normalized = s.replace(' ', 'T')
+        return runCatching {
+            java.time.OffsetDateTime.parse(normalized).toInstant().toEpochMilli()
+        }.recoverCatching {
+            java.time.Instant.parse(normalized).toEpochMilli()
+        }.getOrNull()
     }
-    fun agoText(iso: String?): String = agoMinutes(iso)?.let { m ->
-        when {
+    fun agoText(row: LocationRow?): String {
+        val t = parseTimeMs(row?.timestamp) ?: parseTimeMs(row?.created_at) ?: return "未知"
+        val m = ((System.currentTimeMillis() - t) / 60_000L).coerceAtLeast(0)
+        return when {
             m < 1 -> "刚刚"
             m < 60 -> "${m} 分钟前"
             else -> "${m / 60} 小时前"
         }
-    } ?: "未知"
+    }
 
     // ---- 文案装配 ----
     val paired = !partnerId.isNullOrBlank()
@@ -499,7 +470,7 @@ private fun LocationSection(
         partnerLoc == null -> "等待对方上报位置…"
         else -> buildString {
             if (partnerLoc?.is_moving == true) append("移动中 · ")
-            append("更新于 ${agoText(partnerLoc?.created_at)}")
+            append("更新于 ${agoText(partnerLoc)}")
             distMeters?.let { d ->
                 append(
                     if (d < 1000f) " · 距你 ${d.toInt()} m"
