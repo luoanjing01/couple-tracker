@@ -79,9 +79,9 @@
   .warn-card{position:absolute;top:72px;left:10px;right:10px;z-index:499;border-radius:10px;padding:8px 10px;font-size:11px;line-height:1.4;}
   .warn-red{background:rgba(254,215,215,0.95);color:#742a2a;}      /* 红色警告 */
   .warn-yellow{background:rgba(254,235,200,0.95);color:#744210;}  /* 黄色提示（闪现 toast 用） */
-  /* 图层切换按钮：移到缩放按钮正下方，设计语言与缩放控件统一
-     （白底胶囊 + 24px 大圆角 + 潮汐墨色文字 + 同款柔和阴影） */
-  .layer-btn{position:absolute;top:252px;left:14px;z-index:500;background:rgba(255,255,255,0.96);border-radius:22px;padding:10px 16px;box-shadow:0 6px 20px rgba(61,46,42,0.14);font-size:13px;font-weight:600;color:#3D2E2A;cursor:pointer;user-select:none;border:none;text-align:center;}
+  /* 图层切换按钮：缩放按钮正下方的正圆形按钮（与缩放按钮同宽 44px），
+     只显示 🗺️ 表情，无文字 */
+  .layer-btn{position:absolute;top:252px;left:14px;z-index:500;width:44px;height:44px;background:rgba(255,255,255,0.96);border-radius:50%;box-shadow:0 6px 20px rgba(61,46,42,0.14);font-size:19px;line-height:44px;color:#3D2E2A;cursor:pointer;user-select:none;border:none;text-align:center;}
   .layer-btn:active{transform:scale(0.95);background:#ffffff;}
   /* 缩放按钮：下移到头像气泡下方 + 胶囊大圆角（潮汐卡片 v3） */
   .leaflet-control-zoom{margin-top:150px!important;margin-left:14px!important;border-radius:24px!important;overflow:hidden;box-shadow:0 6px 20px rgba(61,46,42,0.14)!important;border:none!important;}
@@ -578,7 +578,7 @@ function ensureLayerBtn() {
     var btn = document.createElement('div');
     btn.id = 'layerBtn';
     btn.className = 'layer-btn';
-    btn.textContent = '🗺️ 地图';
+    btn.textContent = '🗺️';
     btn.onclick = function() {
       // 如果地图还没初始化好，提示
       if (typeof map === 'undefined' || !map) {
@@ -603,16 +603,18 @@ function switchTileLayer() {
   if (!map) return;
   __tileFailCount = 0;
   var next = (__tileIdx + 1) % __tileSources.length;
+  // 保持当前 center/zoom：只换底图瓦片，不触发重新 fitBounds
+  // （否则两人相距很远时会被拉成"看全国"的比例）
+  var keepCenter = map.getCenter(), keepZoom = map.getZoom();
   loadTileLayer(next, true);
-  // ✅ 切换图层后重新 poll()，让标记用新图层的坐标系重新定位
-  //    并把 fitDone 设为 false，让 poll 中重新 fit() 居中到标记
-  fitDone = false;
+  map.setView(keepCenter, keepZoom, { animate: false });
+  // ✅ 切换图层后重新 poll()，让标记用新图层的坐标系重新定位（不动视角）
   setTimeout(function(){ if (typeof poll === 'function') poll(); }, 300);
 }
 /* updateLayerBtn() — 按钮文案固定为「🗺️ 地图」（点击循环切换街道图/卫星图） */
 function updateLayerBtn() {
   var btn = document.getElementById('layerBtn');
-  if (btn) btn.textContent = '🗺️ 地图';
+  if (btn) btn.textContent = '🗺️';
 }
 
 /* ✅ 纯离线模式：不加载任何底图瓦片，用 CSS 渐变+网格做背景 */

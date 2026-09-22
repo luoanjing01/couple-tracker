@@ -57,7 +57,7 @@ import java.time.format.DateTimeFormatter // 日期格式化 (本文件实际未
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.material.ExperimentalMaterialApi::class)
 // @Composable: 标记此函数为 Compose 可组合函数,可在 UI 树中使用
 @Composable
-fun StatsScreen(embedded: Boolean = false) {
+fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null) {
     // =========================================================================
     // 第一部分：状态初始化
     // =========================================================================
@@ -71,7 +71,9 @@ fun StatsScreen(embedded: Boolean = false) {
     // remember: 在 recomposition (UI 重组) 之间保留值;mutableStateOf 让修改能触发 UI 刷新
     var dayOffset by remember { mutableStateOf(0) } // 0=今天, 1=昨天, 2=前天
     // showPartner: 是否正在查看伴侣的数据 (false=看自己, true=看 TA)
-    var showPartner by remember { mutableStateOf(false) }
+    var showPartnerLocal by remember { mutableStateOf(false) }
+    // 潮汐卡片 v3：外部（顶部头像气泡）控制查看对象时，传入 override 接管切换
+    val showPartner = showPartnerOverride ?: showPartnerLocal
 
     // 伴侣信息 (异步加载,可能为空)
     var partnerId by remember { mutableStateOf<String?>(null) }   // 伴侣的用户 ID
@@ -256,12 +258,12 @@ fun StatsScreen(embedded: Boolean = false) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("每日统计", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
             Spacer(Modifier.weight(1f))  // 弹性空白,把后续元素推到右侧
-            // 切换按钮始终显示：有配对→切换查看对方，无配对→灰色提示
-            Button(
+            // 切换按钮（外部接管视角时隐藏，由顶部头像气泡切换）
+            if (showPartnerOverride == null) Button(
                 onClick = {
                     // 只有已加载到伴侣 ID 时才允许切换,否则按钮颜色为灰,按下也不响应
                     if (partnerId != null) {
-                        showPartner = !showPartner; reloadKey++  // 切换状态并触发数据重拉
+                        showPartnerLocal = !showPartnerLocal; reloadKey++  // 切换状态并触发数据重拉
                     }
                 },
                 shape = RoundedCornerShape(20.dp),  // 圆角 20dp,呈胶囊状

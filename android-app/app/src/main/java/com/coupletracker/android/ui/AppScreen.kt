@@ -93,7 +93,7 @@ import java.time.format.DateTimeFormatter // 日期时间格式化器
  */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.material.ExperimentalMaterialApi::class)
 @Composable
-fun AppScreen(embedded: Boolean = false) {
+fun AppScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null) {
     // ---- 1. 获取基础上下文和当前登录用户 ----
     val ctx = LocalContext.current                                // 当前 Android Context，用于访问系统服务
     val user by UserRepository.get().userFlow.collectAsState(initial = null) // 订阅登录用户流，初次为 null
@@ -102,7 +102,9 @@ fun AppScreen(embedded: Boolean = false) {
 
     // ---- 2. 定义 UI 状态变量（用 remember + mutableStateOf 保持 Compose 状态）----
     // 说明：Compose 用「状态驱动 UI」，状态变化会自动重绘对应组件。
-    var showPartner by remember { mutableStateOf(false) }         // 是否正在查看对方（默认看自己）
+    var showPartnerLocal by remember { mutableStateOf(false) }    // 本地切换状态（独立模式用）
+    // 潮汐卡片 v3：外部（顶部头像气泡）控制查看对象时，传入 override 接管切换
+    val showPartner = showPartnerOverride ?: showPartnerLocal     // 是否正在查看对方
     var partnerId by remember { mutableStateOf<String?>(null) }  // 对方用户 ID（未配对时为 null）
     var partnerName by remember { mutableStateOf("") }            // 对方昵称
     var partnerLoaded by remember { mutableStateOf(false) }       // 对方信息是否加载完毕
@@ -165,8 +167,8 @@ fun AppScreen(embedded: Boolean = false) {
     // 本页只渲染内容列；embedded=false 时才使用自己的下拉刷新 + 纵向滚动外壳。
     @Composable
     fun Content() {
-        // ---- 卡片内顶部：切换按钮行（无标题，只有切换按钮 + 状态提示）----
-        Row(
+        // ---- 卡片内顶部：切换按钮行（外部接管视角时整行隐藏，由顶部头像气泡切换）----
+        if (showPartnerOverride == null) Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -182,7 +184,7 @@ fun AppScreen(embedded: Boolean = false) {
                     if (partnerId == null) {
                         // 无配对，不切换（按钮只是提示状态）
                     } else {
-                        showPartner = !showPartner; reloadKey++   // 切换并刷新
+                        showPartnerLocal = !showPartnerLocal; reloadKey++   // 切换并刷新
                     }
                 },
                 shape = RoundedCornerShape(20.dp),

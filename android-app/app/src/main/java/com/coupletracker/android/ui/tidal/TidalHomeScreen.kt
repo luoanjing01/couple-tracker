@@ -107,6 +107,10 @@ fun TidalHomeScreen(
 ) {
     val scope = rememberCoroutineScope()
 
+    // ---- 全局查看对象：true=看 TA（默认，情侣应用主视角），false=看我 ----
+    // 由顶部头像气泡切换，统一接管位置/状态/统计三个区块的展示对象
+    var viewPartner by remember { mutableStateOf(true) }
+
     // ---- 抽屉状态：默认收起（peek），禁止隐藏 ----
     val sheetState = rememberStandardBottomSheetState(
         initialValue = SheetValue.PartiallyExpanded,
@@ -202,6 +206,7 @@ fun TidalHomeScreen(
                         // ① 位置（peek 卡片：收起态也可见）
                         Box(Modifier.trackAnchor(sectionTops, 0, sectionTopsVersion)) {
                             LocationSection(
+                                viewingPartner = viewPartner,
                                 onShowTrack = { scope.launch { sheetState.partialExpand() } },
                                 onGoPair = { jumpTo(3) }
                             )
@@ -210,12 +215,12 @@ fun TidalHomeScreen(
                         Box(Modifier.trackAnchor(sectionTops, 1, sectionTopsVersion)) {
                             Column {
                                 SectionTitle("📱 手机状态")
-                                AppScreen(embedded = true)
+                                AppScreen(embedded = true, showPartnerOverride = viewPartner)
                             }
                         }
                         // ③ 统计（每日统计 + 应用排行 + 最近打开）
                         Box(Modifier.trackAnchor(sectionTops, 2, sectionTopsVersion)) {
-                            StatsScreen(embedded = true)
+                            StatsScreen(embedded = true, showPartnerOverride = viewPartner)
                         }
                         // ④ 我的（配对卡 + 采集频率 + 账号管理）
                         Box(Modifier.trackAnchor(sectionTops, 3, sectionTopsVersion)) {
@@ -242,13 +247,14 @@ fun TidalHomeScreen(
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(88.dp)
+                .height(64.dp)
                 .align(Alignment.TopCenter)
                 .background(
                     Brush.verticalGradient(
                         listOf(
-                            Color.White.copy(alpha = 0.92f),
-                            Color.White.copy(alpha = 0.55f),
+                            Color.White.copy(alpha = 0.95f),
+                            Color.White.copy(alpha = 0.75f),
+                            Color.White.copy(alpha = 0.35f),
                             Color.Transparent
                         )
                     )
@@ -266,8 +272,9 @@ fun TidalHomeScreen(
                 .padding(horizontal = 18.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            AvatarBubble(text = "我", isMe = true)
-            AvatarBubble(text = "TA", isMe = false)
+            // 点「我」= 全部区块看我；点「TA」= 全部区块看 TA（默认看 TA）
+            AvatarBubble(text = "我", isMe = true, selected = !viewPartner) { viewPartner = false }
+            AvatarBubble(text = "TA", isMe = false, selected = viewPartner) { viewPartner = true }
         }
 
         // ====================================================================
@@ -338,34 +345,55 @@ private fun SectionTitle(text: String) {
 
 // ============================================================================
 // 头像气泡：52dp 圆形 + 渐变 + 3dp 白边 + 右下状态绿点（对应 .bubble）
+// selected=true 时外圈加一圈高亮环（薄荷/珊瑚），标识当前全局查看对象
 // ============================================================================
 @Composable
-private fun AvatarBubble(text: String, isMe: Boolean) {
-    Box(Modifier.size(52.dp)) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .shadow(6.dp, CircleShape)
-                .background(
-                    Brush.linearGradient(
-                        if (isMe) listOf(Mint, MintSoft) else listOf(Coral, CoralSoft)
-                    ),
-                    CircleShape
-                )
-                .border(3.dp, PureWhite, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(text, color = PureWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+private fun AvatarBubble(
+    text: String,
+    isMe: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(Modifier.size(58.dp), contentAlignment = Alignment.Center) {
+        // 选中光环（比气泡大 6dp，不遮挡气泡本体）
+        if (selected) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .border(2.5.dp, if (isMe) MintDeep else Coral, CircleShape)
+            )
         }
-        // 状态绿点（右下 1px 偏移，2dp 白边）
         Box(
             Modifier
-                .align(Alignment.BottomEnd)
-                .offset(x = 1.dp, y = 1.dp)
-                .size(12.dp)
-                .background(StatusGreen, CircleShape)
-                .border(2.dp, PureWhite, CircleShape)
-        )
+                .size(52.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onClick)
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .shadow(6.dp, CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            if (isMe) listOf(Mint, MintSoft) else listOf(Coral, CoralSoft)
+                        ),
+                        CircleShape
+                    )
+                    .border(3.dp, PureWhite, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text, color = PureWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+            // 状态绿点（右下 1px 偏移，2dp 白边）
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(x = 1.dp, y = 1.dp)
+                    .size(12.dp)
+                    .background(StatusGreen, CircleShape)
+                    .border(2.dp, PureWhite, CircleShape)
+            )
+        }
     }
 }
 
@@ -397,15 +425,15 @@ private fun PageDots(
 // 位置区块（peek 卡片）
 // ----------------------------------------------------------------------------
 // 数据绑定（设计稿 + ApiService）：
-//   - TA 最新位置：locations 表 getUserLocations(eq.partnerId, limit=1)，30s 轮询
-//   - 我的最新位置：同上（用于算「距你 x km」，Location.distanceBetween）
-//   - 更新于 X 分钟前：created_at → now
-//   - eta 胶囊：无路径规划 API，用距离 ÷ 30km/h 估算车程约 X 分钟
-//   - 🚗 导航 chip：系统 geo: Intent（高德/百度/系统地图均可接住，成熟方案）
+//   - 主角位置：viewingPartner=true 看 TA / false 看我（由顶部头像气泡统一切换）
+//   - 距你距离：仅看 TA 时计算并显示（看自己无意义）
+//   - 更新于 X 分钟前：timestamp || created_at → now
+//   - 🚗 导航 chip：仅看 TA 时显示，系统 geo: Intent（高德/百度/系统地图均可接住）
 //   - 📍 轨迹 chip：收起抽屉露出地图（轨迹线由 WebView 前端渲染）
 // ============================================================================
 @Composable
 private fun LocationSection(
+    viewingPartner: Boolean,
     onShowTrack: () -> Unit,
     onGoPair: () -> Unit
 ) {
@@ -419,26 +447,30 @@ private fun LocationSection(
     var myLoc by remember { mutableStateOf<LocationRow?>(null) }
     // 轨迹开关状态：true=地图上正在显示两人当天轨迹
     var trackOn by remember { mutableStateOf(false) }
-    // TA 当前地名（逆地理编码结果，如"东城区 · 北京"）
-    var partnerPlace by remember { mutableStateOf<String?>(null) }
+    // 主角当前地名（逆地理编码结果，如"东城区 · 北京"）
+    var subjectPlace by remember { mutableStateOf<String?>(null) }
     // 上次逆地理的坐标：移动 <300m 时复用结果，避免频繁请求
     var lastGeoLat by remember { mutableStateOf(Double.NaN) }
     var lastGeoLng by remember { mutableStateOf(Double.NaN) }
 
+    // ---- 当前主角：看 TA 用 partnerLoc，看我用 myLoc ----
+    val subjectLoc = if (viewingPartner) partnerLoc else myLoc
+    val subjectName = if (viewingPartner) partnerName else "我"
+
     // ---- 逆地理编码：坐标 → 具体地名 ----
     // 成熟方案参考：Zenly / 苹果"查找" / Life360 都在头像下显示"在 XX区/街道"。
     // 无地图厂商 key，采用 BigDataCloud 免费逆地理接口（无需注册、支持中文）。
-    LaunchedEffect(partnerLoc?.latitude, partnerLoc?.longitude) {
-        val p = partnerLoc ?: return@LaunchedEffect
+    LaunchedEffect(viewingPartner, subjectLoc?.latitude, subjectLoc?.longitude) {
+        val p = subjectLoc ?: return@LaunchedEffect
         // 距离上次请求 <300m 直接复用，降低请求频率
         if (!lastGeoLat.isNaN()) {
             val moved = FloatArray(1)
             android.location.Location.distanceBetween(lastGeoLat, lastGeoLng, p.latitude, p.longitude, moved)
-            if (moved[0] < 300f && partnerPlace != null) return@LaunchedEffect
+            if (moved[0] < 300f && subjectPlace != null) return@LaunchedEffect
         }
         val place = withContext(Dispatchers.IO) { reverseGeocode(p.latitude, p.longitude) }
         if (place != null) {
-            partnerPlace = place
+            subjectPlace = place
             lastGeoLat = p.latitude
             lastGeoLng = p.longitude
         }
@@ -506,26 +538,29 @@ private fun LocationSection(
         }
     }
 
-    // ---- 文案装配 ----
+    // ---- 文案装配（跟随主角：看 TA / 看我）----
     val paired = !partnerId.isNullOrBlank()
     val titleText = when {
-        !paired -> "还没和 TA 配对"
-        partnerLoc == null -> "$partnerName 的位置"
+        viewingPartner && !paired -> "还没和 TA 配对"
+        subjectLoc == null -> if (viewingPartner) "$partnerName 的位置" else "我的位置"
         // 逆地理成功：显示具体地名（Zenly/查找 同款"在 XX"格式）；否则兜底"在这里"
-        partnerPlace != null -> "$partnerName 在 $partnerPlace"
-        else -> "$partnerName 在这里"
+        subjectPlace != null -> "$subjectName 在 $subjectPlace"
+        else -> "$subjectName 在这里"
     }
     val subText = when {
-        !paired -> "去「我的」页输入 TA 的配对码即可绑定"
-        partnerLoc == null -> "等待对方上报位置…"
+        viewingPartner && !paired -> "去「我的」页输入 TA 的配对码即可绑定"
+        subjectLoc == null -> if (viewingPartner) "等待对方上报位置…" else "等待本机上报位置…"
         else -> buildString {
-            if (partnerLoc?.is_moving == true) append("移动中 · ")
-            append("更新于 ${agoText(partnerLoc)}")
-            distMeters?.let { d ->
-                append(
-                    if (d < 1000f) " · 距你 ${d.toInt()} m"
-                    else " · 距你 ${"%.1f".format(d / 1000f)} km"
-                )
+            if (subjectLoc?.is_moving == true) append("移动中 · ")
+            append("更新于 ${agoText(subjectLoc)}")
+            // 「距你 X」仅看 TA 时有意义（看自己永远是 0）
+            if (viewingPartner) {
+                distMeters?.let { d ->
+                    append(
+                        if (d < 1000f) " · 距你 ${d.toInt()} m"
+                        else " · 距你 ${"%.1f".format(d / 1000f)} km"
+                    )
+                }
             }
         }
     }
@@ -556,17 +591,22 @@ private fun LocationSection(
                 .padding(top = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (paired) {
-                TidalChip(text = "🚗 导航", bg = ChipBg, fg = Coral) {
-                    val p = partnerLoc ?: return@TidalChip
-                    runCatching {
-                        val uri = Uri.parse(
-                            "geo:${p.latitude},${p.longitude}?q=${p.latitude},${p.longitude}($partnerName)"
-                        )
-                        ctx.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            if (viewingPartner && !paired) {
+                TidalChip(text = "💑 去配对", bg = ChipBgCool, fg = MintDeep) { onGoPair() }
+            } else {
+                // 导航仅看 TA 时显示（导航到自己没意义）
+                if (viewingPartner) {
+                    TidalChip(text = "🚗 导航", bg = ChipBg, fg = Coral) {
+                        val p = partnerLoc ?: return@TidalChip
+                        runCatching {
+                            val uri = Uri.parse(
+                                "geo:${p.latitude},${p.longitude}?q=${p.latitude},${p.longitude}($partnerName)"
+                            )
+                            ctx.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                        }
                     }
                 }
-                // 轨迹开关：按下显示两人当天轨迹并收起抽屉看地图，再按取消显示
+                // 轨迹开关：看我/看 TA 都可用，按下显示两人当天轨迹并收起抽屉看地图，再按取消显示
                 TidalChip(
                     text = if (trackOn) "✕ 取消轨迹" else "📍 轨迹",
                     bg = if (trackOn) ChipBg else ChipBgCool,
@@ -579,8 +619,6 @@ private fun LocationSection(
                     )
                     if (trackOn) onShowTrack()   // 收起抽屉露出地图
                 }
-            } else {
-                TidalChip(text = "💑 去配对", bg = ChipBgCool, fg = MintDeep) { onGoPair() }
             }
         }
     }
