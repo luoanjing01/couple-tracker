@@ -646,9 +646,10 @@ private fun PhoneStatusCard(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // 状态：在线 / 熄屏 / 充电中 / X分钟前 / 离线 — label 统一叫"状态"
+            // 状态：在线 / 熄屏 / X分钟前 / 离线 — label 统一叫"状态"
+            // （充电状态已在「电量」卡片展示，此处不再重复，避免两张卡都说"充电中"）
             // 【行业惯例】（Life360 风格）按对方心跳距今分级：
-            //   < 2 分钟 → 在线（再细分 熄屏/充电中）；< 30 分钟 → "X 分钟前"；≥ 30 分钟 → 离线。
+            //   < 2 分钟 → 在线（再细分 熄屏）；< 30 分钟 → "X 分钟前"；≥ 30 分钟 → 离线。
             //   不再武断显示"关机"——App 无法区分"关机"和"后台被杀"，统一用"离线"表达。
             val statusIcon: String
             val statusValue: String
@@ -672,11 +673,6 @@ private fun PhoneStatusCard(
                     statusValue = "熄屏"
                     statusAccent = Color(0xFF6B7FBF)
                 }
-                !subjectIsMe && taHasDeviceStatus && charging -> {
-                    statusIcon = "🔌"
-                    statusValue = "充电中"
-                    statusAccent = Color(0xFF38A169)
-                }
                 !subjectIsMe && taHasDeviceStatus -> {
                     statusIcon = "🟢"
                     statusValue = "在线"
@@ -693,16 +689,11 @@ private fun PhoneStatusCard(
                     statusValue = "在线"
                     statusAccent = Color(0xFF2F855A)
                 }
-                // —— 自己：本机状态实时可知，保持原有逻辑 ——
+                // —— 自己：本机状态实时可知，保持原有逻辑（充电见电量卡）——
                 !screenOn -> {
                     statusIcon = "🌙"
                     statusValue = "熄屏"
                     statusAccent = Color(0xFF6B7FBF)
-                }
-                charging -> {
-                    statusIcon = "🔌"
-                    statusValue = "充电中"
-                    statusAccent = Color(0xFF38A169)
                 }
                 else -> {
                     statusIcon = "🟢"

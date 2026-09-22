@@ -14,6 +14,8 @@ package com.coupletracker.android.ui
 
 // ---------- Android Compose 基础组件导入 ----------
 import androidx.compose.foundation.background     // 背景色修饰符
+import androidx.compose.foundation.clickable      // 点击修饰符（柱子点选/查看全部）
+import androidx.compose.foundation.lazy.LazyColumn           // 纵向懒加载列表（全部应用页）
 import androidx.compose.foundation.lazy.LazyRow            // 横向滑动列表（最近打开窗口）
 import androidx.compose.foundation.layout.*         // 布局相关 (Column/Row/Box/Spacer 等)
 import androidx.compose.foundation.rememberScrollState  // 记住滚动位置
@@ -37,6 +39,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp    // 尺寸单位
 import androidx.compose.ui.unit.sp    // 字号单位
+import androidx.compose.ui.window.Dialog               // 全屏弹窗（查看全部应用）
+import androidx.compose.ui.window.DialogProperties     // 弹窗属性（禁用平台默认宽度）
 // ---------- 本项目的数据层 (网络请求与用户仓储) ----------
 import com.coupletracker.android.data.AppUsageRow    // 单条 APP 使用记录的数据模型
 import com.coupletracker.android.data.NetworkModule  // 网络模块入口
@@ -85,6 +89,13 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
     var loading by remember { mutableStateOf(false) }            // 是否正在加载
     var loadError by remember { mutableStateOf<String?>(null) } // 加载失败的错误信息
     var reloadKey by remember { mutableStateOf(0) }             // 改变它可强制重新加载 (用作"触发器")
+
+    // selectedHour: 柱状图当前选中的小时（null=未选中），点柱子查看该小时分类明细
+    var selectedHour by remember { mutableStateOf<Int?>(null) }
+    // showAllApps: 是否打开「全部应用」排行页（全屏弹窗）
+    var showAllApps by remember { mutableStateOf(false) }
+    // 切换日期/查看对象时清空选中的小时，避免拿旧数据的明细
+    LaunchedEffect(dayOffset, showPartner) { selectedHour = null }
 
     // =========================================================================
     // 第二部分：下拉刷新配置
@@ -239,6 +250,29 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
         hb
     }
 
+    // hourAppStats: 每个小时 → 该小时内各 APP 的使用时长排行
+    // 用途：点击柱状图某根柱子后，在明细面板里展示"这一小时都用了哪些 APP"
+    val hourAppStats = remember(rows) {
+        rows.mapNotNull { row ->
+            val lt = runCatching {
+                java.time.Instant.parse(row.created_at).atZone(zone).toLocalDateTime()
+            }.getOrNull() ?: return@mapNotNull null
+            lt.hour to row                                   // (小时, 记录) 配对
+        }.groupBy({ it.first }, { it.second })               // 按小时分桶
+            .mapValues { (_, list) ->
+                list.groupBy { it.package_name }             // 小时内再按包名分组
+                    .map { (pkg, l) ->
+                        AppStat(
+                            packageName = pkg,
+                            appName = l.firstOrNull { !it.app_name.isNullOrBlank() }?.app_name ?: pkg,
+                            category = l.firstOrNull { !it.category.isNullOrBlank() }?.category ?: "其他",
+                            totalSeconds = l.sumOf { it.usage_seconds }
+                        )
+                    }
+                    .sortedByDescending { it.totalSeconds }  // 时长降序
+            }
+    }
+
     // =========================================================================
     // 第七部分：颜色主题
     // =========================================================================
@@ -354,11 +388,58 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
                     )
                 }
 
-                // ===== 24小时柱状图 =====
+                // ===== 24小时柱状图（点柱子看该小时明细，参考 iOS 屏幕使用时间）=====
                 // 仅当总时长 > 0 时才显示柱状图
                 if (totalSec > 0) {
                     Spacer(Modifier.height(16.dp))
-                    HourBarChart(hourBuckets = hourBuckets, color = mainColor)  // 调用自定义柱状图组件
+                    // 选中小时的明细面板：左=该小时总时长+时段，右=该小时 TOP3 应用
+                    selectedHour?.let { hour ->
+                        val hourApps = hourAppStats[hour].orEmpty()
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFFF4F6F9))
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    formatDuration(hourBuckets[hour]),
+                                    fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF3D2E2A)
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text("${hour}时 - ${hour + 1}时", fontSize = 11.sp, color = Color(0xFFA89890))
+                            }
+                            Spacer(Modifier.weight(1f))
+                            Column(horizontalAlignment = Alignment.End) {
+                                hourApps.take(3).forEach { app ->
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(categoryEmoji(app.category), fontSize = 11.sp)
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            app.appName, fontSize = 10.sp,
+                                            color = Color(0xFFA89890), maxLines = 1
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            formatDuration(app.totalSeconds),
+                                            fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFF3D2E2A)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    HourBarChart(
+                        hourBuckets = hourBuckets,
+                        color = mainColor,
+                        selectedHour = selectedHour,
+                        onSelect = { h -> selectedHour = if (selectedHour == h) null else h }  // 再点同一根取消选中
+                    )
                 }
             }
         }
@@ -429,9 +510,10 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
                     }
                 }
             }
-            // 状态 4：正常显示 APP 排行
+            // 状态 4：正常显示 APP 排行（紧凑版，只显示前 3，完整榜单进「查看全部」）
             else -> {
-                byApp.forEachIndexed { idx, app ->
+                val top3 = byApp.take(3)
+                top3.forEachIndexed { idx, app ->
                     // 计算该 APP 占总时长的百分比 (整数)
                     val pct = if (totalSec > 0) app.totalSeconds * 100 / totalSec else 0
                     // 调用单行组件渲染
@@ -446,7 +528,81 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
                         barColor = mainColor                                                // 柱状颜色
                     )
                     // 排行项之间留 8dp 间距,但最后一项之后不加间距
-                    if (idx < byApp.lastIndex) Spacer(Modifier.height(8.dp))
+                    if (idx < top3.lastIndex) Spacer(Modifier.height(8.dp))
+                }
+                // 超过 3 个应用时显示「查看全部」入口
+                if (byApp.size > 3) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White)
+                            .clickable { showAllApps = true }
+                            .padding(vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "查看全部 ${byApp.size} 个应用 ›",
+                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = mainColor
+                        )
+                    }
+                }
+            }
+        }
+
+        // ===== 全部应用排行页（全屏弹窗：抽屉里不适合再嵌导航，Dialog 是成熟做法）=====
+        if (showAllApps) {
+            Dialog(
+                onDismissRequest = { showAllApps = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false)  // 全屏宽度
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFFFFF7F2))  // 奶油底，与潮汐风格一致
+                        .statusBarsPadding()
+                ) {
+                    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                        Spacer(Modifier.height(14.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "🏆 全部应用 · $subjectName · " + dateLabel(dayOffset),
+                                fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A)
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                "✕ 关闭",
+                                fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = mainColor,
+                                modifier = Modifier.clickable { showAllApps = false }
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        // 摘要：应用总数 + 当日总时长
+                        Text(
+                            "共 ${byApp.size} 个应用 · " + formatDuration(totalSec),
+                            fontSize = 12.sp, color = Color(0xFFA89890)
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        // 全量榜单（懒加载，应用再多也不卡）
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(byApp.size) { idx ->
+                                val app = byApp[idx]
+                                val pct = if (totalSec > 0) app.totalSeconds * 100 / totalSec else 0
+                                AppRankRow(
+                                    rank = idx + 1,
+                                    emoji = categoryEmoji(app.category),
+                                    name = app.appName,
+                                    category = app.category,
+                                    duration = formatDuration(app.totalSeconds),
+                                    percent = pct,
+                                    barFraction = app.totalSeconds.toFloat() / maxSec,
+                                    barColor = mainColor
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -666,10 +822,17 @@ private fun RecentOpenCard(open: HistoryOpen, isNow: Boolean, maxSec: Int, accen
 // 入参：
 //   hourBuckets : 长度 24 的 IntArray,索引 0~23 对应每小时的累计使用秒数
 //   color       : 柱子的颜色 (随"我/TA"主色调变化)
+//   selectedHour: 当前选中的小时（该根保持实色，其余降到 35% 透明），null=全部正常
+//   onSelect    : 点击某小时的柱子时回调（仅有数据的小时可点）
 // 渲染结构：左边 Y 轴刻度 + 右边 24 根柱子 + 下方 X 轴刻度
 // ============================================================================
 @Composable
-private fun HourBarChart(hourBuckets: IntArray, color: Color) {
+private fun HourBarChart(
+    hourBuckets: IntArray,
+    color: Color,
+    selectedHour: Int? = null,
+    onSelect: (Int) -> Unit = {}
+) {
     // 找到 24 小时桶中的最大值,用作 Y 轴最大刻度
     val maxBucket = hourBuckets.maxOrNull() ?: 0
     // 全是 0 时不显示图表 (调用方已用 totalSec>0 兜底,这里二次保险)
@@ -716,14 +879,18 @@ private fun HourBarChart(hourBuckets: IntArray, color: Color) {
                         val sec = hourBuckets[h]                       // 当前小时的总秒数
                         val f = (sec.toFloat() / yMaxSec).coerceIn(0f, 1f)  // 比例 (0~1),限制到 [0,1] 避免溢出
                         val hDp = (116 * f).dp                         // 柱子实际高度 (最大 116dp,留 4dp 给圆角)
+                        // 选中态透明度：未选中任何柱子 / 当前根被选中 → 实色；其余降到 35%（iOS 同款高亮）
+                        val barAlpha = if (selectedHour == null || selectedHour == h) 1f else 0.35f
                         Box(
-                            Modifier.weight(1f).fillMaxWidth().height(116.dp),
+                            Modifier.weight(1f).fillMaxWidth().height(116.dp)
+                                // 有数据的小时才能点选（空小时没有明细可看）
+                                .then(if (sec > 0) Modifier.clickable { onSelect(h) } else Modifier),
                             contentAlignment = Alignment.BottomCenter  // 内容 (实际柱子) 贴底居中
                         ) {
                             // 实际柱子 (宽度只占父 Box 的 60%,留出空隙)
                             Box(
                                 Modifier.fillMaxWidth(0.6f).height(hDp)
-                                    .background(color, RoundedCornerShape(2.dp))  // 圆角 2dp
+                                    .background(color.copy(alpha = barAlpha), RoundedCornerShape(2.dp))  // 圆角 2dp
                             )
                         }
                     }
@@ -778,45 +945,46 @@ private fun AppRankRow(
         shape = RoundedCornerShape(14.dp),                        // 卡片圆角 14dp
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
-        Column(Modifier.padding(14.dp)) {
+        // 紧凑布局：内边距/字号全面收小一档，排行区域更省空间
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             // 上半部分：排名 + emoji + 名称 + 分类 + 时长 + 百分比
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // 排名：前 3 名显示 🏅,其他显示数字
                 Text(
                     if (rank <= 3) "🏅" else rank.toString(),
-                    fontSize = 16.sp,
-                    modifier = Modifier.width(28.dp)
+                    fontSize = 13.sp,
+                    modifier = Modifier.width(24.dp)
                 )
-                Text(emoji, fontSize = 20.sp)
+                Text(emoji, fontSize = 17.sp)
                 Spacer(Modifier.width(8.dp))
                 // 左侧文字列：APP 名 (主) + 分类 (副)
                 Column(Modifier.weight(1f)) {
                     Text(
                         name,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF3D2E2A),
                         maxLines = 1
                     )
-                    Text(category, fontSize = 11.sp, color = Color(0xFFA89890))
+                    Text(category, fontSize = 10.sp, color = Color(0xFFA89890))
                 }
                 // 右侧数值列：时长 (主) + 百分比 (副)
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(duration, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
-                    Text("" + percent + "%", fontSize = 11.sp, color = Color(0xFFA0AEC0))
+                    Text(duration, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
+                    Text("" + percent + "%", fontSize = 10.sp, color = Color(0xFFA0AEC0))
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             // 下半部分：进度条 (外层背景 + 内层填色)
             // 外层：浅色背景 (主色 + 12% 透明度),表示满进度槽
             Box(
-                Modifier.fillMaxWidth().height(6.dp)
+                Modifier.fillMaxWidth().height(5.dp)
                     .background(barColor.copy(alpha = 0.12f), RoundedCornerShape(3.dp))
             ) {
                 // 内层：实际进度 (主色),宽度按 barFraction 计算
                 //   coerceIn(0.02f, 1f): 最小 2%,避免完全看不见
                 Box(
-                    Modifier.fillMaxWidth(barFraction.coerceIn(0.02f, 1f)).height(6.dp)
+                    Modifier.fillMaxWidth(barFraction.coerceIn(0.02f, 1f)).height(5.dp)
                         .background(barColor, RoundedCornerShape(3.dp))
                 )
             }
