@@ -35,11 +35,14 @@ import java.util.concurrent.CopyOnWriteArrayList          // 线程安全列表�
  * ✅ 定位策略：GPS_PROVIDER（高精度室外）+ NETWORK_PROVIDER（室内/WiFi/基站）
  *    + PASSIVE_PROVIDER（被动定位，零耗电复用其他App的定位结果），取"更新的/更准的"优先。
  *
- * ✅ 轻量化省电方案（对标 Life360 等业界成熟做法）：
- *    1.【动态调频】移动中按用户设置的间隔采集；检测到静止（连续多次位移<30m）
- *      自动把系统定位间隔拉到 5 分钟；恢复移动（位移>50m 或速度>0.5m/s）立刻切回高频。
- *    2.【被动定位】注册 PASSIVE_PROVIDER，白嫖微信/地图等已算好的位置，自己不花电。
- *    3.【批量上报】位置点先缓存在本地，攒满 5 条或距上次上传超 3 分钟才一次性
+ * ✅ 位移驱动省电方案（对标 Google 时间轴 / Life360 等业界成熟做法）：
+ *    1.【位移触发】注册时传 minDistance=25m：系统硬件级判断，移动超过 25 米才回调。
+ *      静止时 GPS 芯片休眠，几乎零耗电；移动时点密度跟位移走，轨迹更平滑，
+ *      不会出现"8 秒内拐了个弯没采到"。
+ *    2.【动态调频】检测到静止（连续多次位移<30m）自动把系统间隔拉到 5 分钟；
+ *      恢复移动（位移>50m 或速度>0.5m/s）立刻切回位移驱动高频。
+ *    3.【被动定位】注册 PASSIVE_PROVIDER，白嫖微信/地图等已算好的位置，自己不花电。
+ *    4.【批量上报】位置点先缓存在本地，攒满 5 条或距上次上传超 3 分钟才一次性
  *      POST 数组（PostgREST 批量插入），网络唤醒次数降到原来的 1/5 以下；
  *      失败自动保留缓存下次重试，最多缓存 50 条防爆内存。
  * ✅ 精度过滤：accuracy>200m 丢弃；30 秒内已有更准位置则丢弃退步结果
@@ -67,10 +70,11 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
     private var enabledProviders: List<String> = emptyList() // 当前可用的 provider 列表（重注册时用）
 
     // —— 轻量化①：动态调频状态 ——
-    private var baseIntervalMs = 8000L   // 用户设置的"移动中"采集间隔（由 TrackerService 传入）
+    private var baseIntervalMs = 8000L   // 用户设置的"移动中"采集间隔（由 TrackerService 传入；位移驱动下仅作兜底间隔）
     private var isStill = false          // 当前是否判定为静止
     private var stillCount = 0           // 连续静止计数（防抖：防止偶尔不动被误判）
-    private var currentIntervalMs = -1L  // 当前实际生效的系统定位间隔（避免重复注册）
+    private var currentIntervalMs = -1L  // 当前实际生效的系统定位 minTime（避免重复注册）
+    private var currentMinDistM = -1f    // 当前实际生效的系统定位 minDistance（避免重复注册）
 
     // —— 轻量化②：批量上报缓存 ——
     private val pendingBatch = CopyOnWriteArrayList<com.coupletracker.android.data.LocationInsert>()  // 待上传位置缓存
@@ -86,6 +90,12 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         private const val BATCH_SIZE = 5                 // 批量上传：攒满 5 条立即传
         private const val BATCH_FLUSH_MS = 180_000L      // 批量上传：距上次超 3 分钟兜底传一次
         private const val MAX_CACHE_SIZE = 50            // 缓存上限（防离线太久撑爆内存）
+
+        // 位移驱动核心参数：系统硬件级触发阈值
+        private const val MIN_DISTANCE_M = 25f           // 移动 ≥25 米才回调（Google 时间轴 / Life360 同级）
+        private const val STILL_MIN_DISTANCE_M = 0f      // 静止模式 minDistance=0（靠时间兜底唤醒）
+        private const val MOVING_MIN_TIME_MS = 60_000L   // 移动中兜底：最长 60 秒至少报一次
+        private const val STILL_MIN_TIME_MS = 300_000L   // 静止兜底：最长 5 分钟至少报一次
     }
 
     // 记录上一次上报的位置和时刻，用于节流（避免短时间内重复上报几乎相同的位置）
@@ -157,26 +167,32 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         }
 
         // —— 第二/三步：按当前运动状态注册 GPS + NETWORK + PASSIVE 三个 provider ——
-        // 间隔由 detectInterval() 决定：移动中用用户设置的间隔，静止时自动拉到 5 分钟
+        // 位移驱动：minDistance=25m 让系统硬件级判断，移动超 25 米才回调
+        // minTime 作为兜底：移动中 60 秒至少报一次，静止 5 分钟至少报一次
         enabledProviders = providersEnabled
-        registerProviders(detectInterval())
+        registerProviders()
     }
 
     // ========================================================================
-    //  轻量化核心①：根据运动状态决定系统定位间隔（动态调频）
+    //  轻量化核心①：根据运动状态决定系统定位参数（位移驱动 + 动态调频）
+    //  返回 Pair(minTimeMs, minDistanceM)：移动中 = 25米触发 + 60秒兜底；
+    //  静止 = 0米触发 + 5分钟兜底（几乎零耗电，PASSIVE_PROVIDER 仍能白嫖）
     // ========================================================================
-    private fun detectInterval(): Long =
-        if (isStill) STILL_INTERVAL_MS else baseIntervalMs
+    private fun detectParams(): Pair<Long, Float> =
+        if (isStill) Pair(STILL_MIN_TIME_MS, STILL_MIN_DISTANCE_M)
+        else Pair(MOVING_MIN_TIME_MS, MIN_DISTANCE_M)
 
     // ========================================================================
     //  轻量化核心②：注册/重注册所有定位 provider
-    //  静止/移动状态切换时调用：改 minTime 间隔必须先 removeUpdates 再重新订阅
+    //  静止/移动状态切换时调用：改 minTime/minDistance 必须先 removeUpdates 再重新订阅
     // ========================================================================
     @SuppressLint("MissingPermission")
-    private fun registerProviders(intervalMs: Long) {
-        // 间隔没变且已注册过 → 无需重复操作（重复注册会让回调变密，白费电）
-        if (currentIntervalMs == intervalMs && gpsListener != null) return
-        currentIntervalMs = intervalMs
+    private fun registerProviders() {
+        val (minTimeMs, minDistM) = detectParams()
+        // 参数没变且已注册过 → 无需重复操作（重复注册会让回调变密，白费电）
+        if (currentIntervalMs == minTimeMs && currentMinDistM == minDistM && gpsListener != null) return
+        currentIntervalMs = minTimeMs
+        currentMinDistM = minDistM
 
         // 先注销旧监听器
         gpsListener?.let { runCatching { locMgr.removeUpdates(it) } }
@@ -194,10 +210,10 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         gpsListener = listener; netListener = listener; passiveListener = listener
 
         if (enabledProviders.contains(LocationManager.GPS_PROVIDER)) {
-            runCatching { locMgr.requestLocationUpdates(LocationManager.GPS_PROVIDER, intervalMs, 0f, listener, Looper.getMainLooper()) }
+            runCatching { locMgr.requestLocationUpdates(LocationManager.GPS_PROVIDER, minTimeMs, minDistM, listener, Looper.getMainLooper()) }
         }
         if (enabledProviders.contains(LocationManager.NETWORK_PROVIDER)) {
-            runCatching { locMgr.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, intervalMs, 0f, listener, Looper.getMainLooper()) }
+            runCatching { locMgr.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, minTimeMs, minDistM, listener, Looper.getMainLooper()) }
         }
         // PASSIVE_PROVIDER：被动接收其他 App（微信/地图等）触发的定位结果，系统不会因它额外唤醒 GPS，零耗电
         runCatching { locMgr.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 0L, 0f, listener, Looper.getMainLooper()) }
@@ -287,8 +303,9 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         val decidedStill = if (movingNow) { stillCount = 0; false } else stillCount >= STILL_CONFIRM_COUNT
         if (decidedStill != isStill) {
             isStill = decidedStill
-            android.util.Log.d("CT-Tracker", "运动状态切换: isStill=$isStill → 定位间隔调整为 ${detectInterval()}ms")
-            registerProviders(detectInterval())   // 状态变了 → 用新间隔重新订阅
+            val (minTime, minDist) = detectParams()
+            android.util.Log.d("CT-Tracker", "运动状态切换: isStill=$isStill → minTime=${minTime}ms minDistance=${minDist}m")
+            registerProviders()   // 状态变了 → 用新参数重新订阅
         }
 
         // 通过所有过滤，更新"最近一次"记录

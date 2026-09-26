@@ -658,7 +658,7 @@ private fun TidalChip(
 private fun reverseGeocode(lat: Double, lng: Double): String? =
     reverseGeocodeNominatim(lat, lng) ?: reverseGeocodeBdc(lat, lng)
 
-/** Nominatim 逆地理：简体中文 + 店铺/建筑级明细 */
+/** Nominatim 逆地理：简体中文 + 市·区·路·楼 四级格式 */
 private fun reverseGeocodeNominatim(lat: Double, lng: Double): String? = runCatching {
     val url = "https://nominatim.openstreetmap.org/reverse" +
         "?format=jsonv2&lat=$lat&lon=$lng&zoom=18&accept-language=zh-Hans"
@@ -671,24 +671,32 @@ private fun reverseGeocodeNominatim(lat: Double, lng: Double): String? = runCatc
     val body = conn.inputStream.bufferedReader().use { it.readText() }
     conn.disconnect()
     val addr = org.json.JSONObject(body).optJSONObject("address") ?: return@runCatching null
-    // POI 名称（"什么店"）：餐饮/商店/景点/建筑/写字楼等，取第一个非空的
-    val poi = listOf("amenity", "shop", "tourism", "leisure", "building", "office", "historic")
-        .asSequence().map { addr.optString(it) }.firstOrNull { it.isNotBlank() }
-    val road = addr.optString("road").ifBlank { addr.optString("pedestrian") }              // 路名
-    val suburb = addr.optString("suburb").ifBlank { addr.optString("neighbourhood") }       // 街道/片区
-    val district = addr.optString("city_district").ifBlank { addr.optString("district") }   // 区
+
+    // —— 市 ——
     val city = addr.optString("city").ifBlank { addr.optString("town") }
-        .ifBlank { addr.optString("county") }                                               // 城市
-    // 依次拼接：店 → 路 → 街道 → 区 → 市，去重去空，最多 4 段（避免过长）
+        .ifBlank { addr.optString("county") }
+    // —— 区/县 ——
+    val district = addr.optString("city_district").ifBlank { addr.optString("district") }
+        .ifBlank { addr.optString("suburb") }
+    // —— 路/街道 ——
+    val road = addr.optString("road").ifBlank { addr.optString("pedestrian") }
+        .ifBlank { addr.optString("neighbourhood") }
+    // —— 楼/POI/门牌 ——
+    val building = addr.optString("amenity").ifBlank { addr.optString("shop") }
+        .ifBlank { addr.optString("building") }.ifBlank { addr.optString("office") }
+        .ifBlank { addr.optString("tourism") }.ifBlank { addr.optString("leisure") }
+        .ifBlank { addr.optString("house_number") }
+
+    // 市 · 区 · 路 · 楼，去重去空，最多 4 段
     val parts = mutableListOf<String>()
     fun add(p: String?) {
         if (!p.isNullOrBlank() && p !in parts && parts.size < 4) parts.add(p)
     }
-    add(poi); add(road); add(suburb); add(district); add(city)
+    add(city); add(district); add(road); add(building)
     parts.joinToString(" · ").ifBlank { null }
 }.getOrNull()
 
-/** BigDataCloud 逆地理（兜底）：城市 · 区县，zh-Hans 强制简体中文 */
+/** BigDataCloud 逆地理（兜底）：市 · 区 · 路，zh-Hans 强制简体中文 */
 private fun reverseGeocodeBdc(lat: Double, lng: Double): String? = runCatching {
     val url = "https://api.bigdatacloud.net/data/reverse-geocode-client" +
         "?latitude=$lat&longitude=$lng&localityLanguage=zh-Hans"
@@ -702,6 +710,7 @@ private fun reverseGeocodeBdc(lat: Double, lng: Double): String? = runCatching {
     val locality = obj.optString("locality")            // 区/县/街道级
     val city = obj.optString("city")                    // 城市
     val region = obj.optString("principalSubdivision")  // 省/州
+    // 统一为 市 · 区 格式（BigDataCloud 没有路/楼级数据，保持两级）
     when {
         locality.isNotBlank() && city.isNotBlank() && locality != city -> "$city · $locality"
         locality.isNotBlank() -> locality
