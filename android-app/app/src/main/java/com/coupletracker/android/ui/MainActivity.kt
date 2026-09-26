@@ -93,7 +93,7 @@ import kotlin.math.roundToInt                 // 浮点数四舍五入转整数
  *   ① 用 Compose 渲染底部 4 个 Tab 的导航栏和对应页面内容；
  *   ② 在地图 Tab 中嵌入一个 WebView，加载离线前端页面（assets/www/index.html）；
  *   ③ 通过 JS 注入把当前用户 token/信息同步给前端，让前端无需再次登录；
- *   ④ 在"我的"Tab 提供配对、采集频率调整、退出登录等设置功能。
+ *   ④ 在"我的"Tab 提供配对、重启服务、退出登录等设置功能。
  *
  * 关键概念解释：
  * - Activity：Android 四大组件之一，代表"一屏用户界面"。
@@ -962,12 +962,10 @@ class MainActivity : ComponentActivity() {
     //   2. 配对状态卡片：
     //      - 已配对 → 显示配对人信息
     //      - 未配对 → 显示自己的配对码（可复制）+ 输入对方配对码的表单
-    //   3. 采集频率设置卡片（位置/APP 使用，Slider 拖动调频率）
-    //   4. 上报状态显示（位置/APP 最近一次上报成功/失败）
-    //   5. "看地图" + "重启服务" 按钮
-    //   6. 云端服务信息（Supabase 地址）
-    //   7. 账号管理（账号信息 + 退出登录）
-    //   8. 底部版本号和后端/前端地址
+    //   3. "看地图" + "重启服务" 按钮
+    //   4. 账号管理（账号信息 + 退出登录）
+    //   5. 底部版本号
+    //   （采集频率 / 云端服务地址等技术信息已按用户要求移除，避免暴露敏感配置）
     //
     // @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)：
     //   - 声明使用了 Material3 和 Layout 的实验性 API（FlowRow 等）
@@ -978,38 +976,9 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun SettingsScreen(onBackToMap: () -> Unit, embedded: Boolean = false) {
         // ============================================================================
-        // 状态收集：订阅用户信息、采集频率的最新值
-        // - 与 PlaceholderScreen 类似，但这里是设置页，需要根据这些值渲染 UI
+        // 状态收集：订阅当前登录用户信息（采集频率卡片已移除，频率用默认值）
         // ============================================================================
         val user by UserRepository.get().userFlow.collectAsState(initial = null)
-        val locSec by UserRepository.get().locationIntervalSecFlow.collectAsState(
-            initial = UserRepository.DEFAULT_LOC_INTERVAL_SEC
-        )
-        val appSec by UserRepository.get().appIntervalSecFlow.collectAsState(
-            initial = UserRepository.DEFAULT_APP_INTERVAL_SEC
-        )
-        // ============================================================================
-        // Slider 的临时值：拖动时实时显示，松手才写入仓库
-        // ----------------------------------------------------------------------------
-        // - remember(locSec) {...}：key 为 locSec，当 locSec 变化时重新初始化 tmpLoc
-        // - mutableFloatStateOf：可观察的 Float 状态（专为 Float 优化，避免装箱开销）
-        // - 不直接用仓库值的原因：
-        //   用户拖动 Slider 时希望实时看到数字变化，但写入仓库有 IO 延迟，
-        //   所以先用临时值响应 UI，松手（onValueChangeFinished）时再写仓库
-        // ============================================================================
-        // Slider 的临时值（拖动时实时显示，松手写仓库）
-        val tmpLoc = remember(locSec) { mutableFloatStateOf(locSec.toFloat()) }
-        val tmpApp = remember(appSec) { mutableFloatStateOf(appSec.toFloat()) }
-        // ============================================================================
-        // LaunchedEffect：当 key 变化时启动一个协程执行副作用
-        // ----------------------------------------------------------------------------
-        // - 这里当 locSec/appSec 变化时（比如仓库被其他地方更新），
-        //   把仓库值同步回 Slider 的临时值，保持 UI 与仓库一致
-        // - LaunchedEffect 在 Compose 进入/离开组合时自动管理协程生命周期
-        // ============================================================================
-        // 确保仓库值变化时同步回临时值
-        LaunchedEffect(locSec) { tmpLoc.floatValue = locSec.toFloat() }
-        LaunchedEffect(appSec) { tmpApp.floatValue = appSec.toFloat() }
         // ============================================================================
         // 设置页根容器：Column（垂直滚动 + 浅粉色背景）
         // ============================================================================
@@ -1416,151 +1385,6 @@ class MainActivity : ComponentActivity() {
             }
 
             Spacer(Modifier.height(14.dp))
-
-            // ============================================================================
-            // 采集频率设置卡片
-            // ----------------------------------------------------------------------------
-            // - 包含两个 Slider：
-            //   ① 位置上报频率（多久采集一次 GPS 上报到云端）
-            //   ② APP 使用检测频率（多久检测一次当前打开的应用）
-            // - 调整后实时生效：TrackerService 在监听 Flow，值变化时自动重启采集
-            // - 调大间隔可以省电、降低卡顿；调小则更实时但更耗电
-            // ============================================================================
-            // ====== 采集频率设置（实时生效，Service 监听 Flow 自动重启） ======
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "⚙️ 采集频率（调大可降低卡顿/省电）",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF3D2E2A)
-                        )
-                    }
-                    Spacer(Modifier.height(14.dp))
-
-                    // ============================================================================
-                    // 位置采集频率 Slider
-                    // ----------------------------------------------------------------------------
-                    // - 显示当前秒数 + 范围提示
-                    // - Slider 组件参数：
-                    //   - value：当前值（tmpLoc.floatValue，临时状态）
-                    //   - onValueChange：拖动时实时回调，把值取整后赋给 tmpLoc
-                    //     （roundToInt() 四舍五入到整数，避免出现"每 3.7 秒"这种小数）
-                    //   - onValueChangeFinished：松手时回调，把最终值写入仓库持久化
-                    //   - valueRange：滑块范围（最小到最大秒数）
-                    //   - steps：离散刻度数（让 Slider 只停在整数位置）
-                    //   - colors：滑块颜色（粉色主题）
-                    // ============================================================================
-                    // —— 位置采集频率 Slider ——
-                    Text("📍 位置上报", color = Color(0xFF4A5568), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(2.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 大字号显示当前秒数
-                        Text(
-                            "每 ${tmpLoc.floatValue.toInt()} 秒",
-                            color = Color(0xFFFF8B7B),
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                        Spacer(Modifier.weight(1f))
-                        // 右侧灰字显示范围
-                        Text(
-                            "范围 ${UserRepository.MIN_LOC_INTERVAL_SEC}-${UserRepository.MAX_LOC_INTERVAL_SEC}s",
-                            color = Color(0xFFA0AEC0), fontSize = 10.sp
-                        )
-                    }
-                    Slider(
-                        value = tmpLoc.floatValue,
-                        onValueChange = { tmpLoc.floatValue = it.roundToInt().toFloat() },
-                        onValueChangeFinished = {
-                            // 松手时：把临时值写入仓库（IO 线程）
-                            val sec = tmpLoc.floatValue.toInt()
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                UserRepository.get().setLocationIntervalSec(sec)
-                            }
-                        },
-                        valueRange = UserRepository.MIN_LOC_INTERVAL_SEC.toFloat()..UserRepository.MAX_LOC_INTERVAL_SEC.toFloat(),
-                        steps = UserRepository.MAX_LOC_INTERVAL_SEC - UserRepository.MIN_LOC_INTERVAL_SEC - 1,
-                        colors = SliderDefaults.colors(thumbColor = Color(0xFFFF8B7B), activeTrackColor = Color(0xFFFF8B7B))
-                    )
-                    Spacer(Modifier.height(10.dp))
-
-                    // ============================================================================
-                    // APP 使用检测频率 Slider（结构同上，颜色用蓝紫）
-                    // ============================================================================
-                    // —— APP 使用采集频率 Slider ——
-                    Text("📱 APP 使用检测", color = Color(0xFF4A5568), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(2.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "每 ${tmpApp.floatValue.toInt()} 秒",
-                            color = Color(0xFF3A9E91),
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            "范围 ${UserRepository.MIN_APP_INTERVAL_SEC}-${UserRepository.MAX_APP_INTERVAL_SEC}s",
-                            color = Color(0xFFA0AEC0), fontSize = 10.sp
-                        )
-                    }
-                    Slider(
-                        value = tmpApp.floatValue,
-                        onValueChange = { tmpApp.floatValue = it.roundToInt().toFloat() },
-                        onValueChangeFinished = {
-                            val sec = tmpApp.floatValue.toInt()
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                UserRepository.get().setAppIntervalSec(sec)
-                            }
-                        },
-                        valueRange = UserRepository.MIN_APP_INTERVAL_SEC.toFloat()..UserRepository.MAX_APP_INTERVAL_SEC.toFloat(),
-                        steps = UserRepository.MAX_APP_INTERVAL_SEC - UserRepository.MIN_APP_INTERVAL_SEC - 1,
-                        colors = SliderDefaults.colors(thumbColor = Color(0xFF3A9E91), activeTrackColor = Color(0xFF3A9E91))
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "✅ 调整后立即生效，无需重启APP",
-                        color = Color(0xFF48BB78), fontSize = 11.sp, fontWeight = FontWeight.Medium
-                    )
-                    // ============================================================================
-                    // 上报状态显示：方便用户排查"为什么地图没显示"
-                    // ----------------------------------------------------------------------------
-                    // - locStatus：最近一次位置上报的状态文字
-                    // - appStatus：最近一次 APP 上报的状态文字
-                    // - colorOf(s)：局部函数，根据文字内容返回对应颜色
-                    //   （含"成功"用绿色，含"失败/异常"用红色，其他用灰色）
-                    // ============================================================================
-                    // 上报状态（方便用户排查"为什么地图没显示"）
-                    Spacer(Modifier.height(10.dp))
-                    val locStatus by NetworkModule.lastLocationReportStatusFlow.collectAsState()
-                    val appStatus by NetworkModule.lastAppReportStatusFlow.collectAsState()
-                    // 局部函数：根据状态文字返回颜色
-                    fun colorOf(s: String) = when {
-                        s.contains("成功") -> Color(0xFF2F855A)
-                        s.contains("失败") || s.contains("异常") -> Color(0xFFE53E3E)
-                        else -> Color(0xFFA89890)
-                    }
-                    Divider(color = Color(0xFFEDF2F7))
-                    Spacer(Modifier.height(8.dp))
-                    Text("🛰️ 上报状态 · 供排查参考", color = Color(0xFF4A5568), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    Text("📍 $locStatus", color = colorOf(locStatus), fontSize = 10.sp, lineHeight = 14.sp)
-                    Spacer(Modifier.height(2.dp))
-                    Text("📱 $appStatus", color = colorOf(appStatus), fontSize = 10.sp, lineHeight = 14.sp)
-                    Spacer(Modifier.height(4.dp))
-                    // 排查提示：如果上报失败，引导用户检查权限
-                    Text(
-                        "如果「位置上报」连续失败：打开系统设置 → 应用权限 → 允许定位（允许始终允许）→ 再打开一次本APP",
-                        color = Color(0xFFA0AEC0), fontSize = 10.sp, lineHeight = 14.sp
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(14.dp))
             // ============================================================================
             // 底部操作按钮行：看地图 + 重启服务
             // ----------------------------------------------------------------------------
@@ -1613,31 +1437,6 @@ class MainActivity : ComponentActivity() {
             }
 
             Spacer(Modifier.height(26.dp))
-
-            // ============================================================================
-            // 云端服务信息卡片（Supabase BaaS）
-            // ----------------------------------------------------------------------------
-            // - 显示当前使用的 Supabase 后端配置
-            // - Auth URL：把 REST base URL 中的 /rest/v1 替换为 /auth/v1
-            // - REST URL：直接显示 NetworkModule.getApiBase()
-            // ============================================================================
-            // ====== 云端服务信息（Supabase BaaS） ======
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("☁️ 云端服务", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF3D2E2A))
-                    Spacer(Modifier.height(8.dp))
-                    Text("Supabase", color = Color(0xFFA89890), fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                    // Auth 接口地址：把 /rest/v1 替换为 /auth/v1
-                    Text("Auth: ${NetworkModule.getApiBase().replace("/rest/v1", "/auth/v1")}", color = Color(0xFFA89890), fontSize = 11.sp)
-                    // REST 接口地址
-                    Text("REST: ${NetworkModule.getApiBase()}", color = Color(0xFFA89890), fontSize = 11.sp)
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
 
             // ============================================================================
             // 账号管理卡片：显示账号信息 + 退出登录按钮
@@ -1801,17 +1600,11 @@ class MainActivity : ComponentActivity() {
 
             Spacer(Modifier.height(20.dp))
             // ============================================================================
-            // 底部版本信息 + 后端/前端地址
-            // - align(Alignment.CenterHorizontally)：水平居中
+            // 底部版本信息（后端/前端地址已移除，避免暴露服务器信息）
             // ============================================================================
             Text(
                 "版本 v${BuildConfig.VERSION_NAME}",
                 color = Color(0xFFA89890), fontSize = 12.sp,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
-            Text(
-                "后端 ${NetworkModule.getApiBase()}\n前端 ${BuildConfig.DEFAULT_WEB_BASE}",
-                color = Color(0xFFA89890), fontSize = 10.sp,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
         }

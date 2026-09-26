@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // TidalHomeScreen.kt —— 潮汐卡片 v3 主界面（可拖拽底部抽屉）
 //
 // 对应设计稿 concept-d-tidal-cards-v3.html：
@@ -14,7 +14,7 @@
 //   位置区块 -> locations 表（TA 最新位置 + 距你距离 + 导航/轨迹 chips）
 //   状态区块 -> AppScreen(embedded)（device_status + app_usage）
 //   统计区块 -> StatsScreen(embedded)（app_usage 聚合）
-//   我的区块 -> SettingsScreen(embedded)（配对卡 + 采集频率 + 账号管理）
+//   我的区块 -> SettingsScreen(embedded)（配对卡 + 账号管理）
 // ============================================================================
 package com.coupletracker.android.ui.tidal
 
@@ -222,7 +222,7 @@ fun TidalHomeScreen(
                         Box(Modifier.trackAnchor(sectionTops, 2, sectionTopsVersion)) {
                             StatsScreen(embedded = true, showPartnerOverride = viewPartner)
                         }
-                        // ④ 我的（配对卡 + 采集频率 + 账号管理）
+                        // ④ 我的（配对卡 + 账号管理）
                         Box(Modifier.trackAnchor(sectionTops, 3, sectionTopsVersion)) {
                             Column {
                                 SectionTitle("👤 我的")
@@ -646,13 +646,52 @@ private fun TidalChip(
 }
 
 // ============================================================================
-// 逆地理编码：坐标 → 中文地名（BigDataCloud 免费接口，无需 key）
-// 返回格式优先「城市 · 区县」，与 Zenly / 苹果"查找"的"在 XX"展示习惯一致；
-// 网络失败时返回 null，调用方保留旧值或兜底文案。
+// 逆地理编码：坐标 → 简体中文详细地名（尽量精确到店铺/建筑）
+// ----------------------------------------------------------------------------
+// 【为什么换方案】旧方案 BigDataCloud 的 zh 语言会返回繁体（如"東城區"），
+//   且粒度只到「城市 · 区县」。参考 Zenly / 苹果"查找"的展示习惯，
+//   用户更想看到"在什么店/哪条街"。
+// 【成熟做法】主用 Nominatim（OpenStreetMap 官方逆地理，免费无需 key）：
+//   zoom=18 返回 POI/道路/街区级明细，accept-language=zh-Hans 强制简体中文；
+//   结果为空或网络失败时回退 BigDataCloud（也改 zh-Hans，兜底不丢文案）。
 // ============================================================================
-private fun reverseGeocode(lat: Double, lng: Double): String? = runCatching {
+private fun reverseGeocode(lat: Double, lng: Double): String? =
+    reverseGeocodeNominatim(lat, lng) ?: reverseGeocodeBdc(lat, lng)
+
+/** Nominatim 逆地理：简体中文 + 店铺/建筑级明细 */
+private fun reverseGeocodeNominatim(lat: Double, lng: Double): String? = runCatching {
+    val url = "https://nominatim.openstreetmap.org/reverse" +
+        "?format=jsonv2&lat=$lat&lon=$lng&zoom=18&accept-language=zh-Hans"
+    val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+        connectTimeout = 5000
+        readTimeout = 5000
+        // Nominatim 使用政策要求必须带 User-Agent，否则会被拒
+        setRequestProperty("User-Agent", "CoupleTracker-Android")
+    }
+    val body = conn.inputStream.bufferedReader().use { it.readText() }
+    conn.disconnect()
+    val addr = org.json.JSONObject(body).optJSONObject("address") ?: return@runCatching null
+    // POI 名称（"什么店"）：餐饮/商店/景点/建筑/写字楼等，取第一个非空的
+    val poi = listOf("amenity", "shop", "tourism", "leisure", "building", "office", "historic")
+        .asSequence().map { addr.optString(it) }.firstOrNull { it.isNotBlank() }
+    val road = addr.optString("road").ifBlank { addr.optString("pedestrian") }              // 路名
+    val suburb = addr.optString("suburb").ifBlank { addr.optString("neighbourhood") }       // 街道/片区
+    val district = addr.optString("city_district").ifBlank { addr.optString("district") }   // 区
+    val city = addr.optString("city").ifBlank { addr.optString("town") }
+        .ifBlank { addr.optString("county") }                                               // 城市
+    // 依次拼接：店 → 路 → 街道 → 区 → 市，去重去空，最多 4 段（避免过长）
+    val parts = mutableListOf<String>()
+    fun add(p: String?) {
+        if (!p.isNullOrBlank() && p !in parts && parts.size < 4) parts.add(p)
+    }
+    add(poi); add(road); add(suburb); add(district); add(city)
+    parts.joinToString(" · ").ifBlank { null }
+}.getOrNull()
+
+/** BigDataCloud 逆地理（兜底）：城市 · 区县，zh-Hans 强制简体中文 */
+private fun reverseGeocodeBdc(lat: Double, lng: Double): String? = runCatching {
     val url = "https://api.bigdatacloud.net/data/reverse-geocode-client" +
-        "?latitude=$lat&longitude=$lng&localityLanguage=zh"
+        "?latitude=$lat&longitude=$lng&localityLanguage=zh-Hans"
     val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
         connectTimeout = 5000
         readTimeout = 5000
