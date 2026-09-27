@@ -82,3 +82,49 @@ object GenderColors {
     fun myRing(g: String): Color = if (g == "female") Coral else SkyDeep
     fun taRing(g: String): Color = if (g == "female") SkyDeep else Coral
 }
+
+/**
+ * RoleTheme —— 角色主题（我/TA）模块化配色
+ *
+ * 所有需要区分「我」和「TA」颜色的组件都通过这里取色，不再硬编码。
+ * 规则：男生=淡蓝(我)/珊瑚(TA)，女生=珊瑚(我)/淡蓝(TA)
+ */
+data class RoleTheme(
+    val main: Color,        // 主色（大字/按钮/强调）
+    val soft: Color,        // 浅色（渐变副色/高亮）
+    val deep: Color,        // 深色（光环/描边）
+    val chipBg: Color,      // chip 背景色
+    val glassBg: Color,     // 玻璃态背景（替代 ShadowBubble/ShadowButton）
+    val label: String       // 角色名称（调试用）
+)
+
+object RoleThemes {
+    // 男生主题：我=淡蓝，TA=珊瑚
+    private val maleMe = RoleTheme(
+        main = SkyDeep, soft = SkySoft, deep = SkyDeep,
+        chipBg = Color(0x267EC8E3), glassBg = Color(0x4D7EC8E3), label = "我(男)"
+    )
+    private val maleTa = RoleTheme(
+        main = Coral, soft = CoralSoft, deep = Coral,
+        chipBg = ChipBg, glassBg = ShadowBubble, label = "TA(男)"
+    )
+    // 女生主题：我=珊瑚，TA=淡蓝
+    private val femaleMe = RoleTheme(
+        main = Coral, soft = CoralSoft, deep = Coral,
+        chipBg = ChipBg, glassBg = ShadowBubble, label = "我(女)"
+    )
+    private val femaleTa = RoleTheme(
+        main = SkyDeep, soft = SkySoft, deep = SkyDeep,
+        chipBg = Color(0x267EC8E3), glassBg = Color(0x4D7EC8E3), label = "TA(女)"
+    )
+
+    /**
+     * 根据性别和角色获取主题
+     * @param gender "male" | "female" | "unknown"
+     * @param isMe true=看我，false=看TA
+     */
+    fun get(gender: String, isMe: Boolean): RoleTheme = when {
+        gender == "female" -> if (isMe) femaleMe else femaleTa
+        else -> if (isMe) maleMe else maleTa
+    }
+}

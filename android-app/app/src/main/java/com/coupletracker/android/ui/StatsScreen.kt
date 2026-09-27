@@ -46,6 +46,7 @@ import androidx.compose.ui.window.DialogProperties     // 弹窗属性（禁用�
 import com.coupletracker.android.data.AppUsageRow    // 单条 APP 使用记录的数据模型
 import com.coupletracker.android.data.NetworkModule  // 网络模块入口
 import com.coupletracker.android.data.UserRepository // 用户信息本地仓储
+import com.coupletracker.android.ui.theme.RoleThemes // 角色主题（性别决定配色）
 // ---------- Kotlin 协程 (异步任务) ----------
 import kotlinx.coroutines.Dispatchers     // 线程调度器 (IO/主线程)
 import kotlinx.coroutines.delay           // 延时函数
@@ -292,12 +293,11 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
     }
 
     // =========================================================================
-    // 第七部分：颜色主题
+    // 第七部分：颜色主题 —— 模块化 RoleTheme，根据性别+角色动态取色
     // =========================================================================
-    val pink = Color(0xFFFF8B7B)             // 珊瑚粉 (代表"我")
-    val blue = Color(0xFF3A9E91)             // 薄荷绿 (代表"TA" 伴侣)
-    // 主色调：查看伴侣时用蓝色,查看自己时用粉色,UI 整体随之切换
-    val mainColor = if (showPartner) blue else pink
+    // 规则：男生=淡蓝(我)/珊瑚(TA)，女生=珊瑚(我)/淡蓝(TA)
+    val theme = RoleThemes.get(user?.gender ?: "unknown", isMe = !showPartner)
+    val mainColor = theme.main  // 当前查看对象的主色（大字/按钮/强调）
 
     // =========================================================================
     // 第八部分：内容本体（内嵌模式与外框模式共用）
@@ -322,7 +322,7 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
                 colors = ButtonDefaults.buttonColors(
                     // 按钮背景色：未配对→灰色;查看自己时→粉色;查看伴侣时→蓝色
                     containerColor = if (partnerId == null) Color(0xFFD8C7BA)
-                    else if (showPartner) blue else pink
+                    else theme.main
                 ),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)  // 按钮内边距
             ) {
@@ -452,6 +452,7 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
         RecentOpensWindow(
             subjectId = (if (showPartner) partnerId else myId) ?: "",
             accent = mainColor,
+            accentSoft = theme.soft,
             reloadKey = reloadKey
         )
 
@@ -492,7 +493,7 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
                         Text(loadError ?: "", fontSize = 11.sp, color = Color(0xFFA89890))
                         Spacer(Modifier.height(10.dp))
                         // 点击重试：自增 reloadKey 触发上方 LaunchedEffect 重新加载
-                        TextButton(onClick = { reloadKey++ }) { Text("重试", color = blue) }
+                        TextButton(onClick = { reloadKey++ }) { Text("重试", color = theme.main) }
                     }
                 }
             }
@@ -655,6 +656,7 @@ fun StatsScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null)
 private fun RecentOpensWindow(
     subjectId: String,
     accent: Color,
+    accentSoft: Color,
     reloadKey: Int
 ) {
     // 列表数据 + 加载状态
@@ -731,7 +733,7 @@ private fun RecentOpensWindow(
                             // 最新一条且会话结束时间距今 < 3 分钟 → 视为「正在使用」高亮卡
                             val isNow = idx == 0 &&
                                 (nowMs - (open.openAt + open.totalSeconds * 1000L)) < 3 * 60_000L
-                            RecentOpenCard(open = open, isNow = isNow, maxSec = maxSec, accent = accent)
+                            RecentOpenCard(open = open, isNow = isNow, maxSec = maxSec, accent = accent, accentSoft = accentSoft)
                         }
                     }
                 }
@@ -746,7 +748,7 @@ private fun RecentOpensWindow(
 //   - 否则：白底 + 墨色字 + 珊瑚进度条
 // ============================================================================
 @Composable
-private fun RecentOpenCard(open: HistoryOpen, isNow: Boolean, maxSec: Int, accent: Color) {
+private fun RecentOpenCard(open: HistoryOpen, isNow: Boolean, maxSec: Int, accent: Color, accentSoft: Color) {
     // 进度条比例：相对本次列表中时长最长的一条（至少 4% 保证可见）
     val frac = (open.totalSeconds.toFloat() / maxSec).coerceIn(0.04f, 1f)
     val contentColor = if (isNow) Color.White else Color(0xFF3D2E2A)
@@ -756,7 +758,7 @@ private fun RecentOpenCard(open: HistoryOpen, isNow: Boolean, maxSec: Int, accen
             .width(124.dp)
             .clip(RoundedCornerShape(14.dp))
             .then(
-                if (isNow) Modifier.background(Brush.linearGradient(listOf(Color(0xFFFF8B7B), Color(0xFFFFB5A7))))
+                if (isNow) Modifier.background(Brush.linearGradient(listOf(accent, accentSoft)))
                 else Modifier.background(Color.White)
             )
             .padding(12.dp)

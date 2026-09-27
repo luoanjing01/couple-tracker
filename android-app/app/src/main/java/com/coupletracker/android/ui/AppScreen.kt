@@ -61,6 +61,8 @@ import com.coupletracker.android.data.LocationRow       // 位置记录数据类
 import com.coupletracker.android.data.AppSessionTracker // App 会话追踪单例（进程内累计时长、当前心情）
 import com.coupletracker.android.data.NetworkModule     // 网络模块（Retrofit/Supabase 客户端）
 import com.coupletracker.android.data.UserRepository    // 用户仓库（管理当前登录用户信息）
+import com.coupletracker.android.ui.theme.RoleThemes
+import com.coupletracker.android.ui.theme.RoleTheme   // 角色主题（性别决定配色）
 import com.coupletracker.android.service.TrackerService // 后台追踪服务（上报位置/使用情况）
 
 // ---- Kotlin 协程相关 import ----
@@ -99,6 +101,7 @@ fun AppScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null) {
     val user by UserRepository.get().userFlow.collectAsState(initial = null) // 订阅登录用户流，初次为 null
     val myId = user?.id.orEmpty()                                  // 当前用户 ID（可能为空字符串）
     val myCode = user?.coupleCode.orEmpty()                        // 当前用户的配对码（旧机制）
+    val myGender = user?.gender ?: "unknown"                       // 当前用户性别，用于主题配色
 
     // ---- 2. 定义 UI 状态变量（用 remember + mutableStateOf 保持 Compose 状态）----
     // 说明：Compose 用「状态驱动 UI」，状态变化会自动重绘对应组件。
@@ -161,6 +164,8 @@ fun AppScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null) {
     val subjectId = (if (showPartner) partnerId else myId) ?: ""                       // 展示目标的用户 ID
     val subjectName = if (showPartner) partnerName.ifBlank { "TA" } else (user?.displayName ?: "我") // 展示名字
     val subjectIsMe = !showPartner                                                      // 当前是否在看自己
+    // ---- 5.1 角色主题：根据性别+角色动态取色（男=淡蓝(我)/珊瑚(TA)，女=反过来）----
+    val roleTheme = RoleThemes.get(myGender, isMe = subjectIsMe)
 
     // ---- 6. 内容本体（内嵌模式与外框模式共用）----
     // 方案 D v3 适配：embedded=true 时由外层潮汐抽屉（TidalHomeScreen）提供滚动与容器，
@@ -190,7 +195,7 @@ fun AppScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null) {
                 shape = RoundedCornerShape(20.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (partnerId == null) Color(0xFFD8C7BA)
-                    else if (showPartner) Color(0xFF3A9E91) else Color(0xFFFF8B7B)
+                    else roleTheme.main
                 ),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
             ) {
@@ -211,7 +216,8 @@ fun AppScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null) {
             subjectId = subjectId,
             subjectName = subjectName,
             subjectIsMe = subjectIsMe,
-            reloadKey = reloadKey
+            reloadKey = reloadKey,
+            roleTheme = roleTheme
         )
 
         Spacer(Modifier.height(8.dp))
@@ -224,13 +230,14 @@ fun AppScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null) {
             subjectIsMe = subjectIsMe,
             // 看自己时需要检查是否有「使用情况访问」权限；看对方时云端已有，默认 true
             subjectHasPermission = if (subjectIsMe) localHasUsagePermission(ctx) else true,
-            reloadKey = reloadKey
+            reloadKey = reloadKey,
+            roleTheme = roleTheme
         )
 
         Spacer(Modifier.height(14.dp))
 
         // ============= ③ 智能手环（占位：正在开发）=============
-        BandSection()
+        BandSection(roleTheme)
 
         Spacer(Modifier.height(20.dp))
     }      // closes Content
@@ -248,7 +255,7 @@ fun AppScreen(embedded: Boolean = false, showPartnerOverride: Boolean? = null) {
                 refreshing = isRefreshing,
                 state = pullRefreshState,
                 modifier = Modifier.align(Alignment.TopCenter),
-                contentColor = Color(0xFFFF8B7B)                  // 珊瑚粉主题
+                contentColor = roleTheme.main                     // 性别决定主色
             )
 
             // 主内容列，纵向滚动（紧凑布局，无外框）
@@ -274,7 +281,8 @@ private fun CurrentAppCard(
     subjectName: String,            // 展示名字（"我" / 对方昵称 / "TA"）
     subjectIsMe: Boolean,           // 是否在看自己
     subjectHasPermission: Boolean,  // 是否有「使用情况访问」权限（仅自己时检查）
-    reloadKey: Int                  // 刷新钥匙，变化时重新启动轮询
+    reloadKey: Int,                 // 刷新钥匙，变化时重新启动轮询
+    roleTheme: RoleTheme            // 角色主题（性别决定配色）
 ) {
     val ctx = LocalContext.current
 
@@ -288,11 +296,13 @@ private fun CurrentAppCard(
     // 熄屏状态
     var screenOn by remember { mutableStateOf(true) }    // 屏幕是否点亮
 
-    // 远端查 TA 的（60 秒精度）
-    var remoteAppName by remember { mutableStateOf("") } // 对方当前 App 名
-    var remotePkg by remember { mutableStateOf("") }     // 对方当前 App 包名
-    var remoteSeconds by remember { mutableStateOf(0) }  // 对方该 App 已用秒数
-    var remoteUpdateAt by remember { mutableStateOf(0L) } // 对方记录的最后更新时间戳
+    // 云端最新使用记录（看自己/看TA都拉，保证两边显示一致）
+    var remoteAppName by remember { mutableStateOf("") } // 云端记录 App 名
+    var remotePkg by remember { mutableStateOf("") }     // 云端记录 App 包名
+    var remoteSeconds by remember { mutableStateOf(0) }  // 云端记录上报增量秒数（兜底用）
+    var remoteUpdateAt by remember { mutableStateOf(0L) } // 云端记录的最后更新时间戳
+    var remoteCategory by remember { mutableStateOf("") } // 云端记录 App 分类
+    var remoteWindowStart by remember { mutableStateOf(0L) } // 云端会话真实打开时刻（毫秒）
 
     // 自己：每 3 秒查一次前台 APP 名字 + 时长 + 屏幕状态
     // 【轮询逻辑】用 while(isActive) delay(3000) 形成无限循环，每 3 秒刷新一次
@@ -329,20 +339,23 @@ private fun CurrentAppCard(
         }
     }
 
-    // TA：每 15 秒拉一次云端 app_usage 最新记录
+    // 拉取云端 app_usage 最新记录（仅看TA时拉；看自己用本地实时检测，更准更快）
     // 【远端逻辑】通过 REST 查询 Supabase 的 app_usage 表，按创建时间倒序取一条
-    LaunchedEffect(subjectIsMe, subjectId, reloadKey) {
+    LaunchedEffect(subjectId, subjectIsMe, reloadKey) {
         if (!subjectIsMe && subjectId.isNotBlank()) {
             while (isActive) {
                 withContext(Dispatchers.IO) {                        // 切到 IO 线程做网络请求
                     runCatching {
-                        // 构造查询：user_id = 当前对方 ID，按 created_at 倒序，只取 1 条
+                        // 构造查询：user_id = 当前查看对象 ID，按 created_at 倒序，只取 1 条
                         NetworkModule.restService.getAppUsage(userId = "eq.$subjectId", order = "created_at.desc", limit = 1)
                     }.getOrNull()?.body()?.firstOrNull()?.let { row ->
                         remotePkg = row.package_name
                         remoteAppName = row.app_name ?: row.package_name
                         remoteSeconds = row.usage_seconds
                         remoteUpdateAt = parseIsoTime(row.created_at)  // 把 ISO 字符串转毫秒时间戳
+                        remoteCategory = row.category ?: ""
+                        // window_start = 会话真实打开时刻，用于计算"已用时长"
+                        remoteWindowStart = parseIsoTime(row.window_start)
                     }
                 }
                 delay(15_000)                                         // 等 15 秒再拉
@@ -350,8 +363,8 @@ private fun CurrentAppCard(
         }
     }
 
-    // 方案 D：渐变「正在使用」卡片（珊瑚粉 → 柔珊瑚），白色文字
-    val nowPlayingBrush = Brush.linearGradient(listOf(Color(0xFFFF8B7B), Color(0xFFFFB5A7)))
+    // 方案 D：渐变「正在使用」卡片（性别决定颜色），白色文字
+    val nowPlayingBrush = Brush.linearGradient(listOf(roleTheme.main, roleTheme.soft))
     Box(
         Modifier
             .fillMaxWidth()
@@ -359,17 +372,21 @@ private fun CurrentAppCard(
             .padding(20.dp)
     ) {
         Column(Modifier.fillMaxWidth()) {
-            // ✅ 30分钟无活动 → 标题显示"正在休息"
+            // ✅ 双数据源：看自己用本地实时检测（最准确），看TA用云端记录（30分钟无新记录视为休息）
             val now = System.currentTimeMillis()
-            // 判断是否空闲 30 分钟：自己看屏幕状态 + 是否有前台 App；对方看最后更新时间是否超过 30 分钟
-            val isIdle30min = if (subjectIsMe) {
-                !screenOn || fgPkg.isEmpty()
-            } else {
-                remoteUpdateAt == 0L || (now - remoteUpdateAt) > 30 * 60 * 1000
+            val hasCloudRecord = remoteUpdateAt > 0L
+            val taIdle = !hasCloudRecord || (now - remoteUpdateAt) > 30 * 60 * 1000
+            val titleText = when {
+                subjectIsMe && !screenOn -> "熄屏中"
+                subjectIsMe && fgPkg.isEmpty() -> "正在休息"
+                subjectIsMe -> "正在玩"
+                !hasCloudRecord -> "暂无数据"
+                taIdle -> "正在休息"
+                else -> "正在玩"
             }
             Text(
-                // 顶部小标题：根据是否空闲、是否是自己显示不同文案
-                if (isIdle30min) (if (subjectIsMe) "正在休息" else "$subjectName 正在休息") else (if (subjectIsMe) "正在玩" else "$subjectName 正在玩"),
+                // 顶部小标题：看自己直接显示状态，看 TA 带上昵称
+                if (subjectIsMe) titleText else "$subjectName $titleText",
                 fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.SemiBold
             )
             Spacer(Modifier.height(12.dp))
@@ -384,39 +401,44 @@ private fun CurrentAppCard(
                         fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f))
                 }
             } else if (subjectIsMe && !screenOn) {
-                // 熄屏状态：显示月亮 emoji + 提示
+                // 自己熄屏（本地即时检测）：显示月亮 emoji + 提示
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("🌙", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("${subjectName} 熄屏中", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
             } else if (subjectIsMe && fgPkg.isEmpty()) {
-                // 亮屏但没查到前台 App：可能在桌面/切换中
+                // 自己亮屏但没查到前台 App：可能在桌面/切换中
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("💤", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("${subjectName} 正在休息", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
-            } else if (!subjectIsMe && isIdle30min) {
-                // TA 30分钟无活动 → 正在休息
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    Text("💤", fontSize = 36.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text("${subjectName} 正在休息", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
-                }
-            } else if (!subjectIsMe && remoteAppName.isEmpty()) {
-                // 对方暂无云端记录（可能没启动后台服务/没联网）
+            } else if (!subjectIsMe && !hasCloudRecord) {
+                // TA 云端暂无记录（可能没启动后台服务/没联网）
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("🤔", fontSize = 36.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("${subjectName} 暂无使用记录", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
+            } else if (!subjectIsMe && taIdle) {
+                // TA 云端 30 分钟无新记录 → 正在休息
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Text("💤", fontSize = 36.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text("${subjectName} 正在休息", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
             } else {
                 // 有 APP 使用数据 → 左图标、右名字+时长
-                val appEmoji = categoryEmoji(if (subjectIsMe) fgCategory else "")  // 分类对应 emoji
-                val appName = if (subjectIsMe) fgName else remoteAppName             // 显示名
-                val durationSec = if (subjectIsMe) sessionSeconds else remoteSeconds // 已用秒数
-                val duration = formatDuration(durationSec)                          // 格式化如 "1h 23m"
+                // 看自己用本地实时数据（最准确），看TA用云端记录
+                val appEmoji = categoryEmoji(if (subjectIsMe) fgCategory else remoteCategory)  // 分类对应 emoji
+                val appName = if (subjectIsMe) fgName else remoteAppName                       // 显示名
+                // TA 的已用时长 = 现在 - 云端会话真实打开时刻（window_start），兜底用上报增量
+                val durationSec = if (subjectIsMe) sessionSeconds
+                    else if (remoteWindowStart > 0L)
+                        ((now - remoteWindowStart) / 1000).toInt().coerceAtLeast(remoteSeconds)
+                    else remoteSeconds
+                val duration = formatDuration(durationSec)                      // 格式化如 "1h 23m"
 
                 // 一行布局：左边 emoji 图标，右边 App 名 + 时长
                 Row(
@@ -437,8 +459,8 @@ private fun CurrentAppCard(
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            // 自己显示"已使用 X" / 对方显示"最近一次 · X"
-                            if (subjectIsMe) "已使用 $duration" else "最近一次 · $duration",
+                            // 统一显示"已使用 X"（云端 window_start 起算，两边一致）
+                            "已使用 $duration",
                             fontSize = 12.sp, color = Color.White.copy(alpha = 0.85f)
                         )
                     }
@@ -461,7 +483,8 @@ private fun PhoneStatusCard(
     subjectId: String,
     subjectName: String,
     subjectIsMe: Boolean,
-    reloadKey: Int
+    reloadKey: Int,
+    roleTheme: RoleTheme              // 角色主题（性别决定配色）
 ) {
     val ctx = LocalContext.current
 
@@ -598,10 +621,8 @@ private fun PhoneStatusCard(
         }
     }
 
-    // 主题色：看自己用粉色，看对方用蓝色
-    val pink = Color(0xFFFF8B7B)
-    val blue = Color(0xFF3A9E91)
-    val accent = if (subjectIsMe) pink else blue
+    // 主题色：由 RoleTheme 统一提供（性别+角色决定）
+    val accent = roleTheme.main
 
     // 计算展示用的电量/充电状态/网络/在线
     val batPct = if (subjectIsMe) batteryPct else taBattery ?: 0     // 电量百分比
@@ -751,7 +772,7 @@ private fun PhoneStatusCard(
                         // 每个 emoji 是一个可点击 Surface，选中的有粉色背景
                         Surface(
                             shape = RoundedCornerShape(12.dp),
-                            color = if (emoji == moodEmoji) pink.copy(alpha = 0.15f) else Color.Transparent,
+                            color = if (emoji == moodEmoji) accent.copy(alpha = 0.15f) else Color.Transparent,
                             modifier = Modifier.size(44.dp).clickable {
                                 // 点击：写入单例 + 关闭弹窗
                                 AppSessionTracker.setMood(emoji); showMoodDialog = false
@@ -810,7 +831,7 @@ private fun StatusChip(
 // 后续接入真实手环 SDK 时，把 "--" 与占位文案替换为真实数据即可。
 // =====================================================================
 @Composable
-private fun BandSection() {
+private fun BandSection(roleTheme: RoleTheme) {
     // 手环卡片配色（与方案 D 设计稿一致）
     data class BandSpec(val label: String, val ico: String, val colors: List<Color>)
     val tiles = listOf(
@@ -832,7 +853,7 @@ private fun BandSection() {
                     .background(Color(0xFFFFE4D1), RoundedCornerShape(50))
                     .padding(horizontal = 10.dp, vertical = 3.dp)
             ) {
-                Text("正在开发", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFF8B7B))
+                Text("正在开发", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = roleTheme.main)
             }
         }
         Spacer(Modifier.height(10.dp))
