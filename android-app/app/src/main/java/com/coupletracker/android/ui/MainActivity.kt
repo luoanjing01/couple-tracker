@@ -120,6 +120,11 @@ object TidalMapBridge {
 
 class MainActivity : ComponentActivity() {
 
+    // App 前后台标记：心跳上报时用来判断"小世界是否在前台"（决定显示"在线"还是"亮屏"）
+    companion object {
+        @Volatile var isAppForeground: Boolean = false
+    }
+
     // ============================================================================
     // 旧版底部 Tab 枚举已移除：潮汐卡片 v3 改为单一宿主（TidalHomeScreen），
     // 四个区块（位置/状态/统计/我的）由抽屉内滚动锚点 + pill tabs 管理。
@@ -1645,6 +1650,20 @@ class MainActivity : ComponentActivity() {
     //   用户在地图页里点开了某些详情（前端路由切换），按返回键应该回到地图主页，
     //   而不是直接退出 App。
     // ============================================================================
+    // ============================================================================
+    // onResume / onPause：维护 isAppForeground 标记
+    // 心跳上报时读取此标记，判断"小世界是否在前台"，决定状态卡显示"在线"还是"亮屏"。
+    // ============================================================================
+    override fun onResume() {
+        super.onResume()
+        isAppForeground = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        isAppForeground = false
+    }
+
     override fun onBackPressed() {
         if (webView?.canGoBack() == true) webView?.goBack()
         else super.onBackPressed()

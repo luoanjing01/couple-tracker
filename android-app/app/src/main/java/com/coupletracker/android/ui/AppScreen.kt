@@ -61,6 +61,7 @@ import com.coupletracker.android.data.LocationRow       // 位置记录数据类
 import com.coupletracker.android.data.AppSessionTracker // App 会话追踪单例（进程内累计时长、当前心情）
 import com.coupletracker.android.data.NetworkModule     // 网络模块（Retrofit/Supabase 客户端）
 import com.coupletracker.android.data.UserRepository    // 用户仓库（管理当前登录用户信息）
+import com.coupletracker.android.location.LocationTracker // 位置追踪器（读取移动状态）
 import com.coupletracker.android.ui.theme.RoleThemes
 import com.coupletracker.android.ui.theme.RoleTheme   // 角色主题（性别决定配色）
 import com.coupletracker.android.service.TrackerService // 后台追踪服务（上报位置/使用情况）
@@ -502,6 +503,8 @@ private fun PhoneStatusCard(
     var taNetworkType by remember { mutableStateOf<String?>(null) } // 对方网络类型（wifi/cellular/none）
     var taWifiSsid by remember { mutableStateOf<String?>(null) }    // 对方 WiFi 名称
     var taScreenOn by remember { mutableStateOf(true) }             // 对方屏幕是否点亮
+    var taIsMoving by remember { mutableStateOf(false) }            // 对方是否在移动
+    var taForegroundPkg by remember { mutableStateOf<String?>(null) } // 对方前台 App 包名（小世界在前台时=对方包名）
     var taHasDeviceStatus by remember { mutableStateOf(false) }     // 对方心跳表是否可用（false=旧版客户端）
 
     // 当前心情（AppSessionTracker 单例，进程存活就不丢）
@@ -598,6 +601,8 @@ private fun PhoneStatusCard(
                         taNetworkType = ds.network_type
                         taWifiSsid = ds.wifi_ssid
                         taScreenOn = ds.screen_on
+                        taIsMoving = ds.is_moving
+                        taForegroundPkg = ds.foreground_package
                         taUpdatedAt = parseIsoTime(ds.updated_at)   // 心跳时间戳
                         // 心跳距今 < 30 分钟视为在线（显示层再细分"X 分钟前"）
                         online = (System.currentTimeMillis() - taUpdatedAt) < 30 * 60_000L
@@ -672,54 +677,57 @@ private fun PhoneStatusCard(
             // 【行业惯例】（Life360 风格）按对方心跳距今分级：
             //   < 2 分钟 → 在线（再细分 熄屏）；< 30 分钟 → "X 分钟前"；≥ 30 分钟 → 离线。
             //   不再武断显示"关机"——App 无法区分"关机"和"后台被杀"，统一用"离线"表达。
+            // 状态优先级：移动中 > 离线 > 熄屏 > 在线(小世界前台) > 亮屏
+            // 无论亮屏/熄屏，只要在移动就优先显示"移动中"
             val statusIcon: String
             val statusValue: String
             val statusAccent: Color
             // 对方心跳距今的分钟数（仅在 device_status 心跳可用时用于分级）
             val taDiffMin = ((System.currentTimeMillis() - taUpdatedAt) / 60_000L).toInt()
+            // 自己：本地实时移动状态（LocationTracker 静态字段）；对方：心跳上报的 is_moving
+            val moving = if (subjectIsMe) LocationTracker.isMovingNow() else taIsMoving
             when {
-                // —— 对方（新版客户端，有心跳表）：按心跳新鲜度分级 ——
+                // —— 移动中（最高优先级，覆盖亮屏/熄屏/离线）——
+                moving -> {
+                    statusIcon = "🚶"
+                    statusValue = "移动中"
+                    statusAccent = Color(0xFF3A9EC9)
+                }
+                // —— 对方离线：心跳超过 30 分钟或无心跳表 ——
                 !subjectIsMe && taHasDeviceStatus && taDiffMin >= 30 -> {
                     statusIcon = "🔴"
                     statusValue = "离线"
                     statusAccent = Color(0xFFE53E3E)
                 }
+                !subjectIsMe && !taHasDeviceStatus && !isOnline -> {
+                    statusIcon = "🔴"
+                    statusValue = "离线"
+                    statusAccent = Color(0xFFE53E3E)
+                }
+                // —— 对方心跳 2~30 分钟：显示"X 分钟前" ——
                 !subjectIsMe && taHasDeviceStatus && taDiffMin >= 2 -> {
                     statusIcon = "🟠"
                     statusValue = "$taDiffMin 分钟前"
                     statusAccent = Color(0xFFDD6B20)
                 }
-                !subjectIsMe && taHasDeviceStatus && !taScreenOn -> {
+                // —— 熄屏（屏幕关闭且未移动）——
+                (subjectIsMe && !screenOn) || (!subjectIsMe && taHasDeviceStatus && !taScreenOn) -> {
                     statusIcon = "🌙"
                     statusValue = "熄屏"
                     statusAccent = Color(0xFF6B7FBF)
                 }
-                !subjectIsMe && taHasDeviceStatus -> {
+                // —— 在线：小世界自身在前台 ——
+                (subjectIsMe && MainActivity.isAppForeground) ||
+                        (!subjectIsMe && taHasDeviceStatus && !taForegroundPkg.isNullOrBlank()) -> {
                     statusIcon = "🟢"
                     statusValue = "在线"
                     statusAccent = Color(0xFF2F855A)
                 }
-                // —— 对方（旧版客户端，无心跳表，回退位置 5 分钟推断）——
-                !subjectIsMe && !isOnline -> {
-                    statusIcon = "🔴"
-                    statusValue = "离线"
-                    statusAccent = Color(0xFFE53E3E)
-                }
-                !subjectIsMe -> {
-                    statusIcon = "🟢"
-                    statusValue = "在线"
-                    statusAccent = Color(0xFF2F855A)
-                }
-                // —— 自己：本机状态实时可知，保持原有逻辑（充电见电量卡）——
-                !screenOn -> {
-                    statusIcon = "🌙"
-                    statusValue = "熄屏"
-                    statusAccent = Color(0xFF6B7FBF)
-                }
+                // —— 亮屏：屏幕亮着但小世界不在前台（在玩其他 App）——
                 else -> {
-                    statusIcon = "🟢"
-                    statusValue = "开机"
-                    statusAccent = Color(0xFF2F855A)
+                    statusIcon = "🔆"
+                    statusValue = "亮屏"
+                    statusAccent = Color(0xFFD69E2E)
                 }
             }
             StatusChip(

@@ -126,7 +126,7 @@ class TrackerService : Service() {
             // ---------------------------------------------------------------------
             locationTracker = runCatching { LocationTracker(this, serviceScope) }.getOrNull()
             appMonitor   = runCatching { AppUsageMonitor(this, serviceScope) }.getOrNull()
-            deviceStatusReporter = runCatching { DeviceStatusReporter(this, serviceScope) }.getOrNull()
+            deviceStatusReporter = runCatching { DeviceStatusReporter(this, serviceScope, locationTracker) }.getOrNull()
 
             // ---------------------------------------------------------------------
             // 步骤 2：尝试变成"前台服务"（必须显示一个常驻通知）

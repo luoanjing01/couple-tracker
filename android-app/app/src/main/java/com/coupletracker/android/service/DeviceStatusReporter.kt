@@ -31,6 +31,8 @@ import android.os.PowerManager                    // 电源管理（判断亮屏
 import com.coupletracker.android.data.DeviceStatusUpsert  // 上报请求体
 import com.coupletracker.android.data.NetworkModule       // 网络模块
 import com.coupletracker.android.data.UserRepository      // 用户仓库
+import com.coupletracker.android.location.LocationTracker // 位置追踪器（读取移动状态）
+import com.coupletracker.android.ui.MainActivity          // 读取 isAppForeground 标记
 import kotlinx.coroutines.*                       // 协程
 import java.time.Instant                          // UTC 时间戳
 
@@ -39,8 +41,13 @@ import java.time.Instant                          // UTC 时间戳
  *
  * @param context Android 上下文（TrackerService 传 this）
  * @param scope   协程作用域（跟随 TrackerService 生命周期，服务销毁时自动取消）
+ * @param locationTracker 位置追踪器（用于读取"是否在移动"状态，可空）
  */
-class DeviceStatusReporter(private val context: Context, private val scope: CoroutineScope) {
+class DeviceStatusReporter(
+    private val context: Context,
+    private val scope: CoroutineScope,
+    private val locationTracker: LocationTracker? = null
+) {
 
     // 心跳协程句柄；为空表示未启动
     private var heartbeatJob: Job? = null
@@ -170,7 +177,14 @@ class DeviceStatusReporter(private val context: Context, private val scope: Coro
             val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
             val screenOn = pm.isInteractive
 
-            // ④ upsert 到云端（updated_at 用客户端当前 UTC 时间，语义=心跳时刻）
+            // ④ 是否在移动（从 LocationTracker 读取最近 30 秒内的位移/速度判定）
+            val isMoving = locationTracker?.isMovingRecently() ?: false
+
+            // ⑤ 前台 App 包名：小世界自身在前台时为本包名，否则为 null（不暴露其他 App 包名）
+            //    状态卡逻辑：foreground_package == 本包名 → "在线"，否则亮屏/熄屏
+            val foregroundPkg = if (MainActivity.isAppForeground) context.packageName else null
+
+            // ⑥ upsert 到云端（updated_at 用客户端当前 UTC 时间，语义=心跳时刻）
             NetworkModule.restService.upsertDeviceStatus(
                 DeviceStatusUpsert(
                     user_id = userId,
@@ -179,6 +193,8 @@ class DeviceStatusReporter(private val context: Context, private val scope: Coro
                     network_type = networkType,
                     wifi_ssid = wifiSsid,
                     screen_on = screenOn,
+                    is_moving = isMoving,
+                    foreground_package = foregroundPkg,
                     updated_at = Instant.now().toString()
                 )
             )

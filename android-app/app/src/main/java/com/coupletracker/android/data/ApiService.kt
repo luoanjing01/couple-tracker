@@ -955,6 +955,8 @@ data class AppUsageInsert(
  * @param network_type  网络类型（"wifi" / "cellular" / "none"）
  * @param wifi_ssid     WiFi 名称（蜂窝/无网络时为 null）
  * @param screen_on     屏幕是否点亮
+ * @param is_moving     是否正在移动（速度>0.5m/s 或位移>50m）
+ * @param foreground_package  前台 App 包名（小世界自身在前台时=本包名）
  * @param updated_at    客户端心跳时间（ISO 8601）
  */
 data class DeviceStatusRow(
@@ -964,6 +966,8 @@ data class DeviceStatusRow(
     val network_type: String? = null,
     val wifi_ssid: String? = null,
     val screen_on: Boolean = true,
+    val is_moving: Boolean = false,
+    val foreground_package: String? = null,
     val updated_at: String? = null
 )
 
@@ -982,5 +986,7 @@ data class DeviceStatusUpsert(
     val network_type: String? = null,
     val wifi_ssid: String? = null,
     val screen_on: Boolean = true,
+    val is_moving: Boolean = false,
+    val foreground_package: String? = null,
     val updated_at: String
 )

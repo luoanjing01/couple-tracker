@@ -75,6 +75,7 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
     private var stillCount = 0           // 连续静止计数（防抖：防止偶尔不动被误判）
     private var currentIntervalMs = -1L  // 当前实际生效的系统定位 minTime（避免重复注册）
     private var currentMinDistM = -1f    // 当前实际生效的系统定位 minDistance（避免重复注册）
+    @Volatile private var lastMovingAt = 0L  // 最近一次检测到移动的时间戳（心跳上报"是否移动"用）
 
     // —— 轻量化②：批量上报缓存 ——
     private val pendingBatch = CopyOnWriteArrayList<com.coupletracker.android.data.LocationInsert>()  // 待上传位置缓存
@@ -96,6 +97,11 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         private const val STILL_MIN_DISTANCE_M = 0f      // 静止模式 minDistance=0（靠时间兜底唤醒）
         private const val MOVING_MIN_TIME_MS = 60_000L   // 移动中兜底：最长 60 秒至少报一次
         private const val STILL_MIN_TIME_MS = 300_000L   // 静止兜底：最长 5 分钟至少报一次
+
+        // 静态：最近一次检测到移动的时间戳，供 UI 层（状态卡）直接读取判断"移动中"
+        @Volatile var lastMovingAtStatic: Long = 0L
+        /** 最近 30 秒内是否检测到移动（UI 层状态卡用，无需拿到 LocationTracker 实例） */
+        fun isMovingNow(): Boolean = System.currentTimeMillis() - lastMovingAtStatic < 30_000L
     }
 
     // 记录上一次上报的位置和时刻，用于节流（避免短时间内重复上报几乎相同的位置）
@@ -105,6 +111,9 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
 
     /** TrackerService 每10秒把电量缓存到这里，上报位置时顺便带上 */
     fun setBatteryCache(pct: Int) { batteryPct = pct }
+
+    /** 最近 30 秒内是否检测到移动（心跳上报"移动中"状态用） */
+    fun isMovingRecently(): Boolean = System.currentTimeMillis() - lastMovingAt < 30_000L
 
     // ============================================================================
     // reportNow：手动触发一次强制上报（App 启动时 / 用户点刷新按钮时调用）
@@ -376,6 +385,10 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         // 通过所有过滤，更新"最近一次"记录
         lastLocation = loc; lastReportAt = now
         val isMoving = (loc.hasSpeed() && loc.speed > 0.5f)
+        if (isMoving || movedSinceLast > MOVING_DISPLACEMENT_M) {
+            lastMovingAt = now
+            lastMovingAtStatic = now   // 同步到静态字段，UI 层可直接读
+        }
 
         // ====================================================================
         // 轻量化②：先入本地缓存，攒批后一次性上传（减少网络唤醒次数）
