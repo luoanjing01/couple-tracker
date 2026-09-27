@@ -164,8 +164,6 @@
     <button class="track-btn" id="btnShowTrack">查看我的轨迹</button>
     <button class="track-btn secondary" id="btnShowPartnerTrack" style="display:none;">查看TA的轨迹</button>
     <button class="track-btn secondary" id="btnClearTrack" style="display:none;">清除轨迹</button>
-    <button class="track-btn" id="btnViewMyLoc" style="background:#3A9E91;margin-top:8px;">📍 查看我的位置</button>
-    <button class="track-btn" id="btnViewPartnerLoc" style="background:#FF8B7B;margin-top:4px;display:none;">💕 查看TA的位置</button>
   </div>
 </div>
 <!-- 🔴 调试面板：默认隐藏（display:none），开发时手动改 display:block
@@ -1187,17 +1185,6 @@ function initDrawer() {
   document.getElementById('btnShowTrack').addEventListener('click', function(){ loadTrack(me && me.id, false); });
   document.getElementById('btnShowPartnerTrack').addEventListener('click', function(){ loadTrack(__partnerUid.v, true); });
   document.getElementById('btnClearTrack').addEventListener('click', clearTrack);
-  // 查看位置按钮：点击地图跳转到对应标记
-  document.getElementById('btnViewMyLoc').addEventListener('click', function(){
-    var m = __markerMap[me && me.id];
-    if (m) { map.setView(m.getLatLng(), 16); showFlash('已跳转到我的位置'); }
-    else { showFlash('还没有我的位置数据'); }
-  });
-  document.getElementById('btnViewPartnerLoc').addEventListener('click', function(){
-    var m = __markerMap[__partnerUid && __partnerUid.v];
-    if (m) { map.setView(m.getLatLng(), 16); showFlash('已跳转到TA的位置'); }
-    else { showFlash('还没有TA的位置数据'); }
-  });
 }
 
 // 根据是否有配对方显示"查看TA的轨迹"按钮
@@ -1205,9 +1192,24 @@ function initDrawer() {
 function updatePartnerTrackBtn() {
   var btn = document.getElementById('btnShowPartnerTrack');
   if (btn) btn.style.display = (__partnerUid.v) ? 'block' : 'none';
-  var btnLoc = document.getElementById('btnViewPartnerLoc');
-  if (btnLoc) btnLoc.style.display = (__partnerUid.v) ? 'block' : 'none';
 }
+
+/* ============================================================
+   jumpToMyLocation() / jumpToPartnerLocation()
+   ------------------------------------------------------------
+   暴露给原生 JS 桥（TidalMapBridge.eval）调用的全局函数：
+   点击原生「位置」chip 时，地图自动飞到我 / TA 的标记位置。
+   ============================================================ */
+window.jumpToMyLocation = function(){
+  var m = __markerMap[me && me.id];
+  if (m) { map.setView(m.getLatLng(), 16); showFlash('已跳转到我的位置'); }
+  else { showFlash('还没有我的位置数据'); }
+};
+window.jumpToPartnerLocation = function(){
+  var m = __markerMap[__partnerUid && __partnerUid.v];
+  if (m) { map.setView(m.getLatLng(), 16); showFlash('已跳转到TA的位置'); }
+  else { showFlash('还没有TA的位置数据'); }
+};
 
 /* ============================================================
    simplifyTrack(pts, epsilon) — 轨迹点过滤：去毛刺，让路径更平滑

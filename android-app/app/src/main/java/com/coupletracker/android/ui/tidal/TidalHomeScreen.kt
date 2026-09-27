@@ -639,6 +639,12 @@ private fun LocationSection(
                     )
                     if (trackOn) onShowTrack()   // 收起抽屉露出地图
                 }
+                // 位置 chip：跳转到当前查看对象的地图标记（看我→跳我，看TA→跳TA）
+                TidalChip(text = "📌 位置", bg = ChipBgCool, fg = MintDeep) {
+                    val fn = if (viewingPartner) "jumpToPartnerLocation" else "jumpToMyLocation"
+                    TidalMapBridge.eval("try{window.$fn&&window.$fn();}catch(e){}")
+                    onShowTrack()   // 收起抽屉露出地图
+                }
             }
         }
     }
