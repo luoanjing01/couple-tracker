@@ -17,6 +17,7 @@ import android.content.Context              // Android 上下文，访问系统�
 import android.graphics.Bitmap              // 位图，WebView 加载 favicon 时用到
 import android.os.Bundle                     // 用于保存 Activity 状态的容器
 import android.webkit.*                     // WebView 相关：WebView、WebSettings、WebViewClient 等
+import android.util.Log                    // Android 日志（取消配对诊断用）
 import android.widget.Toast                 // Android 原生 Toast 提示（轻量级反馈）
 
 // Jetpack Activity 库
@@ -59,6 +60,7 @@ import com.coupletracker.android.data.NetworkModule         // 网络模块：Re
 import com.coupletracker.android.data.PairByCodeReq         // 配对请求的请求体数据类
 import com.coupletracker.android.data.CheckPairStatusReq    // 查询配对状态的请求体数据类
 import com.coupletracker.android.data.AcceptPairReq          // 接受配对请求的请求体数据类
+import com.coupletracker.android.data.UnpairReq               // 取消配对请求体
 import com.coupletracker.android.data.UserRepository         // 用户数据仓库：保存用户信息、Token 等
 import com.coupletracker.android.service.TrackerService     // 后台追踪服务（位置采集、APP 使用检测）
 import com.coupletracker.android.ui.theme.Coral              // 潮汐主题：珊瑚主色
@@ -1545,8 +1547,8 @@ class MainActivity : ComponentActivity() {
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         // 取消配对按钮：仅在已配对时显示
-                        // 方案：直接用 REST PATCH 清双方 partner_id（RLS profiles_all 允许所有读写）
-                        //       不依赖 unpair SQL 函数部署，更稳定可靠
+                        // 方案：调用 unpair RPC（SECURITY DEFINER 原子清双方），一次请求搞定
+                        //       失败时打印全链路日志，不再盲报"网络异常"
                         if (hasPartner == true) {
                             var unpairing by remember { mutableStateOf(false) }
                             OutlinedButton(
@@ -1561,48 +1563,71 @@ class MainActivity : ComponentActivity() {
                                         Toast.makeText(this@MainActivity, "当前未配对，无需取消", Toast.LENGTH_SHORT).show()
                                         return@OutlinedButton
                                     }
+                                    // 前置校验：me.id 为空时不发请求，直接提示（历史 bug：空 id 导致 PATCH 400 被误报为网络异常）
+                                    if (me.id.isBlank()) {
+                                        Toast.makeText(this@MainActivity, "用户ID异常，请重新登录", Toast.LENGTH_LONG).show()
+                                        Log.w("Unpair", "[拦截] me.id 为空，user=$me")
+                                        return@OutlinedButton
+                                    }
                                     if (unpairing) return@OutlinedButton  // 防抖：避免狂点导致多次请求
                                     unpairing = true
                                     Toast.makeText(this@MainActivity, "正在取消配对…", Toast.LENGTH_SHORT).show()
                                     lifecycleScope.launch(Dispatchers.IO) {
-                                        // 清空字段：partner_id + pending_pair + pair_request_at
-                                        val clearFields = mapOf<String, Any?>(
-                                            "partner_id" to null,
-                                            "pending_pair" to null,
-                                            "pair_request_at" to null
-                                        )
-                                        // ① 清自己
-                                        val selfResp = runCatching {
-                                            NetworkModule.restService.updateProfile(me.id, clearFields)
+                                        // ===== 方案 A+B：用 unpair RPC（SECURITY DEFINER 原子清双方）替代手写 PATCH 两次 =====
+                                        // 优势：① 一次请求完成，避免"自己成功对方失败"的中间态
+                                        //       ② SECURITY DEFINER 绕过 RLS，不依赖 profiles_all 策略
+                                        //       ③ 失败时服务器返回明确 reason，不再盲猜"网络异常"
+                                        Log.d("Unpair", "[开始] myId=${me.id}, partnerId=$myPartnerId")
+                                        val unpairResult = runCatching {
+                                            NetworkModule.rpcService.unpair(UnpairReq(myId = me.id))
                                         }
-                                        // ② 清对方（单方取消 -> 双方都解除）
-                                        val partnerResp = runCatching {
-                                            NetworkModule.restService.updateProfile(myPartnerId, clearFields)
-                                        }
-                                        val selfOk = selfResp.getOrNull()?.isSuccessful == true
-                                        val partnerOk = partnerResp.getOrNull()?.isSuccessful == true
                                         withContext(Dispatchers.Main) {
                                             unpairing = false
-                                            if (selfOk) {
-                                                // ✅ 至少自己清成功：更新本地 -> userFlow 发新值
-                                                //   -> UI 自动切回未配对 + WebView 重新注入空 partnerId
-                                                //   -> AppScreen/StatsScreen 切换按钮显示「💤 未配对」
-                                                UserRepository.get().setUser(me.copy(partnerId = null))
-                                                hasPartner = false
-                                                partnerName = ""
-                                                Toast.makeText(
-                                                    this@MainActivity,
-                                                    if (partnerOk) "已取消配对" else "已取消配对（对方数据稍后同步）",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                            } else {
-                                                // ❌ 自己都没清成功（网络问题）
-                                                Toast.makeText(
-                                                    this@MainActivity,
-                                                    "取消失败：网络异常，请稍后重试",
-                                                    Toast.LENGTH_LONG
-                                                ).show()
-                                            }
+                                            unpairResult.fold(
+                                                onSuccess = { resp ->
+                                                    val body = resp.body()
+                                                    Log.d("Unpair", "[响应] HTTP=${resp.code()}, ok=${body?.ok}, reason=${body?.reason}, msg=${body?.msg}")
+                                                    when {
+                                                        resp.isSuccessful && body?.ok == true -> {
+                                                            // ✅ 服务器确认双方已清：同步本地状态
+                                                            UserRepository.get().setUser(me.copy(partnerId = null))
+                                                            hasPartner = false
+                                                            partnerName = ""
+                                                            Toast.makeText(
+                                                                this@MainActivity,
+                                                                body.msg ?: "已取消配对",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        }
+                                                        resp.isSuccessful && body?.reason == "NOT_PAIRED" -> {
+                                                            // 服务器认为本来就没配对：直接同步本地（自愈）
+                                                            UserRepository.get().setUser(me.copy(partnerId = null))
+                                                            hasPartner = false
+                                                            partnerName = ""
+                                                            Toast.makeText(this@MainActivity, "已是未配对状态", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                        else -> {
+                                                            // 服务器返回非 2xx 或业务失败：显示真实原因
+                                                            val errBody = runCatching { resp.errorBody()?.string() }.getOrNull()
+                                                            Log.w("Unpair", "[失败] HTTP=${resp.code()}, errBody=$errBody")
+                                                            Toast.makeText(
+                                                                this@MainActivity,
+                                                                "取消失败：${body?.msg ?: "HTTP ${resp.code()}"}",
+                                                                Toast.LENGTH_LONG
+                                                            ).show()
+                                                        }
+                                                    }
+                                                },
+                                                onFailure = { e ->
+                                                    // 网络层异常（DNS/超时/SSL）：打印具体异常类型
+                                                    Log.e("Unpair", "[异常] ${e.javaClass.simpleName}: ${e.message}", e)
+                                                    Toast.makeText(
+                                                        this@MainActivity,
+                                                        "取消失败：${e.javaClass.simpleName}，请检查网络",
+                                                        Toast.LENGTH_LONG
+                                                    ).show()
+                                                }
+                                            )
                                         }
                                     }
                                 },

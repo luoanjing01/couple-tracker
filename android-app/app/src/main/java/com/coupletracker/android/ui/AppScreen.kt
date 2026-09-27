@@ -425,48 +425,28 @@ private fun CurrentAppCard(
                     Text("${subjectName} 暂无使用记录", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
             } else if (!subjectIsMe && taIdle) {
-                // TA 云端 30 分钟无新记录 → 显示"最后已知"（保留数据，只加时间提示）
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    Text("🕐", fontSize = 36.sp)
-                    Spacer(Modifier.height(4.dp))
-                    // 格式化"最后更新于 X 小时前"
-                    val ageText = run {
-                        val ageMs = now - remoteUpdateAt
-                        val mins = ageMs / 60000
-                        val hours = ageMs / 3600000
-                        when {
-                            hours > 0 -> "${hours}小时前"
-                            mins > 0 -> "${mins}分钟前"
-                            else -> "刚刚"
-                        }
-                    }
-                    Text("${subjectName} 最后已知 · $ageText", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    // 显示最后已知数据（如果有的话）
-                    if (remoteAppName.isNotEmpty()) {
-                        val appEmoji = categoryEmoji(remoteCategory)
-                        val duration = formatDuration(remoteSeconds)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Box(
-                                Modifier.size(52.dp).background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(14.dp)),
-                                contentAlignment = Alignment.Center
-                            ) { Text(appEmoji, fontSize = 26.sp) }
-                            Spacer(Modifier.width(14.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    remoteAppName, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold,
-                                    color = Color.White, maxLines = 1
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    "已使用 $duration",
-                                    fontSize = 12.sp, color = Color.White.copy(alpha = 0.85f)
-                                )
-                            }
-                        }
+                // TA 云端 30 分钟无新记录 → 显示最后已知数据（左上角标题已标注"最后已知"）
+                val appEmoji = categoryEmoji(remoteCategory)
+                val duration = formatDuration(remoteSeconds)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        Modifier.size(52.dp).background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(14.dp)),
+                        contentAlignment = Alignment.Center
+                    ) { Text(appEmoji, fontSize = 26.sp) }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            remoteAppName, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold,
+                            color = Color.White, maxLines = 1
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "已使用 $duration",
+                            fontSize = 12.sp, color = Color.White.copy(alpha = 0.85f)
+                        )
                     }
                 }
             } else {
