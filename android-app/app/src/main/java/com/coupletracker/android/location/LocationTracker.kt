@@ -107,6 +107,26 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
     fun setBatteryCache(pct: Int) { batteryPct = pct }
 
     // ============================================================================
+    // reportNow：手动触发一次强制上报（App 启动时 / 用户点刷新按钮时调用）
+    // ----------------------------------------------------------------------------
+    // 为什么需要：位移驱动方案下，静止时系统不会主动唤醒 GPS，可能 5 分钟都没数据。
+    //   打开 App 或点刷新时，立刻读取系统缓存的最新位置并强制上报，
+    //   保证对方/地图立刻有位置显示，不用等下一次移动触发。
+    // ============================================================================
+    fun reportNow() {
+        runCatching { pickBestLastKnown() }.getOrNull()?.let { loc ->
+            val age = System.currentTimeMillis() - loc.time
+            // 只上报 2 分钟内的缓存位置，避免显示几小时前的旧位置
+            if (age < 120_000L) {
+                android.util.Log.d("CT-Tracker", "reportNow: 强制上报缓存位置 age=${age}ms")
+                report(loc, force = true)
+            } else {
+                android.util.Log.d("CT-Tracker", "reportNow: 缓存位置过旧 age=${age}ms，跳过")
+            }
+        } ?: android.util.Log.d("CT-Tracker", "reportNow: 无缓存位置可用")
+    }
+
+    // ============================================================================
     // 权限检查：判断当前 App 是否已获得定位权限
     // 返回 true 表示至少有粗略或精确定位权限之一，可以开始定位
     // ============================================================================

@@ -314,6 +314,7 @@ class TrackerService : Service() {
                         runCatching { deviceStatusReporter?.start() }   // 兜底：补初始化后立即启动心跳
                         // 把实例引用也存到 companion 的静态变量里，方便 UI 层直接读取
                         Companion.appMonitor = appMonitor
+                        Companion.locationTracker = locationTracker   // 同步刷新静态引用，供 UI 手动触发
                     }
                     createdSafely = true
                 }
@@ -478,6 +479,14 @@ class TrackerService : Service() {
         // @Volatile：保证多线程可见性。一个线程写入后，其他线程立即看到新值
         //   - 因为 service 进程和 UI 可能并发读写这个引用
         @Volatile var appMonitor: com.coupletracker.android.appmonitor.AppUsageMonitor? = null
+
+        /** 静态引用 LocationTracker，供 UI 层手动触发刷新 */
+        @Volatile var locationTracker: com.coupletracker.android.location.LocationTracker? = null
+
+        /** 手动触发一次位置强制上报（App 启动时 / 用户点刷新按钮时调用） */
+        fun reportLocationNow() {
+            runCatching { locationTracker?.reportNow() }
+        }
 
         // =========================================================================
         // 【canStartForeground（静态版）】判断是否满足变成前台服务的权限要求

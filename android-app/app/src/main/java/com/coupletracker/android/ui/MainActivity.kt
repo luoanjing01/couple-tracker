@@ -172,6 +172,15 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // ✅ App 启动时自动上报一次位置：
+        //    位移驱动方案下，静止时系统不主动唤醒 GPS，可能 5 分钟没数据。
+        //    延迟 3 秒等 Service 初始化完成，然后读系统缓存位置强制上报，
+        //    保证对方/地图立刻有位置显示。
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(3000L)
+            runCatching { com.coupletracker.android.service.TrackerService.reportLocationNow() }
+        }
+
         // ============================================================================
         // setContent { ... }：把 Compose UI 绑定到本 Activity
         // ----------------------------------------------------------------------------
@@ -675,6 +684,21 @@ class MainActivity : ComponentActivity() {
                                 setAcceptCookie(true)
                                 setAcceptThirdPartyCookies(webViewRef, true)
                             }
+                            // ============================================================================
+                            // ✅ JS 接口：前端地图刷新按钮调用原生上报
+                            // ----------------------------------------------------------------------------
+                            // - 前端 JS 通过 window.CoupleTrackerNative.reportLocation() 调用
+                            // - 原生侧调用 TrackerService.reportLocationNow() 强制上报一次
+                            // - 用于用户点「刷新」按钮时立刻上报位置（位移驱动下静止可能 5 分钟没数据）
+                            // ============================================================================
+                            addJavascriptInterface(object {
+                                @android.webkit.JavascriptInterface
+                                fun reportLocation() {
+                                    runCatching {
+                                        com.coupletracker.android.service.TrackerService.reportLocationNow()
+                                    }
+                                }
+                            }, "CoupleTrackerNative")
                             // ============================================================================
                             // WebChromeClient：处理浏览器 UI 层面的事件
                             // （如 JS 的 console.log、alert、prompt、文件选择器、进度条等）
