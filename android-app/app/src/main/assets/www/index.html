@@ -407,6 +407,74 @@ function makeHeaders() {
   return h;
 }
 
+/* ============================================================
+   fetchOpts(headers) — 统一构造 fetch 选项（带 8 秒超时）
+   ------------------------------------------------------------
+   所有 REST 请求统一加 AbortSignal.timeout(8000)，防止弱网环境下
+   请求永久挂起导致轮询卡死。老 WebView 不支持 AbortSignal.timeout
+   时自动降级为不带 signal（行为与之前一致）。
+   ============================================================ */
+function fetchOpts(headers) {
+  var o = { headers: headers };
+  try {
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+      o.signal = AbortSignal.timeout(8000);
+    }
+  } catch(e){}
+  return o;
+}
+
+/* ============================================================
+   安卓本地注入读取（__LOCAL_LOCATION__ / __LOCAL_STATUS__）
+   ------------------------------------------------------------
+   安卓端通过 evaluateJavascript 把本地最新位置和状态挂到 window：
+     window.__LOCAL_LOCATION__ : 本地定位（JSON 字符串或对象），
+        字段：latitude/lat、longitude/lng、accuracy、is_moving、
+              battery_level/battery、speed、timestamp/created_at
+     window.__LOCAL_STATUS__   : 本机状态（JSON 字符串或对象），
+        字段：app_name、is_moving、battery_level、speed、screen_on 等
+   前端优先使用本地数据，不依赖网络；解析失败/字段无效返回 null。
+   ============================================================ */
+function __parseInjected(v) {
+  if (!v) return null;
+  if (typeof v === 'string') { try { return JSON.parse(v); } catch(e){ return null; } }
+  if (typeof v === 'object') return v;
+  return null;
+}
+
+/* readLocalLocation() — 读取本地位置并归一化成 locations 表行结构 */
+function readLocalLocation() {
+  var o = __parseInjected(window.__LOCAL_LOCATION__);
+  if (!o) return null;
+  var lat = parseFloat(o.latitude != null ? o.latitude : o.lat);
+  var lng = parseFloat(o.longitude != null ? o.longitude : o.lng);
+  if (!isFinite(lat) || !isFinite(lng)) return null;
+  return {
+    latitude: lat,
+    longitude: lng,
+    accuracy: o.accuracy,
+    is_moving: o.is_moving,
+    battery_level: o.battery_level != null ? o.battery_level : o.battery,
+    speed: o.speed,
+    timestamp: o.timestamp || o.created_at,
+    created_at: o.created_at || o.timestamp
+  };
+}
+
+/* readLocalStatus() — 读取本机状态（App/移动/电量等），无注入返回 null */
+function readLocalStatus() {
+  return __parseInjected(window.__LOCAL_STATUS__);
+}
+
+/* fmtAgo(ts) — 把时间戳格式化为 "N 秒/分钟/小时前"（用于"刷新于 X 小时前"） */
+function fmtAgo(ts) {
+  if (!ts) return '';
+  var secs = Math.round((Date.now() - ts) / 1000);
+  if (secs < 60) return Math.max(secs, 0) + ' 秒前';
+  if (secs < 3600) return Math.floor(secs / 60) + ' 分钟前';
+  return Math.floor(secs / 3600) + ' 小时前';
+}
+
 /* —— 地图状态变量 ——
    meMarker / partnerMarker : "我"/"TA" 在地图上的 Leaflet 标记对象
    meAcc    / partnerAcc    : "我"/"TA" 的定位精度圆（L.circle），半径=accuracy 米
@@ -1012,10 +1080,14 @@ function setOrUpdate(markerRef, lat, lng, emoji, color, pulse, row, isMe) {
   var badgeText = row.is_moving ? '🏃 移动中' : '🧎 静止';
   var bat = row.battery_level != null ? '🔋 '+row.battery_level+'%  ' : '';        // 电量(可选)
   var speed = row.speed != null ? '🚶 ' + (typeof row.speed === 'number' ? row.speed.toFixed(1) : row.speed) + ' m/s' : '';   // 速度(可选)
+  var appLine = row.app_name ? '<div class="sub">📱 '+row.app_name+'</div>' : '';            // 本机状态：正在用的App(可选)
+  var staleLine = row.stale_text ? '<div class="sub">'+row.stale_text+'</div>' : '';        // 最后已知提示(可选，如"刷新于 X 小时前")
   var html = '<div class="popup"><div class="avatar">'+(emoji||'👤')+'</div>'+
     '<div class="name">'+row.nickname+(isMe?' (我)':' (TA)')+'</div>'+
     '<span class="badge '+badgeClass+'">'+badgeText+'</span>'+
     '<div class="sub">'+bat+speed+'</div>'+
+    appLine+
+    staleLine+
     '<div class="sub">更新于 '+fmtTime(row.timestamp || row.created_at)+'</div></div>';
   markerRef.value.bindPopup(html);   // 绑定弹窗（点标记时弹出）
 }
@@ -1200,7 +1272,7 @@ function loadTrack(uid, isPartner) {
   var now = new Date();
   var yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).toISOString();
 
-  fetch(SUPABASE_URL + '/rest/v1/locations?select=latitude,longitude,created_at&user_id=eq.'+encodeURIComponent(uid)+'&created_at=gte.'+encodeURIComponent(yesterdayStart)+'&order=created_at.asc&limit=1000', { headers: headers })
+  fetch(SUPABASE_URL + '/rest/v1/locations?select=latitude,longitude,created_at&user_id=eq.'+encodeURIComponent(uid)+'&created_at=gte.'+encodeURIComponent(yesterdayStart)+'&order=created_at.asc&limit=1000', fetchOpts(headers))
     .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(function(rows){
       if (!Array.isArray(rows) || rows.length < 2) {
@@ -1317,7 +1389,7 @@ function __drawOneTodayTrack(uid, color, allBounds) {
     + '&user_id=eq.' + encodeURIComponent(uid)
     + '&created_at=gte.' + encodeURIComponent(todayStart)
     + '&order=created_at.asc&limit=1000';
-  return fetch(url, { headers: makeHeaders() })
+  return fetch(url, fetchOpts(makeHeaders()))
     .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(function(rows){
       if (!Array.isArray(rows) || rows.length < 2) return;
@@ -1440,11 +1512,15 @@ function updateTopbar() {
 /* ============================================================
    poll() — 轮询拉取"我"和"TA"的最新位置（每 5 秒调一次）
    ------------------------------------------------------------
-   并发发起两个请求：
-     1. 查我的最新 location（user_id = me.id，limit 1，按时间倒序）
-     2. 先 fetchPartnerUid 拿到配对方 id，再查 TA 的最新 location
-   每个请求各自成功后调用 setOrUpdate 更新标记；
-   两个都结束后（reqsDone===2）：
+   两路数据源：
+     1. 我的位置：优先读安卓注入的本地位置 window.__LOCAL_LOCATION__
+        （不依赖网络），并叠加 window.__LOCAL_STATUS__ 的本机状态
+        （正在用的App/移动状态/电量等，不查云端）；
+        本地无数据时才回退到 REST 查 locations 表。
+     2. TA的位置：先 fetchPartnerUid 拿到配对方 id，再 REST 查最新 location。
+        查不到数据时不清空标记，保留上次位置，并在弹窗显示"刷新于 X 小时前"。
+   所有 fetch 统一带 8 秒超时（fetchOpts）。
+   两个分支都结束后（reqsDone===2）：
      · 累计错误次数 lastRestCount（>=3 触发顶栏红条）
      · 首次有标记时 fit() 居中一次（fitDone 控制）
      · updateTopbar 刷新顶栏
@@ -1468,34 +1544,59 @@ function poll() {
     }
   }
   if (uid) {
-    console.log('[CT] poll fetching my location, uid=', uid); fetch(SUPABASE_URL + '/rest/v1/locations?select=*&user_id=eq.'+encodeURIComponent(uid)+'&order=created_at.desc&limit=1', { headers: headers })
-      .then(function(r){
-        if (!r.ok) throw new Error('HTTP '+r.status);
-        return r.json();
-      }).then(function(rows){
-        if (Array.isArray(rows) && rows.length) {
-          var row = rows[0];
-          lastMeAt = new Date(row.timestamp || row.created_at).getTime();
-          setOrUpdate({value: meMarker}, row.latitude, row.longitude, (me&&me.avatar)||'👤', myColor(), !!row.is_moving, Object.assign({}, row, {nickname: (me&&me.nickname)||'我'}), true);
-        }
-        done();
-      }).catch(function(e){ myErr = '我位置('+(e&&e.message?e.message:'网络失败')+')'; done(); });
+    // ✅ 优先用安卓注入的本地位置：有数据就直接显示，不发 REST 请求
+    var localRow = readLocalLocation();
+    if (localRow) {
+      // 自己的 App/状态信息从本地读（window.__LOCAL_STATUS__），不查云端
+      var st = readLocalStatus() || {};
+      var merged = Object.assign({}, localRow, {
+        is_moving: st.is_moving != null ? st.is_moving : localRow.is_moving,
+        battery_level: st.battery_level != null ? st.battery_level : localRow.battery_level,
+        speed: st.speed != null ? st.speed : localRow.speed,
+        app_name: st.app_name || st.appName || '',
+        nickname: (me&&me.nickname)||'我'
+      });
+      var localAt = new Date(merged.timestamp || merged.created_at).getTime();
+      lastMeAt = isFinite(localAt) ? localAt : Date.now();
+      setOrUpdate({value: meMarker}, merged.latitude, merged.longitude, (me&&me.avatar)||'👤', myColor(), !!merged.is_moving, merged, true);
+      done();
+    } else {
+      // 本地无注入数据 → 回退到 REST 查询
+      console.log('[CT] poll fetching my location, uid=', uid); fetch(SUPABASE_URL + '/rest/v1/locations?select=*&user_id=eq.'+encodeURIComponent(uid)+'&order=created_at.desc&limit=1', fetchOpts(headers))
+        .then(function(r){
+          if (!r.ok) throw new Error('HTTP '+r.status);
+          return r.json();
+        }).then(function(rows){
+          if (Array.isArray(rows) && rows.length) {
+            var row = rows[0];
+            lastMeAt = new Date(row.timestamp || row.created_at).getTime();
+            setOrUpdate({value: meMarker}, row.latitude, row.longitude, (me&&me.avatar)||'👤', myColor(), !!row.is_moving, Object.assign({}, row, {nickname: (me&&me.nickname)||'我'}), true);
+          }
+          done();
+        }).catch(function(e){ myErr = '我位置('+(e&&e.message?e.message:'网络失败')+')'; done(); });
+    }
   } else done();
 
   fetchPartnerUid(function(partnerUid, err){
     if (err) { partnerErr = err; }
     updatePartnerTrackBtn();  // 有配对方则显示"查看TA的轨迹"按钮
     if (!partnerUid) { done(); return; }
-    fetch(SUPABASE_URL + '/rest/v1/locations?select=*&user_id=eq.'+encodeURIComponent(partnerUid)+'&order=created_at.desc&limit=1', { headers: headers })
+    fetch(SUPABASE_URL + '/rest/v1/locations?select=*&user_id=eq.'+encodeURIComponent(partnerUid)+'&order=created_at.desc&limit=1', fetchOpts(headers))
       .then(function(r){
         if (!r.ok) throw new Error('HTTP '+r.status);
         return r.json();
       }).then(function(rows){
         if (Array.isArray(rows) && rows.length) {
           var row = rows[0];
+          __lastPartnerRow = row;   // 记录最后已知位置，供查询失败时保留显示
           lastPartnerAt = new Date(row.timestamp || row.created_at).getTime();
           fetchNickAvatar(partnerUid, function(pa){
             setOrUpdate({value: partnerMarker}, row.latitude, row.longitude, (pa&&pa.avatar)||'💞', taColor(), !!row.is_moving, Object.assign({}, row, {nickname: (pa&&pa.nickname)||'TA'}), false);
+          });
+        } else if (partnerMarker && __lastPartnerRow) {
+          // ✅ 查不到新数据：不清空标记，保留上次位置，弹窗标注"刷新于 X 小时前"
+          fetchNickAvatar(partnerUid, function(pa){
+            setOrUpdate({value: partnerMarker}, __lastPartnerRow.latitude, __lastPartnerRow.longitude, (pa&&pa.avatar)||'💞', taColor(), !!__lastPartnerRow.is_moving, Object.assign({}, __lastPartnerRow, {nickname: (pa&&pa.nickname)||'TA', stale_text: '刷新于 ' + (fmtAgo(lastPartnerAt) || '很久以前')}), false);
           });
         }
         done();
@@ -1507,6 +1608,10 @@ function poll() {
    __partnerNickCache : 缓存 TA 的资料对象，避免每次 poll 都查 profiles 表。
    只要 id 一致就直接用缓存。 */
 var __partnerNickCache = null;
+/* —— TA 最后已知位置缓存 ——
+   __lastPartnerRow : 最近一次成功查到的 TA 定位行。REST 查不到新数据时
+   用它保留地图标记，并在弹窗显示"刷新于 X 小时前"。 */
+var __lastPartnerRow = null;
 /* ============================================================
    fetchNickAvatar(uid, cb) — 查询配对方的昵称和头像 emoji
    ------------------------------------------------------------
@@ -1517,9 +1622,9 @@ var __partnerNickCache = null;
    ============================================================ */
 function fetchNickAvatar(uid, cb) {
   if (__partnerNickCache && __partnerNickCache.id === uid) { cb(__partnerNickCache); return; }   // 命中缓存
-  fetch(SUPABASE_URL + '/rest/v1/profiles?select=id,nickname,avatar,couple_code&limit=1&id=eq.'+encodeURIComponent(uid), {
-    headers: makeHeaders()
-  }).then(function(r){return r.json();}).then(function(rows){
+  fetch(SUPABASE_URL + '/rest/v1/profiles?select=id,nickname,avatar,couple_code&limit=1&id=eq.'+encodeURIComponent(uid),
+    fetchOpts(makeHeaders())
+  ).then(function(r){return r.json();}).then(function(rows){
     var p = (Array.isArray(rows) && rows[0]) ? rows[0] : {id:uid, nickname:'TA', avatar:'💞'};   // 查不到 → 默认值
     __partnerNickCache = p;   // 写入缓存
     cb(p);
@@ -1559,7 +1664,7 @@ function fetchPartnerUid(cb) {
   }
 
   // 用 partner_id 查
-  fetch(SUPABASE_URL + '/rest/v1/profiles?select=id&id=eq.'+encodeURIComponent(partnerId)+'&limit=1', { headers: headers })
+  fetch(SUPABASE_URL + '/rest/v1/profiles?select=id&id=eq.'+encodeURIComponent(partnerId)+'&limit=1', fetchOpts(headers))
     .then(function(r){
       if (!r.ok) throw new Error('HTTP '+r.status);
       return r.json();

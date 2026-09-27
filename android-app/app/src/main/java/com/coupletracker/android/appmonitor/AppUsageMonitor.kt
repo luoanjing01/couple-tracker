@@ -219,6 +219,18 @@ class AppUsageMonitor(private val context: Context, private val scope: Coroutine
     val (appName, category) = getAppMeta(pkg)
         // 立即把当前 App 信息推给 UI 流（让 UI 实时显示"正在使用：微信"）
         _currentApp.tryEmit(pkg to appName)
+        // 同步到静态字段，供 WebView 本地读取（离线可用）
+        lastAppJson = try {
+            org.json.JSONObject().apply {
+                put("package_name", pkg)
+                put("app_name", appName)
+                put("category", category)
+                put("usage_seconds", seconds)
+                put("window_start_ms", windowStartMs ?: 0L)
+                put("timestamp", System.currentTimeMillis())
+            }.toString()
+        } catch (e: Exception) { null }
+        lastAppReportAt = System.currentTimeMillis()
         // 启动一个独立协程做网络上报，避免阻塞主循环
         scope.launch(Dispatchers.IO) {
             // 拿当前登录用户，没登录就不上报
@@ -377,6 +389,24 @@ private fun categorizeByPackage(pkg: String): String = when {
     // get() = false 表示这个属性永远返回 false，目前没有实际作用，留作扩展
     @Suppress("unused")
     private val isSystemApp: Boolean get() = false
+
+    companion object {
+        /** 最近一次上报的 App 信息（供 WebView 本地读取） */
+        @Volatile var lastAppJson: String? = null
+        /** 最近一次上报的时间戳 */
+        @Volatile var lastAppReportAt: Long = 0L
+
+        /** 构造 WebView 注入用的 App 状态 JSON；无数据返回 null */
+        fun buildAppJson(): String? {
+            val json = lastAppJson ?: return null
+            val age = System.currentTimeMillis() - lastAppReportAt
+            return try {
+                val obj = org.json.JSONObject(json)
+                obj.put("age_ms", age)
+                obj.toString()
+            } catch (e: Exception) { null }
+        }
+    }
 }
 
 

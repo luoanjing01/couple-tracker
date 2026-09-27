@@ -102,6 +102,31 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
         @Volatile var lastMovingAtStatic: Long = 0L
         /** 最近 30 秒内是否检测到移动（UI 层状态卡用，无需拿到 LocationTracker 实例） */
         fun isMovingNow(): Boolean = System.currentTimeMillis() - lastMovingAtStatic < 30_000L
+
+        /** 最近一次成功采集的位置（@Volatile 保证多线程可见；供 WebView 本地读取） */
+        @Volatile var lastKnownLocation: Location? = null
+        /** 最近一次位置采集的时间戳（毫秒） */
+        @Volatile var lastKnownAt: Long = 0L
+
+        /** 构造 WebView 注入用的位置 JSON；无数据返回 null */
+        fun buildLocationJson(): String? {
+            val loc = lastKnownLocation ?: return null
+            val age = System.currentTimeMillis() - lastKnownAt
+            return try {
+                org.json.JSONObject().apply {
+                    put("latitude", loc.latitude)
+                    put("longitude", loc.longitude)
+                    if (loc.hasAccuracy()) put("accuracy", loc.accuracy.toDouble())
+                    if (loc.hasSpeed()) put("speed", loc.speed.toDouble())
+                    put("is_moving", loc.hasSpeed() && loc.speed > 0.5f)
+                    put("timestamp", lastKnownAt)
+                    put("created_at", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+                        timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    }.format(java.util.Date(lastKnownAt)))
+                    put("age_ms", age)
+                }.toString()
+            } catch (e: Exception) { null }
+        }
     }
 
     // 记录上一次上报的位置和时刻，用于节流（避免短时间内重复上报几乎相同的位置）
@@ -384,6 +409,9 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
 
         // 通过所有过滤，更新"最近一次"记录
         lastLocation = loc; lastReportAt = now
+        // 同步到静态字段，供 WebView 本地读取（离线可用）
+        lastKnownLocation = loc
+        lastKnownAt = now
         val isMoving = (loc.hasSpeed() && loc.speed > 0.5f)
         if (isMoving || movedSinceLast > MOVING_DISPLACEMENT_M) {
             lastMovingAt = now

@@ -415,6 +415,20 @@ class MainActivity : ComponentActivity() {
         val tokenJs = if (token.isNullOrBlank()) "null" else "\"${token.replace("\"","\\\"")}\""
 
         // ============================================================================
+        // 第 3.5 步：读取本地位置 / App 状态 / 设备状态（供 WebView 离线显示）
+        // ----------------------------------------------------------------------------
+        // 自己的信息优先用本地，不依赖网络；TA 的信息仍走云端
+        // ============================================================================
+        val localLocJson = com.coupletracker.android.location.LocationTracker.buildLocationJson()
+            ?: "null"
+        val localAppJson = com.coupletracker.android.appmonitor.AppUsageMonitor.buildAppJson()
+            ?: "null"
+        // 设备状态：电量/网络/亮屏等，用 DeviceStatusReporter 的静态方法
+        val localStatusJson = try {
+            com.coupletracker.android.service.DeviceStatusReporter.getLastStatusJson()
+        } catch (e: Exception) { null } ?: "null"
+
+        // ============================================================================
         // 第 4 步：拼接最终的 JS 注入脚本
         // ----------------------------------------------------------------------------
         // - 使用 Kotlin 三引号字符串 """ ... """，可以原样保留换行和缩进
@@ -425,7 +439,8 @@ class MainActivity : ComponentActivity() {
         // 脚本逻辑：
         //   ① 把 Supabase 配置、Token、用户信息挂到 window 全局对象上；
         //   ② 把同样的信息写入 localStorage（前端可能从 localStorage 读取）；
-        //   ③ 调用前端的 __applyAndroidInjection() 回调（如果存在），
+        //   ③ 注入本地位置/App/状态（离线可用，自己的信息不依赖网络）；
+        //   ④ 调用前端的 __applyAndroidInjection() 回调（如果存在），
         //      通知前端"我刚刚塞了新数据，请重新读取用户并刷新界面"。
         //
         // 注：window.__SUPABASE_URL__ 这种命名（前后双下划线）
@@ -437,6 +452,9 @@ class MainActivity : ComponentActivity() {
               window.__SUPABASE_ANON_KEY__ = "${BuildConfig.SUPABASE_ANON_KEY}";
               window.__AUTH_TOKEN__ = $tokenJs;
               window.__CURRENT_USER__ = $userJson;
+              window.__LOCAL_LOCATION__ = $localLocJson;
+              window.__LOCAL_APP__ = $localAppJson;
+              window.__LOCAL_STATUS__ = $localStatusJson;
               try {
                 localStorage.setItem('sb_url',  window.__SUPABASE_URL__ || '');
                 localStorage.setItem('sb_anon', window.__SUPABASE_ANON_KEY__ || '');
