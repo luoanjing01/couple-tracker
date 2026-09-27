@@ -1057,11 +1057,9 @@ function fmtTime(iso){
      4. 绑定弹窗 HTML（头像/昵称/移动徽章/电量/速度/更新时间）
    ============================================================ */
 function setOrUpdate(markerRef, lat, lng, emoji, color, pulse, row, isMe) {
-  // ✅ 坐标系转换：GPS 上报 WGS-84，高德瓦片用 GCJ-02
-  //    如果当前图源是高德(GCJ-02)，需要转换坐标才不会偏移
-  //    ArcGIS 用 WGS-84，不需要转
-  var src = __tileSources[__tileIdx];
-  var ll = (src && src.gcj02) ? wgs2gcj(lat, lng) : [lat, lng];   // ll=转换后的[lat,lng]
+  // 统一用原始 WGS-84 坐标，不做 wgs2gcj 转换
+  // 之前转换导致标记偏移，和跳转位置不一致
+  var ll = [lat, lng];
   if (!markerRef.value) {
     markerRef.value = L.marker(ll, { icon: createIcon(emoji, color, pulse) }).addTo(map);   // 首次创建
   } else {
@@ -1205,10 +1203,9 @@ window.jumpToLocation = function(lat, lng, label){
   if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) {
     showFlash('位置数据无效'); return;
   }
-  // 统一坐标系：标记创建时做了 wgs2gcj 转换，跳转也要做同样的转换
-  // 否则 WGS-84 坐标的跳转中心和 GCJ-02 坐标的标记位置会偏差 50~500m
-  var src = __tileSources[__tileIdx];
-  var ll = (src && src.gcj02) ? wgs2gcj(lat, lng) : [lat, lng];
+  // 统一用原始 WGS-84 坐标，不做 wgs2gcj 转换
+  // 标记和跳转都用同一套坐标，确保位置一致
+  var ll = [lat, lng];
   map.setView(ll, 16);
   showFlash(label || '已跳转到位置');
 };
@@ -1300,12 +1297,8 @@ function loadTrack(uid, isPartner) {
         document.getElementById('btnClearTrack').style.display = 'none';
         return;
       }
-      // 坐标转换（GCJ-02）
-      var src = __tileSources[__tileIdx];
-      var pts = rows.map(function(r){
-        var ll = (src && src.gcj02) ? wgs2gcj(r.latitude, r.longitude) : [r.latitude, r.longitude];
-        return ll;
-      });
+      // 统一用原始 WGS-84 坐标，不做 wgs2gcj 转换
+      var pts = rows.map(function(r){ return [r.latitude, r.longitude]; });
 
       // 清除旧轨迹
       clearTrack(false);
@@ -1412,10 +1405,7 @@ function __drawOneTodayTrack(uid, color, allBounds) {
     .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(function(rows){
       if (!Array.isArray(rows) || rows.length < 2) return;
-      var src = __tileSources[__tileIdx];
-      var pts = rows.map(function(r){
-        return (src && src.gcj02) ? wgs2gcj(r.latitude, r.longitude) : [r.latitude, r.longitude];
-      });
+      var pts = rows.map(function(r){ return [r.latitude, r.longitude]; });
       pts = simplifyTrack(pts, 8);
       if (pts.length < 2) return;
       var line = L.polyline(pts, { color: color, weight: 5, opacity: 0.85 }).addTo(map);
