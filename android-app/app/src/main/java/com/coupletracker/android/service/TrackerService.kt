@@ -310,7 +310,8 @@ class TrackerService : Service() {
                     runCatching {
                         locationTracker = runCatching { LocationTracker(this, serviceScope) }.getOrNull()
                         appMonitor = runCatching { AppUsageMonitor(this, serviceScope) }.getOrNull()
-                        deviceStatusReporter = runCatching { DeviceStatusReporter(this, serviceScope) }.getOrNull()
+                        // 🔴 修复：必须传 locationTracker，否则 is_moving 永远 false
+                        deviceStatusReporter = runCatching { DeviceStatusReporter(this, serviceScope, locationTracker) }.getOrNull()
                         runCatching { deviceStatusReporter?.start() }   // 兜底：补初始化后立即启动心跳
                         // 把实例引用也存到 companion 的静态变量里，方便 UI 层直接读取
                         Companion.appMonitor = appMonitor
@@ -333,6 +334,11 @@ class TrackerService : Service() {
             runCatching { mon.stop() }         // 清理内部状态
             runCatching { mon.start(4000L) }   // 以 4 秒间隔启动
         }
+        // 🔴 兜底：无条件启动 DeviceStatusReporter（不要等 combine flow 触发）
+        //   - 国产 ROM 杀掉后台服务后，START_STICKY 会重启 → onStartCommand 触发
+        //   - 此时 combine flow 还没就绪，但 device_status 心跳必须立刻恢复
+        //   - 否则对方会看到"云端未记录"，即便本机其实还在用
+        runCatching { deviceStatusReporter?.start() }
         return START_STICKY
     }
 

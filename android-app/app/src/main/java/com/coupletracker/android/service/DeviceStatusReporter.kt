@@ -33,6 +33,7 @@ import com.coupletracker.android.data.NetworkModule       // 网络模块
 import com.coupletracker.android.data.UserRepository      // 用户仓库
 import com.coupletracker.android.location.LocationTracker // 位置追踪器（读取移动状态）
 import com.coupletracker.android.ui.MainActivity          // 读取 isAppForeground 标记
+import android.util.Log                              // 系统日志（上报失败时输出到 logcat）
 import kotlinx.coroutines.*                       // 协程
 import java.time.Instant                          // UTC 时间戳
 
@@ -48,6 +49,9 @@ class DeviceStatusReporter(
     private val scope: CoroutineScope,
     private val locationTracker: LocationTracker? = null
 ) {
+
+    // 日志 TAG（logcat 过滤用）
+    private val TAG = "DeviceStatusReporter"
 
     // 心跳协程句柄；为空表示未启动
     private var heartbeatJob: Job? = null
@@ -143,62 +147,83 @@ class DeviceStatusReporter(
 
     /**
      * 采集当前设备状态并 upsert 到云端（核心方法）
-     * 每一步采集都独立 runCatching，单点失败不影响其他字段
+     * 采集部分每步独立 runCatching（单点失败不影响其他字段）；
+     * 网络上报单独 try/catch：失败时打印日志，且不更新 lastReportAt，下次变化即报仍可触发。
      */
     private suspend fun reportNow() {
-        runCatching {
-            // 未登录就不上报（ upsert 需要 user_id ）
-            val userId = UserRepository.get().getUser()?.id ?: return
+        // 未登录就不上报（ upsert 需要 user_id ）——单独提取，不算错误，不进日志
+        val userId = runCatching { UserRepository.get().getUser()?.id }.getOrNull() ?: return
 
-            // ① 电量 + 充电状态（粘性广播读取，无需长期监听）
-            val batteryIntent = context.registerReceiver(
-                null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-            )
-            val level = batteryIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-            val scale = batteryIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-            val batteryPct = if (level >= 0 && scale > 0) level * 100 / scale else null
-            val chargeStatus = batteryIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-            val isCharging = chargeStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
-                    chargeStatus == BatteryManager.BATTERY_STATUS_FULL
+        // ① 电量 + 充电状态（粘性广播读取，无需长期监听）
+        val battery = runCatching {
+            val bi = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val level = bi?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = bi?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+            val pct = if (level >= 0 && scale > 0) level * 100 / scale else null
+            val status = bi?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+            val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                    status == BatteryManager.BATTERY_STATUS_FULL
+            Pair(pct, charging)
+        }.getOrNull() ?: Pair(null, false)
 
-            // ② 网络类型 + WiFi SSID
+        // ② 网络类型 + WiFi SSID
+        val net = runCatching {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             val nc = cm.getNetworkCapabilities(cm.activeNetwork)
-            val networkType = when {
+            val type = when {
                 nc == null -> "none"
                 nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
                 nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
                 else -> "other"
             }
-            // 仅在 WiFi 下尝试读 SSID；读不到（权限收紧）则为 null，显示方会降级为"WiFi"
-            val wifiSsid = if (networkType == "wifi") readWifiSsid() else null
+            val ssid = if (type == "wifi") readWifiSsid() else null
+            Pair(type, ssid)
+        }.getOrNull() ?: Pair("none", null)
 
-            // ③ 屏幕亮/灭
+        // ③ 屏幕亮/灭
+        val screenOn = runCatching {
             val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-            val screenOn = pm.isInteractive
+            pm.isInteractive
+        }.getOrDefault(false)
 
-            // ④ 是否在移动（从 LocationTracker 读取最近 30 秒内的位移/速度判定）
-            val isMoving = locationTracker?.isMovingRecently() ?: false
+        // ④ 是否在移动（从 LocationTracker 读取最近 30 秒内的位移/速度判定）
+        val isMoving = locationTracker?.isMovingRecently() ?: false
 
-            // ⑤ 前台 App 包名：小世界自身在前台时为本包名，否则为 null（不暴露其他 App 包名）
-            //    状态卡逻辑：foreground_package == 本包名 → "在线"，否则亮屏/熄屏
-            val foregroundPkg = if (MainActivity.isAppForeground) context.packageName else null
+        // ⑤ 前台 App 包名：小世界自身在前台时为本包名，否则为 null（不暴露其他 App 包名）
+        //    状态卡逻辑：foreground_package == 本包名 → "在线"，否则亮屏/熄屏
+        val foregroundPkg = if (MainActivity.isAppForeground) context.packageName else null
 
-            // ⑥ upsert 到云端（updated_at 用客户端当前 UTC 时间，语义=心跳时刻）
-            NetworkModule.restService.upsertDeviceStatus(
+        // ⑥ upsert 到云端（updated_at 用客户端当前 UTC 时间，语义=心跳时刻）
+        //    单独 try/catch：失败时打印日志，不更新 lastReportAt（下次变化即报仍可触发）
+        try {
+            val resp = NetworkModule.restService.upsertDeviceStatus(
                 DeviceStatusUpsert(
                     user_id = userId,
-                    battery_level = batteryPct,
-                    is_charging = isCharging,
-                    network_type = networkType,
-                    wifi_ssid = wifiSsid,
+                    battery_level = battery.first,
+                    is_charging = battery.second,
+                    network_type = net.first,
+                    wifi_ssid = net.second,
                     screen_on = screenOn,
                     is_moving = isMoving,
                     foreground_package = foregroundPkg,
                     updated_at = Instant.now().toString()
                 )
             )
-            lastReportAt = System.currentTimeMillis()
+            if (resp.isSuccessful) {
+                lastReportAt = System.currentTimeMillis()
+            } else {
+                // HTTP 错误（如 401 未登录、500 服务器错、404 表不存在）→ 输出日志，方便排查
+                Log.e(
+                    TAG,
+                    "upsert 失败: HTTP ${resp.code()} ${resp.message() ?: ""}"
+                )
+            }
+        } catch (e: Exception) {
+            // 网络异常（如 UnknownHostException、SocketTimeoutException）→ 输出日志，方便排查
+            Log.e(
+                TAG,
+                "upsert 异常: ${e.javaClass.simpleName}: ${e.message ?: ""}"
+            )
         }
     }
 
