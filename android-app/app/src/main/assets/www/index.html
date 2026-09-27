@@ -1195,20 +1195,18 @@ function updatePartnerTrackBtn() {
 }
 
 /* ============================================================
-   jumpToMyLocation() / jumpToPartnerLocation()
+   jumpToLocation(lat, lng, label)
    ------------------------------------------------------------
    暴露给原生 JS 桥（TidalMapBridge.eval）调用的全局函数：
-   点击原生「位置」chip 时，地图自动飞到我 / TA 的标记位置。
+   点击原生「位置」chip 时，地图自动飞到指定坐标。
+   原生侧直接传坐标过来，不依赖前端异步变量，更可靠。
    ============================================================ */
-window.jumpToMyLocation = function(){
-  var m = __markerMap[me && me.id];
-  if (m) { map.setView(m.getLatLng(), 16); showFlash('已跳转到我的位置'); }
-  else { showFlash('还没有我的位置数据'); }
-};
-window.jumpToPartnerLocation = function(){
-  var m = __markerMap[__partnerUid && __partnerUid.v];
-  if (m) { map.setView(m.getLatLng(), 16); showFlash('已跳转到TA的位置'); }
-  else { showFlash('还没有TA的位置数据'); }
+window.jumpToLocation = function(lat, lng, label){
+  if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) {
+    showFlash('位置数据无效'); return;
+  }
+  map.setView([lat, lng], 16);
+  showFlash(label || '已跳转到位置');
 };
 
 /* ============================================================

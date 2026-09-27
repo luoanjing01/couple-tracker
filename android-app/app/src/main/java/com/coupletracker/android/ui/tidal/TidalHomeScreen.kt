@@ -477,6 +477,25 @@ private fun LocationSection(
     val subjectLoc = if (viewingPartner) partnerLoc else myLoc
     val subjectName = if (viewingPartner) partnerName else "我"
 
+    // ---- 切换查看对象时：清空地名缓存 + 立即拉一次最新位置 ----
+    // 解决"切到TA还显示我地址"：300m缓存复用导致地名串人
+    LaunchedEffect(viewingPartner) {
+        subjectPlace = null
+        lastGeoLat = Double.NaN
+        lastGeoLng = Double.NaN
+        // 立即拉一次当前对象的位置（不等30秒轮询），避免UI短暂显示旧数据
+        withContext(Dispatchers.IO) {
+            val targetId = if (viewingPartner) partnerId else myId
+            if (!targetId.isNullOrBlank()) {
+                runCatching {
+                    NetworkModule.restService.getUserLocations(userId = "eq.$targetId", limit = 1)
+                }.getOrNull()?.body()?.firstOrNull()?.let { row ->
+                    if (viewingPartner) partnerLoc = row else myLoc = row
+                }
+            }
+        }
+    }
+
     // ---- 逆地理编码：坐标 → 具体地名 ----
     // 成熟方案参考：Zenly / 苹果"查找" / Life360 都在头像下显示"在 XX区/街道"。
     // 无地图厂商 key，采用 BigDataCloud 免费逆地理接口（无需注册、支持中文）。
@@ -640,10 +659,16 @@ private fun LocationSection(
                     if (trackOn) onShowTrack()   // 收起抽屉露出地图
                 }
                 // 位置 chip：跳转到当前查看对象的地图标记（看我→跳我，看TA→跳TA）
+                // 直接把坐标传给前端，不依赖 markerMap（前端 marker 可能还没创建）
                 TidalChip(text = "📌 位置", bg = ChipBgCool, fg = MintDeep) {
-                    val fn = if (viewingPartner) "jumpToPartnerLocation" else "jumpToMyLocation"
-                    TidalMapBridge.eval("try{window.$fn&&window.$fn();}catch(e){}")
-                    onShowTrack()   // 收起抽屉露出地图
+                    val loc = if (viewingPartner) partnerLoc else myLoc
+                    if (loc != null) {
+                        val label = if (viewingPartner) "已跳转到TA的位置" else "已跳转到我的位置"
+                        TidalMapBridge.eval(
+                            "try{window.jumpToLocation(${loc.latitude},${loc.longitude},\"$label\");}catch(e){}"
+                        )
+                        onShowTrack()   // 收起抽屉露出地图
+                    }
                 }
             }
         }
