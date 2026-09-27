@@ -1573,61 +1573,63 @@ class MainActivity : ComponentActivity() {
                                     unpairing = true
                                     Toast.makeText(this@MainActivity, "正在取消配对…", Toast.LENGTH_SHORT).show()
                                     lifecycleScope.launch(Dispatchers.IO) {
-                                        // ===== 方案 A+B：用 unpair RPC（SECURITY DEFINER 原子清双方）替代手写 PATCH 两次 =====
-                                        // 优势：① 一次请求完成，避免"自己成功对方失败"的中间态
-                                        //       ② SECURITY DEFINER 绕过 RLS，不依赖 profiles_all 策略
-                                        //       ③ 失败时服务器返回明确 reason，不再盲猜"网络异常"
+                                        // ===== 参考微信"删除好友"做法：服务器优先 + 客户端兜底 =====
+                                        // ① 先调 unpair RPC（SECURITY DEFINER 原子清双方，最干净）
+                                        // ② 若 RPC 404（服务器没部署该函数），降级为 PATCH 双写清字段
+                                        // 优势：既享受了 RPC 的原子性，又不依赖服务器必须部署该函数
                                         Log.d("Unpair", "[开始] myId=${me.id}, partnerId=$myPartnerId")
-                                        val unpairResult = runCatching {
+
+                                        // ① 先试 RPC
+                                        val rpcResult = runCatching {
                                             NetworkModule.rpcService.unpair(UnpairReq(myId = me.id))
                                         }
+                                        val rpcResp = rpcResult.getOrNull()
+                                        val rpcWorked = rpcResp?.isSuccessful == true &&
+                                                        (rpcResp.body()?.ok == true || rpcResp.body()?.reason == "NOT_PAIRED")
+
+                                        var finalMsg: String
+                                        var finalSuccess: Boolean
+
+                                        if (rpcWorked) {
+                                            // RPC 成功（含 NOT_PAIRED 自愈场景）
+                                            Log.d("Unpair", "[RPC成功] HTTP=${rpcResp?.code()}, msg=${rpcResp?.body()?.msg}")
+                                            finalSuccess = true
+                                            finalMsg = rpcResp?.body()?.msg ?: "已取消配对"
+                                        } else {
+                                            // ② RPC 失败（404/网络等），降级为 PATCH 双写
+                                            val rpcCode = rpcResp?.code() ?: -1
+                                            Log.w("Unpair", "[RPC失败] HTTP=$rpcCode, 降级为PATCH双写")
+                                            val clearFields = mapOf<String, Any?>(
+                                                "partner_id" to null,
+                                                "pending_pair" to null,
+                                                "pair_request_at" to null
+                                            )
+                                            val selfOk = runCatching {
+                                                NetworkModule.restService.updateProfile(me.id, clearFields).isSuccessful
+                                            }.getOrDefault(false)
+                                            val partnerOk = runCatching {
+                                                NetworkModule.restService.updateProfile(myPartnerId, clearFields).isSuccessful
+                                            }.getOrDefault(false)
+                                            Log.d("Unpair", "[PATCH结果] selfOk=$selfOk, partnerOk=$partnerOk")
+                                            finalSuccess = selfOk
+                                            finalMsg = when {
+                                                selfOk && partnerOk -> "已取消配对"
+                                                selfOk -> "已取消配对（对方数据稍后同步）"
+                                                else -> "取消失败：网络异常，请稍后重试"
+                                            }
+                                        }
+
                                         withContext(Dispatchers.Main) {
                                             unpairing = false
-                                            unpairResult.fold(
-                                                onSuccess = { resp ->
-                                                    val body = resp.body()
-                                                    Log.d("Unpair", "[响应] HTTP=${resp.code()}, ok=${body?.ok}, reason=${body?.reason}, msg=${body?.msg}")
-                                                    when {
-                                                        resp.isSuccessful && body?.ok == true -> {
-                                                            // ✅ 服务器确认双方已清：同步本地状态
-                                                            UserRepository.get().setUser(me.copy(partnerId = null))
-                                                            hasPartner = false
-                                                            partnerName = ""
-                                                            Toast.makeText(
-                                                                this@MainActivity,
-                                                                body.msg ?: "已取消配对",
-                                                                Toast.LENGTH_SHORT
-                                                            ).show()
-                                                        }
-                                                        resp.isSuccessful && body?.reason == "NOT_PAIRED" -> {
-                                                            // 服务器认为本来就没配对：直接同步本地（自愈）
-                                                            UserRepository.get().setUser(me.copy(partnerId = null))
-                                                            hasPartner = false
-                                                            partnerName = ""
-                                                            Toast.makeText(this@MainActivity, "已是未配对状态", Toast.LENGTH_SHORT).show()
-                                                        }
-                                                        else -> {
-                                                            // 服务器返回非 2xx 或业务失败：显示真实原因
-                                                            val errBody = runCatching { resp.errorBody()?.string() }.getOrNull()
-                                                            Log.w("Unpair", "[失败] HTTP=${resp.code()}, errBody=$errBody")
-                                                            Toast.makeText(
-                                                                this@MainActivity,
-                                                                "取消失败：${body?.msg ?: "HTTP ${resp.code()}"}",
-                                                                Toast.LENGTH_LONG
-                                                            ).show()
-                                                        }
-                                                    }
-                                                },
-                                                onFailure = { e ->
-                                                    // 网络层异常（DNS/超时/SSL）：打印具体异常类型
-                                                    Log.e("Unpair", "[异常] ${e.javaClass.simpleName}: ${e.message}", e)
-                                                    Toast.makeText(
-                                                        this@MainActivity,
-                                                        "取消失败：${e.javaClass.simpleName}，请检查网络",
-                                                        Toast.LENGTH_LONG
-                                                    ).show()
-                                                }
-                                            )
+                                            if (finalSuccess) {
+                                                // 同步本地状态（partnerId=null 触发 UI 自动刷新）
+                                                UserRepository.get().setUser(me.copy(partnerId = null))
+                                                hasPartner = false
+                                                partnerName = ""
+                                                Toast.makeText(this@MainActivity, finalMsg, Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(this@MainActivity, finalMsg, Toast.LENGTH_LONG).show()
+                                            }
                                         }
                                     }
                                 },

@@ -1205,7 +1205,11 @@ window.jumpToLocation = function(lat, lng, label){
   if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) {
     showFlash('位置数据无效'); return;
   }
-  map.setView([lat, lng], 16);
+  // 统一坐标系：标记创建时做了 wgs2gcj 转换，跳转也要做同样的转换
+  // 否则 WGS-84 坐标的跳转中心和 GCJ-02 坐标的标记位置会偏差 50~500m
+  var src = __tileSources[__tileIdx];
+  var ll = (src && src.gcj02) ? wgs2gcj(lat, lng) : [lat, lng];
+  map.setView(ll, 16);
   showFlash(label || '已跳转到位置');
 };
 
