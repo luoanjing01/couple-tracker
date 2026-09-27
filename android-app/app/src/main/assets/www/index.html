@@ -521,10 +521,12 @@ var __tileSources = [
       'https://t{s}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=' + TIANDITU_KEY
     ], sub: '01234567', attrs: '&copy; 天地图', gcj02: true },
   // 天地图卫星图（img=影像底图 + cia=注记，两层叠加）
+  // 🔴 修复：gcj02 改为 true，与街道图一致。天地图 vec_w 和 img_w 实际都需要
+  //    GCJ-02 转换才能与瓦片对齐（之前卫星图设 false 导致切换图层时标记位置跳变）
   { name: '卫星图', urls: [
       'https://t{s}.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=' + TIANDITU_KEY,
       'https://t{s}.tianditu.gov.cn/DataServer?T=cia_w&x={x}&y={y}&l={z}&tk=' + TIANDITU_KEY
-    ], sub: '01234567', attrs: '&copy; 天地图', gcj02: false }
+    ], sub: '01234567', attrs: '&copy; 天地图', gcj02: true }
 ];
 var __tileLayer = null;
 var __tileEventLayer = null;   // LayerGroup 不冒泡事件，单独记录用于监听瓦片错误
@@ -1525,13 +1527,14 @@ function fetchNickAvatar(uid, cb) {
 }
 
 /* —— 配对方 id 缓存 ——
-   __partnerUid : {v: partnerUid, at: 时间戳}，15 秒内复用，避免频繁查库。 */
-var __partnerUid = {v:null, at:0};
+   __partnerUid : {v: partnerUid, at: 时间戳, myId: 缓存归属的 me.id}，
+   15 秒内复用，避免频繁查库。myId 字段用于 me 切换时让缓存自动失效。 */
+var __partnerUid = {v:null, at:0, myId:null};
 /* ============================================================
    fetchPartnerUid(cb) — 查询"我"的配对方的 user id
    ------------------------------------------------------------
    流程：
-     1. 15 秒内有缓存 → 直接回调
+     1. 15 秒内有缓存且 me.id 一致 → 直接回调
      2. 读 me.partnerId（配对方资料 id）
      3. UUID 格式校验：非法或缺失 → 视为未配对，回调 null
      4. 用 partner_id 查 profiles 表，拿到对应用户的 id
@@ -1539,7 +1542,10 @@ var __partnerUid = {v:null, at:0};
    ============================================================ */
 function fetchPartnerUid(cb) {
   var now = Date.now();
-  if (__partnerUid.v && (now - __partnerUid.at) < 15000) { cb(__partnerUid.v, null); return; }   // 15秒缓存
+  var myId = me && me.id ? me.id : null;
+  // 🔴 修复：缓存必须属于当前 me，me 切换（登录切换/注入延迟/配对状态变化）
+  //    时缓存自动失效，否则会用旧 partner UUID 查到错误用户的位置
+  if (__partnerUid.v && __partnerUid.myId === myId && (now - __partnerUid.at) < 15000) { cb(__partnerUid.v, null); return; }   // 15秒缓存且 me 一致
   var partnerId = me && me.partnerId ? me.partnerId : null;
   var headers = makeHeaders();
 
@@ -1547,7 +1553,7 @@ function fetchPartnerUid(cb) {
   var uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!partnerId || !uuidRe.test(partnerId)) {
     // 没有 partner_id 或格式非法 = 未配对，不查
-    __partnerUid = {v:null, at: now};
+    __partnerUid = {v:null, at: now, myId: myId};
     cb(null, null);
     return;
   }
@@ -1559,7 +1565,7 @@ function fetchPartnerUid(cb) {
       return r.json();
     }).then(function(rows){
       var pu = (Array.isArray(rows) && rows[0]) ? rows[0].id : null;
-      __partnerUid = {v:pu, at: now};   // 写缓存
+      __partnerUid = {v:pu, at: now, myId: myId};   // 写缓存（带 me.id 归属）
       cb(pu, null);
     }).catch(function(e){
       cb(null, 'TA查询('+(e&&e.message?e.message:'网络失败')+')');

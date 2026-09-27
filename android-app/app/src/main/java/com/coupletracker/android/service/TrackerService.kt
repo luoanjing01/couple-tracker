@@ -313,6 +313,16 @@ class TrackerService : Service() {
                         // 🔴 修复：必须传 locationTracker，否则 is_moving 永远 false
                         deviceStatusReporter = runCatching { DeviceStatusReporter(this, serviceScope, locationTracker) }.getOrNull()
                         runCatching { deviceStatusReporter?.start() }   // 兜底：补初始化后立即启动心跳
+                        // 🔴 修复：补启动 locationTracker，否则 onCreate 异常没跑完时 combine flow 不触发，
+                        //    LocationTracker 不采集，地图一直"等待位置..."
+                        val tracker = locationTracker
+                        if (tracker != null && tracker.hasPermission()) {
+                            locationJob = serviceScope.launch(Dispatchers.Default) {
+                                runCatching { tracker.stop() }
+                                runCatching { tracker.start(8000L) }
+                            }
+                            runCatching { tracker.reportNow() }   // 立即强制上报一次缓存位置
+                        }
                         // 把实例引用也存到 companion 的静态变量里，方便 UI 层直接读取
                         Companion.appMonitor = appMonitor
                         Companion.locationTracker = locationTracker   // 同步刷新静态引用，供 UI 手动触发
@@ -339,6 +349,18 @@ class TrackerService : Service() {
         //   - 此时 combine flow 还没就绪，但 device_status 心跳必须立刻恢复
         //   - 否则对方会看到"云端未记录"，即便本机其实还在用
         runCatching { deviceStatusReporter?.start() }
+        // 🔴 兜底：无条件启动 LocationTracker（不要等 combine flow 触发）
+        //   - 同上：服务被杀重启后 combine flow 还没就绪，但位置采集必须立刻恢复
+        //   - 否则地图一直"等待位置..."，对方也看不到自己的位置
+        //   - locationJob 用服务作用域管理，combine flow 后续触发 restartLocation 时会自动 cancel
+        val tracker = locationTracker
+        if (tracker != null && tracker.hasPermission()) {
+            runCatching { locationJob?.cancel() }
+            locationJob = serviceScope.launch(Dispatchers.Default) {
+                runCatching { tracker.stop() }
+                runCatching { tracker.start(8000L) }
+            }
+        }
         return START_STICKY
     }
 
