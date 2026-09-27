@@ -78,6 +78,7 @@ import com.coupletracker.android.ui.TidalMapBridge
 import com.coupletracker.android.ui.theme.ChipBg
 import com.coupletracker.android.ui.theme.ChipBgCool
 import com.coupletracker.android.ui.theme.Coral
+import com.coupletracker.android.ui.theme.GenderColors
 import com.coupletracker.android.ui.theme.CoralSoft
 import com.coupletracker.android.ui.theme.GlassStrongWhite
 import com.coupletracker.android.ui.theme.Ink
@@ -112,6 +113,7 @@ fun TidalHomeScreen(
     // 默认先看 TA（情侣应用主视角）；未配对时强制看我，TA 头像置灰禁点
     val currentUser by UserRepository.get().userFlow.collectAsState(initial = null)
     val paired = !currentUser?.partnerId.isNullOrBlank()
+    val myGender = currentUser?.gender ?: "unknown"
     var viewPartner by remember { mutableStateOf(true) }
     // 未配对时强制看我；配对成功后恢复默认看 TA
     LaunchedEffect(paired) {
@@ -281,8 +283,8 @@ fun TidalHomeScreen(
         ) {
             // 点「我」= 全部区块看我；点「TA」= 全部区块看 TA
             // 未配对时 TA 头像置灰 + 禁点
-            AvatarBubble(text = "我", isMe = true, selected = !viewPartner, enabled = true) { viewPartner = false }
-            AvatarBubble(text = "TA", isMe = false, selected = viewPartner, enabled = paired) { viewPartner = true }
+            AvatarBubble(text = "我", isMe = true, selected = !viewPartner, enabled = true, gender = myGender) { viewPartner = false }
+            AvatarBubble(text = "TA", isMe = false, selected = viewPartner, enabled = paired, gender = myGender) { viewPartner = true }
         }
 
         // ====================================================================
@@ -361,13 +363,19 @@ private fun AvatarBubble(
     isMe: Boolean,
     selected: Boolean,
     enabled: Boolean = true,
+    gender: String = "unknown",
     onClick: () -> Unit
 ) {
+    // 性别决定配色：男=淡蓝(我)/珊瑚(TA)，女=珊瑚(我)/淡蓝(TA)
+    val gradStart = if (isMe) GenderColors.myGradStart(gender) else GenderColors.taGradStart(gender)
+    val gradEnd = if (isMe) GenderColors.myGradEnd(gender) else GenderColors.taGradEnd(gender)
+    val ringColor = if (isMe) GenderColors.myRing(gender) else GenderColors.taRing(gender)
+
     // 未配对时 TA 置灰：灰色渐变 + 不可点击
     val bgBrush = if (!enabled) {
         Brush.linearGradient(listOf(Color(0xFFBDBDBD), Color(0xFFE0E0E0)))
     } else {
-        Brush.linearGradient(if (isMe) listOf(Mint, MintSoft) else listOf(Coral, CoralSoft))
+        Brush.linearGradient(listOf(gradStart, gradEnd))
     }
     Box(Modifier.size(58.dp), contentAlignment = Alignment.Center) {
         // 选中光环（比气泡大 6dp，不遮挡气泡本体）
@@ -375,7 +383,7 @@ private fun AvatarBubble(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .border(2.5.dp, if (isMe) MintDeep else Coral, CircleShape)
+                    .border(2.5.dp, ringColor, CircleShape)
             )
         }
         Box(

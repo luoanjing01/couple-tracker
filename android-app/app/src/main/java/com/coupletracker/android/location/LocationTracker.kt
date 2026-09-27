@@ -121,9 +121,54 @@ class LocationTracker(private val context: Context, private val scope: Coroutine
                 android.util.Log.d("CT-Tracker", "reportNow: 强制上报缓存位置 age=${age}ms")
                 report(loc, force = true)
             } else {
-                android.util.Log.d("CT-Tracker", "reportNow: 缓存位置过旧 age=${age}ms，跳过")
+                // 缓存过旧 → 主动唤醒 GPS 请求一次新定位，而不是直接跳过
+                android.util.Log.d("CT-Tracker", "reportNow: 缓存过旧 age=${age}ms，请求新定位")
+                requestFreshLocation()
             }
-        } ?: android.util.Log.d("CT-Tracker", "reportNow: 无缓存位置可用")
+        } ?: run {
+            android.util.Log.d("CT-Tracker", "reportNow: 无缓存位置，请求新定位")
+            requestFreshLocation()
+        }
+    }
+
+    // ============================================================================
+    // requestFreshLocation：主动唤醒 GPS/NETWORK 请求一次新定位（用于缓存过旧时）
+    // ----------------------------------------------------------------------------
+    // 静止模式下系统不会主动唤醒 GPS（minDistance=0），导致缓存可能超过 2 分钟。
+    // 点刷新时如果缓存过旧，直接请求一次新定位，10 秒超时自动取消。
+    // ============================================================================
+    @Volatile private var freshLocationRequested = false
+    private fun requestFreshLocation() {
+        if (freshLocationRequested) { android.util.Log.d("CT-Tracker", "requestFreshLocation: 已在请求中，跳过"); return }
+        freshLocationRequested = true
+        val listener = object : LocationListener {
+            override fun onLocationChanged(loc: Location) {
+                android.util.Log.d("CT-Tracker", "requestFreshLocation: 收到新定位 provider=${loc.provider} acc=${loc.accuracy}m")
+                runCatching { locMgr.removeUpdates(this) }
+                freshLocationRequested = false
+                report(loc, force = true)
+            }
+            override fun onProviderDisabled(provider: String) {}
+            override fun onProviderEnabled(provider: String) {}
+            @Deprecated("deprecated in API 29")
+            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        }
+        // 优先 GPS（精度高），备选 NETWORK（省电），minDistance=0 确保立刻触发
+        if (enabledProviders.contains(LocationManager.GPS_PROVIDER)) {
+            runCatching { locMgr.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0L, 0f, listener, Looper.getMainLooper()) }
+        }
+        if (enabledProviders.contains(LocationManager.NETWORK_PROVIDER)) {
+            runCatching { locMgr.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 0L, 0f, listener, Looper.getMainLooper()) }
+        }
+        // 10 秒超时自动取消
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+            kotlinx.coroutines.delay(10_000L)
+            runCatching { locMgr.removeUpdates(listener) }
+            if (freshLocationRequested) {
+                freshLocationRequested = false
+                android.util.Log.w("CT-Tracker", "requestFreshLocation: 10秒超时，取消")
+            }
+        }
     }
 
     // ============================================================================

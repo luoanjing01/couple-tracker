@@ -63,7 +63,7 @@
   .meta.err{color:#e53e3e;font-weight:600;}       /* 错误状态：文字变红 */
   .status{font-size:12px;}
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#48bb78;margin-right:4px;vertical-align:middle;}  /* 状态小圆点（绿/橙/灰随状态变化） */
-  .distance{font-size:13px;color:#3A9E91;font-weight:700;}   /* 距离数字：薄荷绿高亮 */
+  .distance{font-size:13px;font-weight:700;}   /* 距离数字：颜色由 JS 动态设置 */
   /* loading 遮罩：全屏覆盖，居中粉色文字，z-index 999 盖在地图之上 */
   .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:999;background:rgba(253,242,248,0.88);color:#e75480;font-weight:700;flex-direction:column;gap:8px;}
   .loading .sub{color:#718096;font-size:12px;font-weight:500;}
@@ -230,6 +230,18 @@ var me = null, partner = null;
 var __userTries = 0;
 var __userReadyCb = null;   // 安卓端回调通知入口
 var __userInjected = false;
+
+/* ============================================================
+   性别配色：男=淡蓝(我)/珊瑚(TA)，女=珊瑚(我)/淡蓝(TA)
+   ============================================================ */
+var COLOR_SKY_DEEP = '#3A9EC9';
+var COLOR_CORAL = '#FF8B7B';
+function myColor() {
+  return (me && me.gender === 'female') ? COLOR_CORAL : COLOR_SKY_DEEP;
+}
+function taColor() {
+  return (me && me.gender === 'female') ? COLOR_SKY_DEEP : COLOR_CORAL;
+}
 
 /* ============================================================
    readLsUser() — 从 localStorage 读取历史用户信息
@@ -899,7 +911,7 @@ function initMap() {
      · 底部小三角：用 border 拼出来的指针，指向精确位置
    参数：
      emoji : 头像 emoji（如 '👤' / '💞'）
-     color : 主圆背景色（'#3A9E91' 薄荷绿=我，'#FF8B7B' 珊瑚粉=TA）
+     color : 主圆背景色（男：我='#3A9EC9' 淡蓝，TA='#FF8B7B' 珊瑚；女：反过来）
      pulse : 是否显示脉冲动画
    返回：Leaflet Icon 实例，传给 L.marker({icon:...})
    ============================================================ */
@@ -1219,7 +1231,7 @@ function loadTrack(uid, isPartner) {
       yesterdayPts = simplifyTrack(yesterdayPts, 8);
 
       var allBounds = [];
-      var lineColor = isPartner ? '#FF8B7B' : '#3A9E91';  // TA用珊瑚粉，我用薄荷绿
+      var lineColor = isPartner ? taColor() : myColor();  // 性别决定：男=蓝(我)/珊(TA)，女=珊(我)/蓝(TA)
       if (yesterdayPts.length >= 2) {
         __trackYesterdayLine = L.polyline(yesterdayPts, { color: '#a78bfa', weight: 4, opacity: 0.6, dashArray: '8,6' }).addTo(map);
         allBounds = allBounds.concat(yesterdayPts);
@@ -1329,8 +1341,8 @@ window.toggleTodayTracks = function(show) {
   window.toggleTodayTracks(false);
   var allBounds = [];
   var jobs = [];
-  if (me && me.id) jobs.push(__drawOneTodayTrack(me.id, '#3A9E91', allBounds));        // 我：薄荷绿
-  if (__partnerUid && __partnerUid.v) jobs.push(__drawOneTodayTrack(__partnerUid.v, '#FF8B7B', allBounds));  // TA：珊瑚粉
+  if (me && me.id) jobs.push(__drawOneTodayTrack(me.id, myColor(), allBounds));        // 我：性别决定色
+  if (__partnerUid && __partnerUid.v) jobs.push(__drawOneTodayTrack(__partnerUid.v, taColor(), allBounds));  // TA：性别决定色
   if (!jobs.length) { showFlash('还没有配对哦'); return; }
   Promise.all(jobs).then(function(){
     if (allBounds.length >= 2) {
@@ -1462,7 +1474,7 @@ function poll() {
         if (Array.isArray(rows) && rows.length) {
           var row = rows[0];
           lastMeAt = new Date(row.timestamp || row.created_at).getTime();
-          setOrUpdate({value: meMarker}, row.latitude, row.longitude, (me&&me.avatar)||'👤', '#3A9E91', !!row.is_moving, Object.assign({}, row, {nickname: (me&&me.nickname)||'我'}), true);
+          setOrUpdate({value: meMarker}, row.latitude, row.longitude, (me&&me.avatar)||'👤', myColor(), !!row.is_moving, Object.assign({}, row, {nickname: (me&&me.nickname)||'我'}), true);
         }
         done();
       }).catch(function(e){ myErr = '我位置('+(e&&e.message?e.message:'网络失败')+')'; done(); });
@@ -1481,7 +1493,7 @@ function poll() {
           var row = rows[0];
           lastPartnerAt = new Date(row.timestamp || row.created_at).getTime();
           fetchNickAvatar(partnerUid, function(pa){
-            setOrUpdate({value: partnerMarker}, row.latitude, row.longitude, (pa&&pa.avatar)||'💞', '#FF8B7B', !!row.is_moving, Object.assign({}, row, {nickname: (pa&&pa.nickname)||'TA'}), false);
+            setOrUpdate({value: partnerMarker}, row.latitude, row.longitude, (pa&&pa.avatar)||'💞', taColor(), !!row.is_moving, Object.assign({}, row, {nickname: (pa&&pa.nickname)||'TA'}), false);
           });
         }
         done();

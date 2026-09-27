@@ -24,10 +24,15 @@ val CoralSoft = Color(0xFFFFB5A7)      // 渐变副色
 val CoralDeep = Color(0xFFFF7A6A)      // 深珊瑚（开屏渐变顶）
 val Rose = Color(0xFFF4A6A0)           // 玫红辅助
 
-// ===== 辅色：薄荷青 =====
-val Mint = Color(0xFF7ECEC0)           // 辅色（看自己时 / 轨迹按钮）
-val MintSoft = Color(0xFFA8DDD2)       // 薄荷浅
-val MintDeep = Color(0xFF3A9E91)       // 薄荷深（文字 / 按钮）
+// ===== 辅色：天空蓝（替代薄荷青，更清新） =====
+val Sky = Color(0xFF7EC8E3)            // 淡蓝（看自己时 / 轨迹按钮）
+val SkySoft = Color(0xFFA8D8EA)        // 淡蓝浅
+val SkyDeep = Color(0xFF3A9EC9)        // 淡蓝深（文字 / 按钮）
+
+// 兼容旧引用：Mint 系列保留但实际指向天空蓝
+val Mint = Sky
+val MintSoft = SkySoft
+val MintDeep = SkyDeep
 
 // ===== 文字色 =====
 val Ink = Color(0xFF3D2E2A)            // 主文字
@@ -65,3 +70,15 @@ val ShadowButton = Color(0x59FF8B7B)   // rgba(255,139,123,0.35)
 
 // ===== 白色 =====
 val PureWhite = Color(0xFFFFFFFF)
+
+// ===== 性别配色：男生=淡蓝(我)/珊瑚(TA)，女生=珊瑚(我)/淡蓝(TA) =====
+object GenderColors {
+    // 头像渐变（浅色系）
+    fun myGradStart(g: String): Color = if (g == "female") Coral else Sky
+    fun myGradEnd(g: String): Color = if (g == "female") CoralSoft else SkySoft
+    fun taGradStart(g: String): Color = if (g == "female") Sky else Coral
+    fun taGradEnd(g: String): Color = if (g == "female") SkySoft else CoralSoft
+    // 选中光环（深色系）
+    fun myRing(g: String): Color = if (g == "female") Coral else SkyDeep
+    fun taRing(g: String): Color = if (g == "female") SkyDeep else Coral
+}
