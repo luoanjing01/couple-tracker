@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // TidalHomeScreen.kt —— 潮汐卡片 v3 主界面（可拖拽底部抽屉）
 //
 // 对应设计稿 concept-d-tidal-cards-v3.html：
@@ -107,9 +107,16 @@ fun TidalHomeScreen(
 ) {
     val scope = rememberCoroutineScope()
 
-    // ---- 全局查看对象：true=看 TA（默认，情侣应用主视角），false=看我 ----
+    // ---- 全局查看对象：true=看 TA，false=看我 ----
     // 由顶部头像气泡切换，统一接管位置/状态/统计三个区块的展示对象
+    // 默认先看 TA（情侣应用主视角）；未配对时强制看我，TA 头像置灰禁点
+    val currentUser by UserRepository.get().userFlow.collectAsState(initial = null)
+    val paired = !currentUser?.partnerId.isNullOrBlank()
     var viewPartner by remember { mutableStateOf(true) }
+    // 未配对时强制看我；配对成功后恢复默认看 TA
+    LaunchedEffect(paired) {
+        if (!paired) viewPartner = false
+    }
 
     // ---- 抽屉状态：默认收起（peek），禁止隐藏 ----
     val sheetState = rememberStandardBottomSheetState(
@@ -272,9 +279,10 @@ fun TidalHomeScreen(
                 .padding(horizontal = 18.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // 点「我」= 全部区块看我；点「TA」= 全部区块看 TA（默认看 TA）
-            AvatarBubble(text = "我", isMe = true, selected = !viewPartner) { viewPartner = false }
-            AvatarBubble(text = "TA", isMe = false, selected = viewPartner) { viewPartner = true }
+            // 点「我」= 全部区块看我；点「TA」= 全部区块看 TA
+            // 未配对时 TA 头像置灰 + 禁点
+            AvatarBubble(text = "我", isMe = true, selected = !viewPartner, enabled = true) { viewPartner = false }
+            AvatarBubble(text = "TA", isMe = false, selected = viewPartner, enabled = paired) { viewPartner = true }
         }
 
         // ====================================================================
@@ -352,8 +360,15 @@ private fun AvatarBubble(
     text: String,
     isMe: Boolean,
     selected: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
+    // 未配对时 TA 置灰：灰色渐变 + 不可点击
+    val bgBrush = if (!enabled) {
+        Brush.linearGradient(listOf(Color(0xFFBDBDBD), Color(0xFFE0E0E0)))
+    } else {
+        Brush.linearGradient(if (isMe) listOf(Mint, MintSoft) else listOf(Coral, CoralSoft))
+    }
     Box(Modifier.size(58.dp), contentAlignment = Alignment.Center) {
         // 选中光环（比气泡大 6dp，不遮挡气泡本体）
         if (selected) {
@@ -367,32 +382,29 @@ private fun AvatarBubble(
             Modifier
                 .size(52.dp)
                 .clip(CircleShape)
-                .clickable(onClick = onClick)
+                .clickable(enabled = enabled, onClick = onClick)
         ) {
             Box(
                 Modifier
                     .fillMaxSize()
                     .shadow(6.dp, CircleShape)
-                    .background(
-                        Brush.linearGradient(
-                            if (isMe) listOf(Mint, MintSoft) else listOf(Coral, CoralSoft)
-                        ),
-                        CircleShape
-                    )
+                    .background(bgBrush, CircleShape)
                     .border(3.dp, PureWhite, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Text(text, color = PureWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
-            // 状态绿点（右下 1px 偏移，2dp 白边）
-            Box(
-                Modifier
-                    .align(Alignment.BottomEnd)
-                    .offset(x = 1.dp, y = 1.dp)
-                    .size(12.dp)
-                    .background(StatusGreen, CircleShape)
-                    .border(2.dp, PureWhite, CircleShape)
-            )
+            // 状态绿点（右下 1px 偏移，2dp 白边）；未配对时隐藏
+            if (enabled) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .offset(x = 1.dp, y = 1.dp)
+                        .size(12.dp)
+                        .background(StatusGreen, CircleShape)
+                        .border(2.dp, PureWhite, CircleShape)
+                )
+            }
         }
     }
 }

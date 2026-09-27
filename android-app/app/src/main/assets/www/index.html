@@ -82,9 +82,9 @@
   /* 图层切换按钮：缩放按钮正下方的正圆形按钮（36px），只显示 🗺️ 表情，无文字 */
   .layer-btn{position:absolute;top:236px;left:14px;z-index:500;width:36px;height:36px;background:rgba(255,255,255,0.96);border-radius:50%;box-shadow:0 6px 20px rgba(61,46,42,0.14);font-size:16px;line-height:36px;color:#3D2E2A;cursor:pointer;user-select:none;border:none;text-align:center;}
   .layer-btn:active{transform:scale(0.95);background:#ffffff;}
-  /* 刷新按钮：图层按钮正下方（36px），薄荷绿，点击触发原生强制上报 + 前端刷新 */
-  .refresh-btn{position:absolute;top:280px;left:14px;z-index:500;width:36px;height:36px;background:#3A9E91;border-radius:50%;box-shadow:0 6px 20px rgba(58,158,145,0.3);font-size:16px;line-height:36px;color:#fff;cursor:pointer;user-select:none;border:none;text-align:center;}
-  .refresh-btn:active{transform:scale(0.95);background:#2f8a7e;}
+  /* 刷新按钮：图层按钮正下方（36px），白底，与缩放/图层按钮统一风格 */
+  .refresh-btn{position:absolute;top:280px;left:14px;z-index:500;width:36px;height:36px;background:rgba(255,255,255,0.96);border-radius:50%;box-shadow:0 6px 20px rgba(61,46,42,0.14);font-size:16px;line-height:36px;color:#3D2E2A;cursor:pointer;user-select:none;border:none;text-align:center;}
+  .refresh-btn:active{transform:scale(0.95);background:#ffffff;}
   .refresh-btn.spin{animation:refreshSpin 0.6s ease;}
   @keyframes refreshSpin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
   /* 缩放按钮：下移到头像气泡下方 + 胶囊大圆角（潮汐卡片 v3），整体缩小 */
@@ -500,11 +500,22 @@ function gcj2wgs(lat, lng) {
    ============================================================ */
 // ===== 图层切换全局变量 =====
 // gcj02: true=该图源使用GCJ-02坐标系(需转换), false=WGS-84(不需要转)
+// 天地图 Key（官方注册，包名 com.coupletracker.android + debug SHA1 绑定）
+var TIANDITU_KEY = '5a5d371fbfe157aa04ab427b56785ab3';
 var __tileSources = [
-  { name: '街道图', url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图', gcj02: true },
-  { name: '卫星图', url: 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', sub: '1234', attrs: '&copy; 高德地图', gcj02: true }
+  // 天地图街道图（vec=矢量底图 + cva=中文注记，两层叠加）
+  { name: '街道图', urls: [
+      'https://t{s}.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=' + TIANDITU_KEY,
+      'https://t{s}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=' + TIANDITU_KEY
+    ], sub: '01234567', attrs: '&copy; 天地图', gcj02: true },
+  // 天地图卫星图（img=影像底图 + cia=注记，两层叠加）
+  { name: '卫星图', urls: [
+      'https://t{s}.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=' + TIANDITU_KEY,
+      'https://t{s}.tianditu.gov.cn/DataServer?T=cia_w&x={x}&y={y}&l={z}&tk=' + TIANDITU_KEY
+    ], sub: '01234567', attrs: '&copy; 天地图', gcj02: false }
 ];
 var __tileLayer = null;
+var __tileEventLayer = null;   // LayerGroup 不冒泡事件，单独记录用于监听瓦片错误
 var __tileIdx = 0;
 var __tileFailCount = 0;
 
@@ -540,15 +551,34 @@ function loadTileLayer(idx, manual) {
   __tileIdx = idx;
   console.log('[CT] 🔄 加载图源 #' + idx + ': ' + src.name);
   try {
-    __tileLayer = L.tileLayer(src.url, {
-      subdomains: src.sub || 'a',
-      attribution: src.attrs,
-      maxZoom: 19, minZoom: 3,
-      maxNativeZoom: 18,   // 高德瓦片最高18级，超过后自动放大瓦片避免白屏
-      crossOrigin: true
-    }).addTo(map);
+    // 天地图为两层叠加（底图+注记），用 LayerGroup 统一管理
+    if (src.urls && src.urls.length > 1) {
+      var layers = src.urls.map(function(u) {
+        return L.tileLayer(u, {
+          subdomains: src.sub || '01234567',
+          maxZoom: 18, minZoom: 3,
+          maxNativeZoom: 18,
+          crossOrigin: true
+        });
+      });
+      __tileLayer = L.layerGroup(layers).addTo(map);
+      // 只有底图层加版权
+      layers[0].options.attribution = src.attrs;
+      // LayerGroup 不冒泡事件，错误/成功监听挂到底图层（瓦片量最大的层）
+      __tileEventLayer = layers[0];
+    } else {
+      __tileLayer = L.tileLayer(src.url, {
+        subdomains: src.sub || 'a',
+        attribution: src.attrs,
+        maxZoom: 19, minZoom: 3,
+        maxNativeZoom: 18,   // 高德瓦片最高18级，超过后自动放大瓦片避免白屏
+        crossOrigin: true
+      }).addTo(map);
+      __tileEventLayer = __tileLayer;
+    }
     var _thisIdx = idx;
-    __tileLayer.on('tileerror', function(){
+    var _evtLayer = __tileEventLayer || __tileLayer;
+    _evtLayer.on('tileerror', function(){
       if (manual) return;   // 手动选的图源失败不自动切
       __tileFailCount++;
       if (__tileFailCount >= 5) {
@@ -558,7 +588,7 @@ function loadTileLayer(idx, manual) {
         setTimeout(function(){ loadTileLayer(next, false); }, 300);
       }
     });
-    __tileLayer.on('tileload', function(){ __tileFailCount = 0; });
+    _evtLayer.on('tileload', function(){ __tileFailCount = 0; });
   } catch(e) {
     console.error('[CT] ❌ 创建图层异常:', e);
     if (!manual) {
