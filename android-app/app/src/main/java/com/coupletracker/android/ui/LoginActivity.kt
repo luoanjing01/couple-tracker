@@ -609,6 +609,20 @@ class LoginActivity : ComponentActivity() {
         }
         var lastSendTime by remember { mutableStateOf(0L) }
 
+        // ---- 取消配对冷却期（本地保证，1小时）----
+        // 冷却期内配对按钮置灰 + 倒计时，防止双方刚断开就重新配对
+        val cooldownUntil by UserRepository.get().unpairCooldownUntilFlow
+            .collectAsState(initial = 0L)
+        var cooldownRemainSec by remember { mutableStateOf(0L) }
+        LaunchedEffect(cooldownUntil) {
+            while (cooldownUntil > System.currentTimeMillis()) {
+                cooldownRemainSec = (cooldownUntil - System.currentTimeMillis()) / 1000
+                delay(1000)
+            }
+            cooldownRemainSec = 0
+        }
+        val inCooldown = cooldownRemainSec > 0
+
         // 每 3 秒轮询配对状态
         LaunchedEffect(Unit) {
             while (true) {
@@ -903,18 +917,26 @@ class LoginActivity : ComponentActivity() {
                                 }
                             }
                         },
-                        enabled = !loading && inputCode.length >= 4,
+                        enabled = !loading && inputCode.length >= 4 && !inCooldown,
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (waiting) Muted else Coral,
+                            containerColor = if (inCooldown) Muted else if (waiting) Muted else Coral,
                             contentColor = Color.White,
-                            disabledContainerColor = Coral.copy(alpha = 0.45f)
+                            disabledContainerColor = if (inCooldown) Muted.copy(alpha = 0.6f) else Coral.copy(alpha = 0.45f)
                         )
                     ) {
                         when {
                             loading -> CircularProgressIndicator(
                                 color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            inCooldown -> {
+                                val mm = cooldownRemainSec / 60
+                                val ss = cooldownRemainSec % 60
+                                Text(
+                                    "冷却中 ${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')} ⏳",
+                                    fontSize = 15.sp, fontWeight = FontWeight.Bold
+                                )
+                            }
                             waiting -> Text("⏳ 等待对方确认...", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                             else -> Text("发起配对 💕", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                         }

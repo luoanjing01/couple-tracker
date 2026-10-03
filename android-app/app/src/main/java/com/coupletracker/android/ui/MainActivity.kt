@@ -1083,6 +1083,24 @@ class MainActivity : ComponentActivity() {
             var hasPartner by remember { mutableStateOf<Boolean?>(null) }
             var partnerName by remember { mutableStateOf("") }
             // ============================================================================
+            // 取消配对冷却期（本地保证，1小时）
+            // ----------------------------------------------------------------------------
+            // - cooldownUntil: 冷却期结束时间戳（毫秒），从 DataStore 响应式读取
+            // - cooldownRemainSec: 剩余秒数，每秒刷新一次，驱动按钮倒计时文案
+            // - 冷却期内"立即配对"按钮置灰，显示"冷却中 mm:ss"
+            // ============================================================================
+            val cooldownUntil by UserRepository.get().unpairCooldownUntilFlow
+                .collectAsState(initial = 0L)
+            var cooldownRemainSec by remember { mutableStateOf(0L) }
+            LaunchedEffect(cooldownUntil) {
+                while (cooldownUntil > System.currentTimeMillis()) {
+                    cooldownRemainSec = (cooldownUntil - System.currentTimeMillis()) / 1000
+                    kotlinx.coroutines.delay(1000)
+                }
+                cooldownRemainSec = 0
+            }
+            val inCooldown = cooldownRemainSec > 0
+            // ============================================================================
             // LaunchedEffect(code, myPartnerId)：当 code 或 partnerId 变化时重新检查配对状态
             // ----------------------------------------------------------------------------
             // - 启动一个协程，在 IO 线程上执行：
@@ -1416,17 +1434,27 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             },
-                            // 按钮可用条件：非 loading + 输入长度 ≥ 4
-                            enabled = !pairLoading && pairInput.length >= 4,
+                            // 按钮可用条件：非 loading + 输入长度 ≥ 4 + 不在冷却期
+                            enabled = !pairLoading && pairInput.length >= 4 && !inCooldown,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(48.dp)
                                 .clip(RoundedCornerShape(24.dp)),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A9E91))
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (inCooldown) Color(0xFFA89890) else Color(0xFF3A9E91)
+                            )
                         ) {
-                            // loading 时显示转圈，否则显示"立即配对 💕"
+                            // loading 时显示转圈；冷却期显示倒计时；否则显示"立即配对 💕"
                             if (pairLoading) CircularProgressIndicator(
                                 color = Color.White, modifier = Modifier.size(18.dp))
+                            else if (inCooldown) {
+                                val mm = cooldownRemainSec / 60
+                                val ss = cooldownRemainSec % 60
+                                Text(
+                                    "冷却中 ${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')} ⏳",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                             else Text("立即配对 💕", fontWeight = FontWeight.SemiBold)
                         }
                     }
@@ -1547,8 +1575,9 @@ class MainActivity : ComponentActivity() {
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         // 取消配对按钮：仅在已配对时显示
-                        // 方案：调用 unpair RPC（SECURITY DEFINER 原子清双方），一次请求搞定
-                        //       失败时打印全链路日志，不再盲报"网络异常"
+                        // 方案：Optimistic UI —— UI 先单方面断开 + 本地冷却期 + 后台静默同步服务器
+                        //       参考微信"删除好友"做法：用户点击后立刻看到"已断开"状态，
+                        //       服务器同步在后台慢慢完成，失败也不影响前端体验
                         if (hasPartner == true) {
                             var unpairing by remember { mutableStateOf(false) }
                             OutlinedButton(
@@ -1563,23 +1592,41 @@ class MainActivity : ComponentActivity() {
                                         Toast.makeText(this@MainActivity, "当前未配对，无需取消", Toast.LENGTH_SHORT).show()
                                         return@OutlinedButton
                                     }
-                                    // 前置校验：me.id 为空时不发请求，直接提示（历史 bug：空 id 导致 PATCH 400 被误报为网络异常）
                                     if (me.id.isBlank()) {
                                         Toast.makeText(this@MainActivity, "用户ID异常，请重新登录", Toast.LENGTH_LONG).show()
                                         Log.w("Unpair", "[拦截] me.id 为空，user=$me")
                                         return@OutlinedButton
                                     }
-                                    if (unpairing) return@OutlinedButton  // 防抖：避免狂点导致多次请求
+                                    if (unpairing) return@OutlinedButton  // 防抖
                                     unpairing = true
-                                    Toast.makeText(this@MainActivity, "正在取消配对…", Toast.LENGTH_SHORT).show()
-                                    lifecycleScope.launch(Dispatchers.IO) {
-                                        // ===== 参考微信"删除好友"做法：服务器优先 + 客户端兜底 =====
-                                        // ① 先调 unpair RPC（SECURITY DEFINER 原子清双方，最干净）
-                                        // ② 若 RPC 404（服务器没部署该函数），降级为 PATCH 双写清字段
-                                        // 优势：既享受了 RPC 的原子性，又不依赖服务器必须部署该函数
-                                        Log.d("Unpair", "[开始] myId=${me.id}, partnerId=$myPartnerId")
 
-                                        // ① 先试 RPC
+                                    // ===== Optimistic UI 第一步：本地立刻断开，用户马上看到"已取消" =====
+                                    // 1) 清本地 partnerId → userFlow 发新值 → UI 自动切到未配对态
+                                    // 2) 写入 1 小时冷却期时间戳 → 配对按钮置灰倒计时
+                                    // 3) 给对方发"系统消息"：通过 RPC/PATCH 让服务器把双方 partner_id 都清掉
+                                    //    （服务器是唯一能同时写双方数据的角色，客户端无法直接改对方数据）
+                                    lifecycleScope.launch(Dispatchers.IO) {
+                                        val cooldownUntil = System.currentTimeMillis() + 3600_000L  // 1小时冷却
+                                        UserRepository.get().setUnpairCooldownUntil(cooldownUntil)
+                                        UserRepository.get().setUser(me.copy(partnerId = null))
+
+                                        withContext(Dispatchers.Main) {
+                                            hasPartner = false
+                                            partnerName = ""
+                                            unpairing = false
+                                            Toast.makeText(
+                                                this@MainActivity,
+                                                "已取消配对 💔 1小时内无法重新配对",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        }
+
+                                        // ===== Optimistic UI 第二步：后台静默同步服务器（不打扰用户） =====
+                                        // ① 先试 unpair RPC（SECURITY DEFINER 原子清双方）
+                                        // ② RPC 失败（404/网络）则降级为 PATCH 双写清字段
+                                        // 无论成败都不再弹 Toast，只打日志；失败时由对方下次拉状态自愈
+                                        Log.d("Unpair", "[后台同步开始] myId=${me.id}, partnerId=$myPartnerId")
+
                                         val rpcResult = runCatching {
                                             NetworkModule.rpcService.unpair(UnpairReq(myId = me.id))
                                         }
@@ -1587,16 +1634,9 @@ class MainActivity : ComponentActivity() {
                                         val rpcWorked = rpcResp?.isSuccessful == true &&
                                                         (rpcResp.body()?.ok == true || rpcResp.body()?.reason == "NOT_PAIRED")
 
-                                        var finalMsg: String
-                                        var finalSuccess: Boolean
-
                                         if (rpcWorked) {
-                                            // RPC 成功（含 NOT_PAIRED 自愈场景）
                                             Log.d("Unpair", "[RPC成功] HTTP=${rpcResp?.code()}, msg=${rpcResp?.body()?.msg}")
-                                            finalSuccess = true
-                                            finalMsg = rpcResp?.body()?.msg ?: "已取消配对"
                                         } else {
-                                            // ② RPC 失败（404/网络等），降级为 PATCH 双写
                                             val rpcCode = rpcResp?.code() ?: -1
                                             Log.w("Unpair", "[RPC失败] HTTP=$rpcCode, 降级为PATCH双写")
                                             val clearFields = mapOf<String, Any?>(
@@ -1611,24 +1651,8 @@ class MainActivity : ComponentActivity() {
                                                 NetworkModule.restService.updateProfile(myPartnerId, clearFields).isSuccessful
                                             }.getOrDefault(false)
                                             Log.d("Unpair", "[PATCH结果] selfOk=$selfOk, partnerOk=$partnerOk")
-                                            finalSuccess = selfOk
-                                            finalMsg = when {
-                                                selfOk && partnerOk -> "已取消配对"
-                                                selfOk -> "已取消配对（对方数据稍后同步）"
-                                                else -> "取消失败：网络异常，请稍后重试"
-                                            }
-                                        }
-
-                                        withContext(Dispatchers.Main) {
-                                            unpairing = false
-                                            if (finalSuccess) {
-                                                // 同步本地状态（partnerId=null 触发 UI 自动刷新）
-                                                UserRepository.get().setUser(me.copy(partnerId = null))
-                                                hasPartner = false
-                                                partnerName = ""
-                                                Toast.makeText(this@MainActivity, finalMsg, Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                Toast.makeText(this@MainActivity, finalMsg, Toast.LENGTH_LONG).show()
+                                            if (!selfOk) {
+                                                Log.w("Unpair", "[后台同步失败] 服务器未确认断开，依赖对方下次拉状态自愈")
                                             }
                                         }
                                     }

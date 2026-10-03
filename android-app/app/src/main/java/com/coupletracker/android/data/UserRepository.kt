@@ -5,6 +5,7 @@ package com.coupletracker.android.data
 import android.content.Context                                              // Android 上下文，用于访问应用资源、文件目录等
 import androidx.datastore.preferences.core.edit                            // DataStore 的扩展函数：以事务方式修改偏好设置
 import androidx.datastore.preferences.core.intPreferencesKey              // 创建一个 Int 类型的 DataStore 键
+import androidx.datastore.preferences.core.longPreferencesKey            // 创建一个 Long 类型的 DataStore 键
 import androidx.datastore.preferences.core.stringPreferencesKey           // 创建一个 String 类型的 DataStore 键
 import androidx.datastore.preferences.preferencesDataStore                 // 通过扩展属性创建 Preferences DataStore 实例
 import com.coupletracker.android.BuildConfig                               // 编译期生成的配置类，包含默认 API/Web 地址等常量
@@ -47,6 +48,8 @@ class UserRepository private constructor(private val context: Context) {
         // 采集频率（秒）—— 默认位置 8s、APP 4s，降低卡顿
         private val KEY_LOC_INTERVAL_SEC = intPreferencesKey("loc_interval_sec")  // 位置采集间隔
         private val KEY_APP_INTERVAL_SEC = intPreferencesKey("app_interval_sec")  // APP 使用信息采集间隔
+        // 取消配对冷却期结束时间戳（毫秒）—— 本地保证，冷却期内禁止重新配对
+        private val KEY_UNPAIR_COOLDOWN_UNTIL = longPreferencesKey("unpair_cooldown_until")
 
         // 下面是采集频率的默认值与上下限（单位：秒），用于约束用户输入，防止极端值
         const val DEFAULT_LOC_INTERVAL_SEC = 8   // 位置采集默认间隔 8 秒
@@ -368,5 +371,35 @@ class UserRepository private constructor(private val context: Context) {
     suspend fun setAppIntervalSec(sec: Int) {
         val v = sec.coerceIn(MIN_APP_INTERVAL_SEC, MAX_APP_INTERVAL_SEC)
         context.store.edit { it[KEY_APP_INTERVAL_SEC] = v }
+    }
+
+    // ===================== 取消配对冷却期（本地保证，1小时） =====================
+
+    /**
+     * 取消配对冷却期结束时间戳（毫秒）的响应式流。
+     * 0 表示当前不在冷却期内。UI 层 collect 此 Flow 可实现倒计时自动刷新。
+     */
+    val unpairCooldownUntilFlow: Flow<Long> = context.store.data.map {
+        it[KEY_UNPAIR_COOLDOWN_UNTIL] ?: 0L
+    }
+
+    /**
+     * 写入冷却期结束时间戳。
+     * 在取消配对 Optimistic UI 流程中调用：本地先记录，后台再静默同步服务器。
+     *
+     * @param untilTs 冷却期结束的 Unix 毫秒时间戳
+     */
+    suspend fun setUnpairCooldownUntil(untilTs: Long) {
+        context.store.edit { it[KEY_UNPAIR_COOLDOWN_UNTIL] = untilTs }
+    }
+
+    /**
+     * 一次性查询当前是否处于取消配对冷却期。
+     *
+     * @return true = 冷却中（禁止重新配对）；false = 可配对
+     */
+    suspend fun isInUnpairCooldown(): Boolean {
+        val until = context.store.data.first()[KEY_UNPAIR_COOLDOWN_UNTIL] ?: 0L
+        return until > System.currentTimeMillis()
     }
 }
